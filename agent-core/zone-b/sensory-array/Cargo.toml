@@ -1,0 +1,38 @@
+[package]
+name = "sensory-array"
+version = "0.1.0"
+edition = "2021"
+description = "Zone B: Real-time WebSocket ingestor for US equities Level 2 order book data"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# QuestDB ILP (InfluxDB Line Protocol) writer
+questdb-rs = { version = "4", optional = true }
+# gRPC for sending regime-labeled packets to Zone A
+tonic = "0.12"
+prost = "0.13"
+# Redis for execution state sharing with Zone B
+redis = { version = "0.27", features = ["tokio-comp"] }
+# Metrics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Config
+dotenvy = "0.15"
+anyhow = "1"
+thiserror = "1"
+# Statistics (Z-Score + MAD normalization)
+statrs = "0.17"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[[bin]]
+name = "sensory-array"
+path = "src/main.rs"

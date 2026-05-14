@@ -1,0 +1,286 @@
+version: "3.9"
+
+# Three-zone sovereign trading infrastructure
+# Zone A: Thinking  — LLMs, LangGraph, HMM, Vector DB (no outbound internet)
+# Zone B: Execution — Aegis PTCs, SOR, HSM, FIX engines (outbound to exchanges only)
+# Zone C: Compliance — Audit logs, HITL terminal, DORA reporting (append-only, air-gapped from signing keys)
+
+networks:
+  zone-a-internal:
+    internal: true        # Zone A: no outbound internet
+  zone-ab-grpc:           # Zone A ↔ B via gRPC only
+    internal: true
+  zone-bc-audit:          # Zone B → C audit writes (one-way)
+    internal: true
+  zone-c-external:        # Zone C: outbound to compliance data lake only
+
+services:
+  # ─────────────────────────────────────────────────────────────
+  # ZONE A — THINKING (GPU inference, LangGraph orchestration)
+  # ─────────────────────────────────────────────────────────────
+  cognitive-core:
+    build:
+      context: ../zone-a/cognitive-core
+      dockerfile: Dockerfile
+    container_name: afe-cognitive-core
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CHROMA_HOST=vector-db
+      - CHROMA_PORT=8000
+      - QUESTDB_HOST=questdb
+      - REDIS_HOST=redis
+      - ZONE_B_GRPC_HOST=aegis
+      - ZONE_B_GRPC_PORT=50051
+    depends_on:
+      - vector-db
+      - questdb
+      - redis
+    networks:
+      - zone-a-internal
+      - zone-ab-grpc
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  regime-detector:
+    build:
+      context: ../zone-a/regime-detector
+      dockerfile: Dockerfile
+    container_name: afe-regime-detector
+    environment:
+      - PYTHONUNBUFFERED=1
+      - QUESTDB_HOST=questdb
+      - QUESTDB_PORT=9000
+      - MODEL_PATH=/app/models/hmm_5state.pkl
+    volumes:
+      - regime-models:/app/models
+    depends_on:
+      - questdb
+    networks:
+      - zone-a-internal
+    restart: unless-stopped
+
+  vector-db:
+    image: chromadb/chroma:latest
+    container_name: afe-vector-db
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_PORT=8000
+    volumes:
+      - chroma-data:/chroma/chroma
+    networks:
+      - zone-a-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────
+  # ZONE B — EXECUTION (Aegis, SOR, HSM, FIX)
+  # ─────────────────────────────────────────────────────────────
+  sensory-array:
+    build:
+      context: ../zone-b/sensory-array
+      dockerfile: Dockerfile
+    container_name: afe-sensory-array
+    environment:
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - QUESTDB_ILP_HOST=questdb
+      - QUESTDB_ILP_PORT=9009
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - FRESHNESS_L2_MS=1
+      - FRESHNESS_PRINT_MS=5
+    depends_on:
+      - questdb
+      - redis
+    networks:
+      - zone-ab-grpc   # receives regime labels from Zone A
+    restart: unless-stopped
+
+  aegis:
+    build:
+      context: ../zone-b/aegis
+      dockerfile: Dockerfile
+    container_name: afe-aegis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - HSM_PKCS11_LIB=${HSM_PKCS11_LIB:-/usr/lib/softhsm/libsofthsm2.so}
+      - HSM_PIN=${HSM_PIN}
+      - GRPC_PORT=50051
+      - MAX_DAILY_DRAWDOWN_PCT=2.0
+      - PRICE_COLLAR_PCT=1.5
+      - LOW_CONFIDENCE_THRESHOLD=0.55
+      - HEARTBEAT_INTERVAL_SECONDS=14400   # 4 hours
+    volumes:
+      - hsm-tokens:/var/lib/softhsm/tokens
+    depends_on:
+      - redis
+    networks:
+      - zone-ab-grpc
+      - zone-bc-audit
+    ports:
+      - "50051:50051"   # gRPC: cognitive-core → aegis
+    restart: unless-stopped
+
+  execution-motor:
+    build:
+      context: ../zone-b/execution-motor
+      dockerfile: Dockerfile
+    container_name: afe-execution-motor
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_BASE_URL=${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - VENUE_TOXICITY_WINDOW_DAYS=5
+    depends_on:
+      - redis
+      - aegis
+    networks:
+      - zone-ab-grpc
+      - zone-bc-audit
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # SHARED INFRASTRUCTURE (Zone A + B access)
+  # ─────────────────────────────────────────────────────────────
+  questdb:
+    image: questdb/questdb:8.0.3
+    container_name: afe-questdb
+    environment:
+      - QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE=4194304
+    ports:
+      - "9000:9000"   # REST / Web console (dev only)
+      - "9009:9009"   # ILP (InfluxDB Line Protocol)
+    volumes:
+      - questdb-data:/root/.questdb
+    networks:
+      - zone-a-internal
+      - zone-ab-grpc
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: afe-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - zone-ab-grpc
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────
+  # ZONE C — COMPLIANCE (Audit logs, HITL, DORA reporting)
+  # ─────────────────────────────────────────────────────────────
+  audit-logger:
+    build:
+      context: ../zone-c/audit-logger
+      dockerfile: Dockerfile
+    container_name: afe-audit-logger
+    environment:
+      - PYTHONUNBUFFERED=1
+      - POSTGRES_HOST=postgres-audit
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${AUDIT_DB_NAME:-trading_audit}
+      - POSTGRES_USER=${AUDIT_DB_USER:-audit_user}
+      - POSTGRES_PASSWORD=${AUDIT_DB_PASSWORD}
+      - KL_SOFT_ALERT_THRESHOLD=0.1
+      - KL_SOFT_SWITCH_THRESHOLD=0.3
+      - KL_LOGIC_SWITCH_THRESHOLD=0.5
+    depends_on:
+      - postgres-audit
+    networks:
+      - zone-bc-audit
+      - zone-c-external
+    restart: unless-stopped
+
+  compliance-manifest:
+    build:
+      context: ../zone-c/compliance-manifest
+      dockerfile: Dockerfile
+    container_name: afe-compliance-manifest
+    environment:
+      - PYTHONUNBUFFERED=1
+      - POSTGRES_HOST=postgres-audit
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${AUDIT_DB_NAME:-trading_audit}
+      - POSTGRES_USER=${AUDIT_DB_USER:-audit_user}
+      - POSTGRES_PASSWORD=${AUDIT_DB_PASSWORD}
+      - RETENTION_YEARS=7
+    depends_on:
+      - postgres-audit
+    networks:
+      - zone-bc-audit
+    restart: unless-stopped
+
+  hitl-interface:
+    build:
+      context: ../zone-c/hitl-interface
+      dockerfile: Dockerfile
+    container_name: afe-hitl-interface
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
+      - POSTGRES_HOST=postgres-audit
+      - POSTGRES_PORT=5432
+      - JWT_SECRET=${HITL_JWT_SECRET}
+    ports:
+      - "3000:3000"   # HITL operator terminal
+    depends_on:
+      - postgres-audit
+    networks:
+      - zone-bc-audit
+      - zone-c-external
+    restart: unless-stopped
+
+  postgres-audit:
+    image: postgres:16-alpine
+    container_name: afe-postgres-audit
+    environment:
+      - POSTGRES_DB=${AUDIT_DB_NAME:-trading_audit}
+      - POSTGRES_USER=${AUDIT_DB_USER:-audit_user}
+      - POSTGRES_PASSWORD=${AUDIT_DB_PASSWORD}
+    command: >
+      postgres
+      -c wal_level=logical
+      -c max_wal_senders=3
+      -c max_replication_slots=3
+    volumes:
+      - postgres-audit-data:/var/lib/postgresql/data
+    networks:
+      - zone-bc-audit
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUDIT_DB_USER:-audit_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  chroma-data:
+  questdb-data:
+  redis-data:
+  hsm-tokens:
+  regime-models:
+  postgres-audit-data:
