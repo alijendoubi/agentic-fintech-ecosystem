@@ -1,0 +1,52 @@
+# unified-memory (local-only, not git-tracked)
+.memory/index/
+.memory/sessions/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Rust
+target/
+Cargo.lock
+
+# Node
+node_modules/
+.next/
+dist/
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docker
+.docker/
+
+# Data / models (large files)
+*.ckpt
+*.safetensors
+*.bin
+*.pt
+*.pkl
+data/raw/
+data/processed/
