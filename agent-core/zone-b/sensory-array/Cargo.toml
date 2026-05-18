@@ -10,14 +10,16 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# QuestDB ILP (InfluxDB Line Protocol) writer
-questdb-rs = { version = "4", optional = true }
-# gRPC for sending regime-labeled packets to Zone A
+# UUID for snapshot IDs
+uuid = { version = "1", features = ["v4"] }
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+# gRPC for regime label subscription from Zone A
 tonic = "0.12"
 prost = "0.13"
-# Redis for execution state sharing with Zone B
-redis = { version = "0.27", features = ["tokio-comp"] }
-# Metrics
+# Redis pub/sub for snapshot publishing + regime label subscription
+redis = { version = "0.27", features = ["tokio-comp", "aio"] }
+# Metrics / structured logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Config
