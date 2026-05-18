@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package afe.shared;
+
+option python_out = "generated";
+
+import "market_snapshot.proto";
+import "trade_signal.proto";
+import "order_request.proto";
+
+// Per-trade Compliance Manifest written to Zone C with append-only semantics.
+// Cryptographically chained: each manifest hashes the previous manifest's ID.
+// Retention: 7 years (MiFID II requirement).
+message ComplianceManifest {
+  string manifest_id = 1;            // UUID
+  string prev_manifest_hash = 2;     // SHA-256 of previous manifest (chain link)
+  int64 created_at_ns = 3;
+
+  // Market context at decision time (point-in-time)
+  MarketSnapshot snapshot = 4;
+
+  // Cognitive Core outputs
+  double omega = 5;                  // Judge confidence score
+  double expected_value = 6;         // E[V]
+  string blue_node_thesis = 7;       // Full Blue Node CoT (compressed)
+  string red_node_challenge = 8;     // Full Red Node adversarial challenge
+  string judge_synthesis = 9;        // Judge synthesis summary
+  repeated string compression_summaries = 10;  // Last 3 debate summaries used
+
+  // Aegis PTC evaluation log
+  repeated PTCCheckResult ptc_checks = 11;
+  bool hard_block_triggered = 12;
+  bool soft_block_triggered = 13;
+  string soft_block_reason = 14;
+
+  // HITL override log (if any)
+  bool hitl_override_occurred = 15;
+  HITLOverrideRecord hitl_override = 16;
+
+  // Trade signal and order
+  TradeSignal signal = 17;
+  OrderRequest order = 18;
+
+  // Post-trade execution metrics (filled after settlement)
+  PostTradeMetrics post_trade = 19;
+
+  // Regulatory flags
+  bool mar_flag_triggered = 20;      // Market Abuse Regulation trigger
+  string mar_flag_reason = 21;
+}
+
+message PTCCheckResult {
+  string check_name = 1;
+  PTCType ptc_type = 2;
+  bool passed = 3;
+  string reason = 4;
+  double threshold_value = 5;
+  double actual_value = 6;
+}
+
+enum PTCType {
+  PTC_UNKNOWN = 0;
+  HARD_BLOCK = 1;
+  SOFT_BLOCK = 2;
+}
+
+message HITLOverrideRecord {
+  string operator_id = 1;
+  int64 override_timestamp_ns = 2;
+  string override_text = 3;
+  double reverse_guardrail_distress_score = 4;   // DistilBERT classifier output
+  bool cooling_period_enforced = 5;
+  string second_approver_id = 6;
+  string decision = 7;    // "approved" | "rejected"
+}
+
+message PostTradeMetrics {
+  double fill_price = 1;
+  double arrival_price = 2;
+  double slippage_bps = 3;            // (fill - arrival) / arrival * 10000
+  double market_impact_bps = 4;
+  double total_cost_bps = 5;
+  double venue_toxicity_score = 6;
+  string venue_used = 7;
+  bool adverse_selection = 8;         // Price moved against position within 1s
+  int64 fill_timestamp_ns = 9;
+}

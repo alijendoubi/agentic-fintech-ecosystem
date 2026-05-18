@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package afe.shared;
+
+option python_out = "generated";
+
+// Order request sent from Aegis to Execution Motor after all PTC checks pass.
+// Aegis has already signed this with the HSM PKCS#11 key.
+message OrderRequest {
+  string order_id = 1;           // UUID
+  string signal_id = 2;          // Parent TradeSignal ID
+  string symbol = 3;
+  int64 created_at_ns = 4;
+
+  OrderSide side = 5;
+  OrderType order_type = 6;
+  double quantity = 7;
+  double limit_price = 8;        // 0 for market orders
+  double stop_price = 9;         // 0 if not stop order
+
+  // HSM signature (PKCS#11 ECDSA over canonical order bytes)
+  bytes hsm_signature = 10;
+  string hsm_key_id = 11;        // Key ID for verification
+
+  // Routing hints
+  string preferred_venue = 12;   // Empty = SOR decides
+  double max_venue_toxicity = 13;
+
+  // Execution algorithm
+  ExecAlgo algo = 14;
+  double pov_target_rate = 15;   // For POV: fraction of ADV [0.01–0.25]
+  double iceberg_display_size = 16;  // For Iceberg: visible quantity
+
+  OrderStatus status = 17;
+}
+
+enum OrderSide {
+  ORDER_SIDE_UNKNOWN = 0;
+  ORDER_BUY = 1;
+  ORDER_SELL = 2;
+}
+
+enum OrderType {
+  ORDER_TYPE_UNKNOWN = 0;
+  MARKET = 1;
+  LIMIT = 2;
+  STOP = 3;
+  STOP_LIMIT = 4;
+}
+
+enum ExecAlgo {
+  ALGO_UNKNOWN = 0;
+  DIRECT = 1;       // Direct market order (small sizes)
+  ICEBERG = 2;      // Hidden size execution
+  POV = 3;          // Percentage of Volume
+}
+
+enum OrderStatus {
+  ORDER_PENDING = 0;
+  ORDER_SENT = 1;
+  ORDER_PARTIAL = 2;
+  ORDER_FILLED = 3;
+  ORDER_CANCELLED = 4;
+  ORDER_REJECTED = 5;
+}

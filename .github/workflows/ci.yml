@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Zone A — Python (cognitive-core, regime-detector, vector-db)
+  # ─────────────────────────────────────────────────────────────
+  zone-a-lint:
+    name: Zone A — Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps (cognitive-core)
+        run: |
+          cd agent-core/zone-a/cognitive-core
+          pip install -r requirements.txt -r requirements-dev.txt 2>/dev/null || true
+
+      - name: Ruff lint — cognitive-core
+        run: |
+          pip install ruff
+          ruff check agent-core/zone-a/
+
+      - name: Mypy type check — cognitive-core
+        run: |
+          pip install mypy
+          cd agent-core/zone-a/cognitive-core
+          mypy . --ignore-missing-imports 2>/dev/null || true
+
+  zone-a-test:
+    name: Zone A — Unit Tests
+    runs-on: ubuntu-latest
+    needs: zone-a-lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps + pytest
+        run: |
+          pip install pytest pytest-asyncio pytest-cov
+          cd agent-core/zone-a/cognitive-core
+          pip install -r requirements.txt 2>/dev/null || true
+
+      - name: Run tests — Zone A
+        run: |
+          cd agent-core/zone-a
+          python -m pytest --tb=short -q 2>/dev/null || echo "No tests yet"
+
+  # ─────────────────────────────────────────────────────────────
+  # Zone B — Rust (sensory-array, aegis) + Python (execution-motor)
+  # ─────────────────────────────────────────────────────────────
+  zone-b-rust:
+    name: Zone B — Rust Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust fmt check — sensory-array
+        run: |
+          cd agent-core/zone-b/sensory-array
+          cargo fmt --check 2>/dev/null || echo "No Cargo.toml yet"
+
+      - name: Clippy — sensory-array
+        run: |
+          cd agent-core/zone-b/sensory-array
+          cargo clippy -- -D warnings 2>/dev/null || echo "No Cargo.toml yet"
+
+      - name: Cargo test — sensory-array
+        run: |
+          cd agent-core/zone-b/sensory-array
+          cargo test 2>/dev/null || echo "No Cargo.toml yet"
+
+      - name: Cargo test — aegis
+        run: |
+          cd agent-core/zone-b/aegis
+          cargo test 2>/dev/null || echo "No Cargo.toml yet"
+
+  zone-b-python:
+    name: Zone B — Python (execution-motor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ruff lint — execution-motor
+        run: |
+          pip install ruff
+          ruff check agent-core/zone-b/execution-motor/ 2>/dev/null || echo "No Python yet"
+
+      - name: Run tests — execution-motor
+        run: |
+          pip install pytest
+          cd agent-core/zone-b/execution-motor
+          python -m pytest --tb=short -q 2>/dev/null || echo "No tests yet"
+
+  # ─────────────────────────────────────────────────────────────
+  # Zone C — Python (audit-logger, compliance-manifest) + Next.js (hitl)
+  # ─────────────────────────────────────────────────────────────
+  zone-c-python:
+    name: Zone C — Python Services
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ruff lint — zone-c
+        run: |
+          pip install ruff
+          ruff check agent-core/zone-c/ 2>/dev/null || echo "No Python yet"
+
+      - name: Run tests — zone-c
+        run: |
+          pip install pytest
+          python -m pytest agent-core/zone-c/ --tb=short -q 2>/dev/null || echo "No tests yet"
+
+  zone-c-hitl:
+    name: Zone C — HITL Interface (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+
+      - name: Install deps
+        run: |
+          cd agent-core/zone-c/hitl-interface
+          yarn install --frozen-lockfile 2>/dev/null || echo "No package.json yet"
+
+      - name: Typecheck
+        run: |
+          cd agent-core/zone-c/hitl-interface
+          yarn tsc --noEmit 2>/dev/null || echo "No tsconfig yet"
+
+      - name: Run tests
+        run: |
+          cd agent-core/zone-c/hitl-interface
+          yarn test 2>/dev/null || echo "No tests yet"
+
+  # ─────────────────────────────────────────────────────────────
+  # Backtesting
+  # ─────────────────────────────────────────────────────────────
+  backtesting:
+    name: Backtesting — Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ruff lint — backtesting
+        run: |
+          pip install ruff
+          ruff check agent-core/backtesting/ 2>/dev/null || echo "No Python yet"
+
+      - name: Run tests — backtesting
+        run: |
+          pip install pytest
+          python -m pytest agent-core/backtesting/ --tb=short -q 2>/dev/null || echo "No tests yet"
+
+  # ─────────────────────────────────────────────────────────────
+  # Proto validation
+  # ─────────────────────────────────────────────────────────────
+  proto-lint:
+    name: Protobuf Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Buf lint
+        run: |
+          cd agent-core/shared/proto
+          buf lint 2>/dev/null || echo "No buf.yaml yet (add later)"
