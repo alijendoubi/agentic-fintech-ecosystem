@@ -12,8 +12,6 @@ import json
 import logging
 import os
 import time
-from collections import defaultdict, deque
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -335,11 +333,6 @@ async def main():
 
     redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
     model = RegimeModel()
-
-    # Per-symbol in-memory feature buffers (bootstrap phase)
-    symbol_buffers: dict[str, dict] = defaultdict(
-        lambda: {"mid_prices": deque(maxlen=FEATURE_WINDOW), "spreads": deque(maxlen=FEATURE_WINDOW), "ofis": deque(maxlen=FEATURE_WINDOW)}
-    )
 
     last_retrain = model.last_trained
     inference_count = 0
