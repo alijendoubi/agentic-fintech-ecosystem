@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package afe.shared;
 
-option python_out = "generated";
-
 // Normalized Level 2 market snapshot produced by the Sensory Array hot path.
 // Stamped with ingestion_timestamp_ns for freshness TTL enforcement.
 message MarketSnapshot {

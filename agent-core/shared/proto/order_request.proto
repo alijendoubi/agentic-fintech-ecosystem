@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package afe.shared;
 
-option python_out = "generated";
 
 // Order request sent from Aegis to Execution Motor after all PTC checks pass.
 // Aegis has already signed this with the HSM PKCS#11 key.

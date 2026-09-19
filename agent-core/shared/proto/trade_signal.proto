@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package afe.shared;
 
-option python_out = "generated";
 
 import "market_snapshot.proto";
 

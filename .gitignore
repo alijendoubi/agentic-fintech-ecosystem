@@ -8,3 +8,23 @@ __pycache__/
 venv/
 node_modules/
 .env
+
+# Rust
+target/
+
+# Secrets and local env (never commit)
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+
+# Generated protobuf stubs (produced by agent-core/shared/proto/generate.sh)
+agent-core/shared/generated/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
