@@ -124,7 +124,7 @@ PROPOSED single definition (fail-safe direction; numbers provisional pending Pha
 - Let `R_s` = the set of regimes the strategy is validated for (from the strategy spec; TODO(owner): no strategy specification exists in the repo). Let `c` = HMM posterior confidence from Aegis's own regime subscription (fallback: the signal field, flagged in the log).
 - Fire `REASON_REGIME_LOW_CONFIDENCE` if `c < C_MIN`; fire `REASON_REGIME_MISMATCH` if `regime not in R_s`. Either => HELD_FOR_HUMAN. `C_MIN` PROPOSED provisional 0.60 (the RTS6 template value; it holds more orders, i.e. errs safe).
 - `REGIME_UNKNOWN`, or a signal regime that differs from Aegis's own latest regime label, is treated as mismatch.
-- Phase 4 calibration (`phase_4_backtesting_compliance.md` §6) must set `C_MIN` from data. Both `ptc-calibration.md` and the RTS6 template must then be updated to the final definition. Until then both documents carry a contradiction note.
+- Phase 4 calibration (`phase_4_backtesting_compliance.md` §7) must set `C_MIN` from data. Both `ptc-calibration.md` and the RTS6 template must then be updated to the final definition. Until then both documents carry a contradiction note.
 
 ### 4.5 Market orders
 
