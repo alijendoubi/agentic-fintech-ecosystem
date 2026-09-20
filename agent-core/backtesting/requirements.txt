@@ -1,12 +1,9 @@
-numpy>=2.0.0
-pandas>=2.2.0
-scipy>=1.14.0
-scikit-learn>=1.5.0
-hmmlearn>=0.3.2
-matplotlib>=3.9.0
-plotly>=5.24.0
-optuna>=4.0.0
-python-dotenv>=1.0.0
-structlog>=24.4.0
-questdb>=1.0.0
-tqdm>=4.67.0
+# Runtime dependencies (ranges pinned to majors that were tested: numpy 2.5, pandas 2.3, scipy 1.x)
+numpy>=2.0,<3
+pandas>=2.2,<3
+scipy>=1.14,<2
+# America/New_York zone data for the regular-trading-hours filter (Windows ships no tz database)
+tzdata>=2024.1
+
+# Optional: Parquet input (data.read_bar_frame). Not needed for CSV. Not exercised by the tests.
+# pyarrow>=15,<25
