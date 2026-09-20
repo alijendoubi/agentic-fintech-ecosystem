@@ -57,7 +57,8 @@ def buy(qty: float = 10, **kw: object) -> OrderIntent:
 
 def cfg(**exec_kw: object) -> BacktestConfig:
     return BacktestConfig(
-        initial_cash=D("100000"), execution=ExecutionConfig(**exec_kw)  # type: ignore[arg-type]
+        initial_cash=D("100000"),
+        execution=ExecutionConfig(**exec_kw),  # type: ignore[arg-type]
     )
 
 
@@ -144,9 +145,7 @@ def test_sell_side_receives_worse_price() -> None:
 
 def test_minimum_commission_floor() -> None:
     costs = CostModel(commission_per_share=D("0.001"), min_commission=D("1.00"))
-    res = run_backtest(
-        mk([100, 100, 100]), once(buy(10)), BacktestConfig(cost=costs)
-    )
+    res = run_backtest(mk([100, 100, 100]), once(buy(10)), BacktestConfig(cost=costs))
     assert res.fills[0].fee == D("1.00")
 
 
@@ -179,9 +178,7 @@ def test_sqrt_impact_uses_trailing_volatility_and_sqrt_scaling() -> None:
 
 
 def test_partial_fills_respect_volume_participation_cap() -> None:
-    res = run_backtest(
-        mk([100.0] * 6, volume=1000.0), once(buy(250)), cfg(participation_cap=0.1)
-    )
+    res = run_backtest(mk([100.0] * 6, volume=1000.0), once(buy(250)), cfg(participation_cap=0.1))
     assert [(f.timestamp_ns, f.quantity) for f in res.fills] == [
         (20, D("100")),
         (30, D("100")),
@@ -326,9 +323,7 @@ def test_same_seed_same_result_different_seed_differs_with_jitter() -> None:
     b = run_backtest(data, _alternating, base)
     assert a.fingerprint() == b.fingerprint()
     np.testing.assert_array_equal(a.equity.equity, b.equity.equity)
-    other = BacktestConfig(
-        execution=base.execution, seed=base.seed + 1
-    )
+    other = BacktestConfig(execution=base.execution, seed=base.seed + 1)
     assert run_backtest(data, _alternating, other).fingerprint() != a.fingerprint()
 
 

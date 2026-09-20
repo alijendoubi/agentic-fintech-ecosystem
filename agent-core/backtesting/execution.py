@@ -141,9 +141,7 @@ def bar_sigma(closes: NDArray[np.float64], bar: Bar) -> float:
     return (bar.high - bar.low) / bar.close
 
 
-def slippage_fraction(
-    cost: CostModel, quantity: float, volume: float, sigma: float
-) -> float:
+def slippage_fraction(cost: CostModel, quantity: float, volume: float, sigma: float) -> float:
     """Total adverse price fraction (half-spread + impact) for one fill."""
     frac = cost.half_spread_bps * BPS
     participation = quantity / volume if volume > 0 else 0.0

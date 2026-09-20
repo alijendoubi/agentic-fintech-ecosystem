@@ -58,9 +58,10 @@ def test_max_drawdown_and_duration() -> None:
     assert dd == pytest.approx(0.25)  # (120-90)/120
     assert periods == 4  # peak at index 1, recovery at index 5
     assert dur_ns == 40  # ts[5]-ts[1]
-    assert compute_metrics(
-        np.arange(7) * 10, eq, np.zeros(7), [], D(0), MetricsConfig()
-    ).calmar is not None
+    assert (
+        compute_metrics(np.arange(7) * 10, eq, np.zeros(7), [], D(0), MetricsConfig()).calmar
+        is not None
+    )
 
 
 def test_drawdown_never_recovered_runs_to_the_end() -> None:
@@ -80,9 +81,7 @@ def test_trade_statistics() -> None:
 
 def test_profit_factor_undefined_without_losses_and_hit_rate_without_trades() -> None:
     eq = np.array([100.0, 101.0, 102.0])
-    only_wins = compute_metrics(
-        np.arange(3), eq, np.zeros(3), [trade("1")], D(0), MetricsConfig()
-    )
+    only_wins = compute_metrics(np.arange(3), eq, np.zeros(3), [trade("1")], D(0), MetricsConfig())
     assert only_wins.profit_factor is None and only_wins.hit_rate == 1.0
     none = compute_metrics(np.arange(3), eq, np.zeros(3), [], D(0), MetricsConfig())
     assert none.hit_rate is None and none.profit_factor is None and none.n_trades == 0

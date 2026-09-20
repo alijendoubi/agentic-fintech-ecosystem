@@ -134,9 +134,7 @@ def _event_regime(ev: FeedEvent, regime_symbol: str | None) -> int:
     return int(ev.new_bars[min(ev.new_bars)].regime)
 
 
-def _process_pending(
-    state: _RunState, ev: FeedEvent, cfg: BacktestConfig
-) -> None:
+def _process_pending(state: _RunState, ev: FeedEvent, cfg: BacktestConfig) -> None:
     """Fill / expire / reject pending orders at this event, FIFO."""
     capacity: dict[str, Decimal] = {}
     still_open: list[PendingOrder] = []
@@ -284,8 +282,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
     sys.stdout.write(
-        json.dumps({"fingerprint": result.fingerprint(), "metrics": result.metrics.to_dict()},
-                   indent=2, allow_nan=False) + "\n"
+        json.dumps(
+            {"fingerprint": result.fingerprint(), "metrics": result.metrics.to_dict()},
+            indent=2,
+            allow_nan=False,
+        )
+        + "\n"
     )
     return 0
 

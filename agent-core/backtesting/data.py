@@ -193,17 +193,13 @@ class MarketData:
             raise DataValidationError("empty regime series")
         order = np.argsort(np.asarray(label_ts_ns, dtype=np.int64), kind="stable")
         sorted_ts = np.asarray(label_ts_ns, dtype=np.int64)[order]
-        sorted_lab = np.asarray(
-            [int(parse_regime(labels[int(i)])) for i in order], dtype=np.int8
-        )
+        sorted_lab = np.asarray([int(parse_regime(labels[int(i)])) for i in order], dtype=np.int8)
         out: list[SymbolSeries] = []
         for s in self._series.values():
             pos = np.searchsorted(sorted_ts, s.ts, side="right") - 1
             reg = np.where(pos >= 0, sorted_lab[np.maximum(pos, 0)], 0).astype(np.int8)
             out.append(
-                SymbolSeries.create(
-                    s.symbol, s.ts, s.open, s.high, s.low, s.close, s.volume, reg
-                )
+                SymbolSeries.create(s.symbol, s.ts, s.open, s.high, s.low, s.close, s.volume, reg)
             )
         return MarketData(out)
 
