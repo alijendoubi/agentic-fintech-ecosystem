@@ -1,7 +1,28 @@
 # Pre-Trade Control Calibration Methodology
 
-**MiFID II RTS 6 Reference:** Article 17(1), ESMA Guidelines on Systems and Controls
-**Reviewed:** [YYYY-MM-DD]
+> ## WARNING: THE FIGURES IN THIS DOCUMENT ARE UNSUBSTANTIATED. DO NOT RELY ON THEM.
+> As of 2026-09-19 there is **no backtest engine, no historical dataset and no seed-scenario database** in this repository (`agent-core/backtesting/` is an empty package; there is no `engine.py` or `wfa.py`; no vector-DB scenario data exists; Aegis is a placeholder). The "current calibration" values and "results" below (1.5% collar "from 3-year P99", 1.8% "P99.9 daily loss", the "500 seed scenarios" win rates of 38/48/57/66%, the "45% higher maximum drawdown" for regime mismatch) **cannot have been produced from anything in this repo** and have no provenance. They are retained only so that the intended methodology and the values now configured in `docker-compose.yml` remain visible. They must not be cited to a regulator, used to justify a limit, or treated as calibrated.
+>
+> **Known contradiction (unresolved):** the *Regime Mismatch* soft block here (mismatch **AND** HMM confidence **> 0.70**) contradicts `mifid-ii-rts6-self-assessment-template.md` §2.2 (HMM confidence **< 0.6 OR** mismatch). They differ in boolean structure and in direction. A proposed single definition is in `docs/specs/phase_3_aegis_execution.md` §4.4. Further inconsistency: order-size limit here uses 20-day ADV, but `MarketSnapshot` and the Phase 1 spec provide `adv_30d`.
+>
+> **Procedure that will replace these figures:** see "Replacement procedure" at the end of this document and `docs/specs/phase_4_backtesting_compliance.md` §7. This banner is to be removed only when each section is regenerated from a signed calibration report.
+>
+> Status: **DRAFT / methodology description / requires qualified legal review** for every reference to RTS 6 or ESMA guidance below (article and guideline citations here have not been verified).
+
+## Claims vs implementation
+
+| Claim in this document | Implemented / evidenced? | Tracking |
+|---|---|---|
+| Price collar 1.5% derived from 3-year P99 | No evidence; value exists only as `PRICE_COLLAR_PCT=1.5` in compose; Aegis not implemented | `phase_4_backtesting_compliance.md` §7; `phase_3_aegis_execution.md` C09 |
+| Daily drawdown 2.0% from 99.9th pct of daily loss (1.8%) | No evidence; config value only | Phase 4 §7; Phase 3 C15 |
+| Order size limit 0.5% of 20-day ADV, recomputed daily | Not implemented; ADV window inconsistent with `adv_30d` | Phase 3 C12, §3 |
+| Unusual-order-size soft block (P95 of 30 days) | Not implemented; no order history exists | Phase 3 C19 |
+| Regime mismatch threshold and 45% drawdown effect | Not implemented; contradicts RTS6 template | Phase 3 §4.4 |
+| 500-scenario win rates by omega bucket | No scenario database; not reproducible | Phase 4 §7 |
+| "Independently set by the investment firm" | TODO(owner): no evidence of who sets thresholds | n/a |
+
+**MiFID II RTS 6 Reference:** Article 17(1), ESMA Guidelines on Systems and Controls (citation unverified; requires qualified legal review)
+**Reviewed:** TODO(owner): date of review (never reviewed: no calibration data exists)
 
 ---
 
@@ -27,7 +48,7 @@ Per ESMA Guidelines, PTC thresholds must be:
 5. Current calibration: 1.5% (P99 across strategy universe symbols over 3-year period)
 
 **Data:** Polygon.io daily OHLCV + intraday aggregated bars, 2023-01-01 to 2026-01-01
-**Next review:** [Date + 12 months]
+**Next review:** TODO(owner): set after the first real calibration report exists
 
 ---
 
@@ -48,7 +69,7 @@ Per ESMA Guidelines, PTC thresholds must be:
 
 ## Hard Block: Order Size Limit
 
-**Threshold:** [X] shares per order, where X = 0.5% of 20-day ADV
+**Threshold:** X shares per order, where X = 0.5% of 20-day ADV (computed value, not a placeholder; UNSUBSTANTIATED, and the ADV window conflicts with `adv_30d`, see banner)
 
 **Calibration Methodology:**
 1. Square-Root Law: Market Impact ≈ σ · √(Q/ADV)
@@ -106,4 +127,19 @@ Per ESMA Guidelines, PTC thresholds must be:
 4. Threshold: ω < 0.55 → abstain. Below this, E[V] is negative or near-zero after costs.
 
 **Data:** 500-scenario seed database (adversarial Vector DB); backtesting outcome labels
-**Next review:** When Vector DB is updated with 100+ new scenarios
+**Next review:** When Vector DB is updated with 100+ new scenarios (note: `zone-a/vector-db/` currently holds only `__init__.py`)
+
+---
+
+## Replacement procedure (PROPOSED; replaces the unsubstantiated figures above)
+
+Full requirements are in `docs/specs/phase_4_backtesting_compliance.md` §7. Summary:
+
+1. Obtain and version a historical dataset; record a dataset manifest (source, date range, file hashes, universe). TODO(owner): data source/licence/depth.
+2. Build the backtest engine and regime-aware WFA (Phase 4 §4-§5); enforce the holdout.
+3. For each control, run its calibration script; each emits a **calibration report** with dataset hash, code commit, seed, method, computed value **with confidence interval**, the value chosen, safety margin and the person who chose it.
+4. Only a control with a signed report may be configured in Aegis. Configure the value from the report, not from this document.
+5. Regenerate the sections above from the reports, resolve the regime-mismatch contradiction and the ADV-window inconsistency, then remove the banner.
+6. Note the statistical caveats: the 99.9th percentile over ~5 years of daily data rests on about one observation (report a bootstrap CI or use extreme-value methods); 500 scenarios split across four omega buckets give wide binomial intervals; an LLM evaluated on periods inside its training data can be contaminated by look-ahead.
+
+Regulatory review of the calibration approach against ESMA/RTS 6 expectations **requires qualified legal review**.
