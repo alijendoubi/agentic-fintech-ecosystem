@@ -2,7 +2,9 @@
 
 **SHARP:** Self-Evolving Human-Auditable Rubric Policy
 
-Every rubric change proposed by the Reflector Node must pass a mandatory human promotion gate before being deployed to the live system. This is required by:
+> **Status: DRAFT process; not operated, no tooling exists.** Legal citations below (EU AI Act "Article 83", MiFID II RTS 6 wording) are unverified and **require qualified legal review** (see the status box in `docs/regulatory/eu-ai-act-limited-risk-disclosure.md`). Not defined anywhere in the repo, TODO(owner): the "regime-conditional performance thresholds" of Step 4 (see `docs/specs/phase_4_backtesting_compliance.md` §5), the persons filling the Compliance Officer / Legal / Risk Manager roles, and the CI job that Step 4 says triggers the backtest. The canary in Step 6 is detailed in `docs/specs/phase_5_canary_production.md`.
+
+Every rubric change proposed by the Reflector Node must pass a mandatory human promotion gate before being deployed to the live system. This is stated to be required by (unverified, see status box):
 - **EU AI Act Article 83:** Significant changes to AI system logic may require a new conformity assessment
 - **MiFID II RTS 6:** All algorithm changes must be validated before activation
 
