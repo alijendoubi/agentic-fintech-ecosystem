@@ -10,7 +10,6 @@ detector abstained. The Redis client is injected, so tests use a fake.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 from dataclasses import dataclass
@@ -18,7 +17,6 @@ from typing import Protocol
 
 import structlog
 from redis.exceptions import RedisError
-
 from regime_detector.config import is_valid_symbol
 from regime_detector.labels import RegimeLabel
 
@@ -72,7 +70,7 @@ class RegimePublisher:
         """True if Redis accepted the message. The next cycle republishes anyway."""
         try:
             await self._client.publish(self._channel, message.to_json())
-        except (RedisError, OSError, TimeoutError, asyncio.TimeoutError) as exc:
+        except (RedisError, OSError, TimeoutError) as exc:
             log.error(
                 "regime_publish_failed",
                 symbol=message.symbol,
