@@ -14,7 +14,7 @@
 | Every trade decision produces a Compliance Manifest with full debate trace (Art. 13 row) | No (`compliance-manifest` is an empty package) | Phase 4 §9 |
 | HITL escalation; Dead Man's Switch; Reverse Guardrail classifier (Art. 14 row) | No. No classifier, data or policy exists | Phase 3 §5; Phase 4 §10 |
 | Regime-aware WFA, Monte Carlo, KL drift monitoring (Art. 15 row) | No | Phase 4 §4-§8 |
-| Point-in-time data, survivorship-bias-free universe, MAD outlier detection (Art. 10 row) | Partly: MAD scoring exists in `sensory-array/normalizer.rs`; point-in-time/survivorship-free training data does not | Phase 4 §3 |
+| Point-in-time data, survivorship-bias-free universe, MAD outlier detection (Art. 10 row) | Partly: MAD scoring exists in `zone-b/sensory-array/src/normalizer.rs`; point-in-time/survivorship-free training data does not | Phase 4 §3 |
 | 7-year manifest retention with hash chaining (Art. 12 row) | No | Phase 4 §8-§9 |
 | SHARP legal-assessment gate (§4) | Process document only; no tooling | `docs/processes/sharp-promotion.md` |
 | GPAI documentation requested from Anthropic/Mistral; no training on customer data confirmed (§2) | No: boxes unchecked | TODO(owner) |

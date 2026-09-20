@@ -42,7 +42,7 @@ Names follow SHARP Step 6 [EXISTING]: omega distribution, venue toxicity, KL div
 |---|---|---|
 | omega distribution | Distribution (mean, quantiles) of Judge omega on submitted signals | Phase 4 backtest + Stage 0 |
 | PTC trigger rate | Rejections/holds per control (C01-C19) per 100 signals | Phase 4 backtest + Stage 0 |
-| KL divergence | Live vs reference distribution per the audit-logger monitor | Reference to be defined (Phase 4 §8.5) |
+| KL divergence | Live vs reference distribution per the audit-logger monitor | Reference to be defined (Phase 4 §8 item 5) |
 | Venue toxicity | Per SHARP; scoring method not specified anywhere yet (TODO(owner)); may be moot with a single broker | n/a |
 | Slippage vs model | Realised slippage minus modelled cost, in bps, per order | Phase 4 cost model |
 | Order-to-fill and decision latency | p50/p99 of Aegis decision time (< 50 ms target, Phase 3 §8), signal-to-order time | Phase 3 measurements |
