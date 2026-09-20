@@ -236,7 +236,13 @@ async fn ingestor_reconnect_survives_many_drops_with_backoff() {
         behavior(frames, if i < 6 { After::Drop } else { After::Hold })
     })
     .await;
-    let h = start_ingestor(test_config(server.port));
+    // Sessions are never "stable" here, so the failure counter keeps growing
+    // past max_reconnect_attempts (2): the spec says log CRITICAL and keep going.
+    let config = Config {
+        reconnect_stable_ms: 60_000,
+        ..test_config(server.port)
+    };
+    let h = start_ingestor(config);
 
     assert!(
         eventually(Duration::from_secs(10), || server.connections() >= 7).await,
@@ -258,6 +264,34 @@ async fn ingestor_reconnect_survives_many_drops_with_backoff() {
     }
     assert!(eventually(Duration::from_secs(3), || h.questdb.len() >= 7).await);
     assert!(Metrics::get(&h.metrics.reconnects) >= 6);
+    h.stop().await.expect("clean shutdown");
+}
+
+#[tokio::test]
+async fn backoff_resets_after_a_stable_session() {
+    // Every session lives past reconnect_stable (0 ms), so each reconnect
+    // starts again from the base delay instead of climbing to the cap.
+    let server = start_server(|i| {
+        let frames = vec![quote_frame(150.0, 150.05, now_ms())];
+        behavior(frames, if i < 6 { After::Drop } else { After::Hold })
+    })
+    .await;
+    let config = Config {
+        reconnect_base_ms: 30,
+        reconnect_max_ms: 2_000,
+        reconnect_stable_ms: 0,
+        ..test_config(server.port)
+    };
+    let h = start_ingestor(config);
+    assert!(eventually(Duration::from_secs(10), || server.connections() >= 7).await);
+    let times = server.accept_times();
+    for pair in times.windows(2).take(6) {
+        let gap = pair[1].duration_since(pair[0]);
+        assert!(
+            gap < Duration::from_millis(400),
+            "backoff did not reset: {gap:?}"
+        );
+    }
     h.stop().await.expect("clean shutdown");
 }
 

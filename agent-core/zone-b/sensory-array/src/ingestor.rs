@@ -185,7 +185,8 @@ impl Ingestor {
         .map_err(|_| SensoryError::session("WebSocket connect timed out"))??;
         let (mut sink, mut source) = ws.split();
 
-        // Sent immediately: Polygon queues it behind its own `connected` status.
+        // Sent without waiting for the `connected` status, so both orderings work;
+        // `await_auth` skips every status that is not decisive.
         let auth = serde_json::json!({ "action": "auth", "params": self.config.polygon_api_key });
         sink.send(Message::Text(auth.to_string())).await?;
         timeout(self.config.ws_handshake_timeout(), await_auth(&mut source))
