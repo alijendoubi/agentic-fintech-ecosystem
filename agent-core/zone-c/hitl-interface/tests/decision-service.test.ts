@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockHitlApiClient } from "@/lib/api/mock-client";
-import type { ApiError, HitlApiClient, OperatorContext, Result } from "@/lib/api/types";
+import type { ApiError, HitlApiClient, Result } from "@/lib/api/types";
 import { submitOperatorDecision } from "@/lib/decision-service";
 import type { OperatorSession } from "@/lib/auth/verify";
 import type { Signal } from "@/lib/signals/schema";
@@ -111,8 +111,8 @@ describe("submitOperatorDecision: deny on error", () => {
   it("a failure while submitting (after a successful read) is a denial", async () => {
     const base = new MockHitlApiClient({ signals: [makeSignal()], fourEyes: FOUR_EYES, now: () => NOW_MS });
     const flaky: HitlApiClient = {
-      listHolds: (ctx: OperatorContext) => base.listHolds(ctx),
-      getHold: (id: string, ctx: OperatorContext) => base.getHold(id, ctx),
+      listHolds: () => base.listHolds(),
+      getHold: (id: string) => base.getHold(id),
       submitDecision: async (): Promise<Result<Signal>> => ({ ok: false, error: { code: "timeout", message: "t" } }),
     };
     const result = await submitOperatorDecision(
@@ -128,8 +128,8 @@ describe("submitOperatorDecision: deny on error", () => {
   it("a backend answer that does not confirm the decision is a denial", async () => {
     const base = new MockHitlApiClient({ signals: [makeSignal()], fourEyes: FOUR_EYES, now: () => NOW_MS });
     const lying: HitlApiClient = {
-      listHolds: (ctx: OperatorContext) => base.listHolds(ctx),
-      getHold: (id: string, ctx: OperatorContext) => base.getHold(id, ctx),
+      listHolds: () => base.listHolds(),
+      getHold: (id: string) => base.getHold(id),
       submitDecision: async (): Promise<Result<Signal>> => ({ ok: true, value: makeSignal({ hitlStatus: "APPROVED" }) }),
     };
     const result = await submitOperatorDecision(
