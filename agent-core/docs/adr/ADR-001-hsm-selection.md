@@ -51,3 +51,13 @@ Rotation frequency: every 90 days, or immediately upon any suspected compromise.
 ## DORA Compliance Note
 
 This procedure is part of the DORA ICT Risk Management Framework (see `dora-ict-risk-management-framework.md`). Key rotation events must be logged to Zone C audit store within 4 hours of completion.
+
+---
+
+## Status note (2026-09-19, appended; the Decision above is unchanged)
+
+This ADR remains Accepted, but two parts of it are in **open conflict** with other repo facts and are unimplemented (Aegis is a placeholder):
+1. The working broker (Alpaca, see `docker-compose.yml`) authenticates with an API key and secret, not with a signature an HSM can produce, so what the HSM signs is unresolved. Also, the broker key is issued by the broker and cannot be generated in the HSM as the rotation steps assume. See **ADR-004** (Proposed).
+2. The "2-of-3 MPC threshold ECDSA" scheme has no design in the repo and is unverified against the chosen HSM; "Shard 3: Cold backup (Zone C audit store)" conflicts with README/compose describing Zone C as air-gapped from signing keys.
+
+The "Compliance Officer (TBD)" decider is still unnamed: TODO(owner).
