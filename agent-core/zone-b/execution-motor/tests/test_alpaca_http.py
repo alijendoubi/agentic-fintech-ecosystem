@@ -12,13 +12,13 @@ from typing import Any
 
 import httpx
 import pytest
-
 from execution_motor.alpaca import AlpacaCredentials, AlpacaPaperBroker
 from execution_motor.broker import BrokerOrderRequest
 from execution_motor.errors import (
     BrokerError,
     BrokerReadError,
     BrokerRejectedError,
+    ConfigError,
     SubmitOutcomeUnknown,
 )
 from execution_motor.models import ExecutionStatus, OrderType, Side
@@ -48,7 +48,9 @@ def order_json(**overrides: Any) -> dict[str, Any]:
 
 
 def jresp(status: int, body: Any) -> httpx.Response:
-    return httpx.Response(status, text=json.dumps(body), headers={"content-type": "application/json"})
+    return httpx.Response(
+        status, text=json.dumps(body), headers={"content-type": "application/json"}
+    )
 
 
 class Script:
@@ -184,7 +186,10 @@ def test_reject_message_is_truncated_and_carries_no_secrets() -> None:
 
 
 def test_timeout_reconciles_by_client_order_id_and_reports_truth() -> None:
-    script = Script(timeout(), jresp(200, order_json(status="filled", filled_qty="10", filled_avg_price="190.5")))
+    script = Script(
+        timeout(),
+        jresp(200, order_json(status="filled", filled_qty="10", filled_avg_price="190.5")),
+    )
     result = make_broker(script).submit_order(request())
     assert script.methods() == ["POST", "GET"]  # POST exactly once: never blind-retried
     assert script.requests[1].url.path == "/v2/orders:by_client_order_id"
@@ -288,8 +293,20 @@ def test_read_retries_exhausted_raises() -> None:
 
 def test_get_positions_parses_decimals() -> None:
     body = [
-        {"symbol": "AAPL", "qty": "10", "avg_entry_price": "190.25", "market_value": "1902.5", "side": "long"},
-        {"symbol": "TSLA", "qty": "-3", "avg_entry_price": "250.10", "market_value": "-750.3", "side": "short"},
+        {
+            "symbol": "AAPL",
+            "qty": "10",
+            "avg_entry_price": "190.25",
+            "market_value": "1902.5",
+            "side": "long",
+        },
+        {
+            "symbol": "TSLA",
+            "qty": "-3",
+            "avg_entry_price": "250.10",
+            "market_value": "-750.3",
+            "side": "short",
+        },
     ]
     positions = make_broker(Script(jresp(200, body))).get_positions()
     assert [p.symbol for p in positions] == ["AAPL", "TSLA"]
@@ -315,8 +332,12 @@ def test_get_account_parses_decimals_and_flags() -> None:
 
 def test_get_account_flags_blocked_accounts() -> None:
     body = {
-        "status": "ACTIVE", "buying_power": "1", "cash": "1", "equity": "1",
-        "trading_blocked": True, "account_blocked": False,
+        "status": "ACTIVE",
+        "buying_power": "1",
+        "cash": "1",
+        "equity": "1",
+        "trading_blocked": True,
+        "account_blocked": False,
     }
     assert make_broker(Script(jresp(200, body))).get_account().trading_blocked is True
 
@@ -385,3 +406,26 @@ def test_secrets_are_not_logged() -> None:
     assert logs, "expected the ambiguous-submit path to log"
     dump = json.dumps(logs, default=str)
     assert "PKTESTKEY123" not in dump and "SECRETVALUE456" not in dump
+
+
+def test_negative_read_retries_refused() -> None:
+    with pytest.raises(ConfigError):
+        AlpacaPaperBroker(CREDS, read_retries=-1)
+
+
+def test_reconcile_response_for_a_different_order_is_not_trusted() -> None:
+    script = Script(jresp(200, order_json(client_order_id="other")))
+    with pytest.raises(BrokerReadError):
+        make_broker(script).get_order_by_client_id(CID)
+
+
+def test_cancel_transport_error_is_reported() -> None:
+    script = Script(timeout())
+    with pytest.raises(BrokerError):
+        make_broker(script).cancel_order("904837e3-3b76-47ec-b432-046db621571b")
+
+
+def test_socket_guard_blocks_the_real_transport() -> None:
+    broker = AlpacaPaperBroker(CREDS, read_retries=0)
+    with pytest.raises(AssertionError, match="network access attempted"):
+        broker.get_account()  # proves the autouse socket guard is active

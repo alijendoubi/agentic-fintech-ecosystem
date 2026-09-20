@@ -100,7 +100,9 @@ def resolve_base_url(requested: str | None, environ: Mapping[str, str]) -> str:
         raise LiveTradingRefused(
             f"live endpoint requires {LIVE_OPT_IN_ENV}=true AND {LIVE_CONFIRM_ENV}"
         )
-    raise ConfigError("unrecognised Alpaca endpoint; only the paper (or gated live) host is allowed")
+    raise ConfigError(
+        "unrecognised Alpaca endpoint; only the paper (or gated live) host is allowed"
+    )
 
 
 class AlpacaBroker(Broker):
@@ -190,9 +192,7 @@ class AlpacaBroker(Broker):
     # ------------------------------------------------------------------- reads
 
     def get_order_by_client_id(self, client_order_id: str) -> BrokerOrder | None:
-        resp = self._read(
-            "/v2/orders:by_client_order_id", {"client_order_id": client_order_id}
-        )
+        resp = self._read("/v2/orders:by_client_order_id", {"client_order_id": client_order_id})
         if resp.status_code == 404:
             return None
         order = self._parsed(resp, parse.parse_order)

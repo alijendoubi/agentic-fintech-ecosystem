@@ -4,7 +4,6 @@ import threading
 from decimal import Decimal
 
 import pytest
-
 from execution_motor.limits import (
     InMemoryIdempotencyStore,
     NotionalLedger,
@@ -61,7 +60,9 @@ def test_notional_takes_worst_case_of_available_prices() -> None:
     order = make_order(quantity=Decimal("10"), limit_price=Decimal("100"))
     assert compute_notional(order, Decimal("150")) == Decimal("1500")
     stop = make_order(
-        order_type=OrderType.STOP, limit_price=Decimal("0"), stop_price=Decimal("90"),
+        order_type=OrderType.STOP,
+        limit_price=Decimal("0"),
+        stop_price=Decimal("90"),
         quantity=Decimal("2"),
     )
     assert compute_notional(stop, None) == Decimal("180")

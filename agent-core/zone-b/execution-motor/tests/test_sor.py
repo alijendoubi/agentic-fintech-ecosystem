@@ -3,7 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-
 from execution_motor.models import Side
 from execution_motor.sor import RouterConfig, SmartOrderRouter, UnscoredPolicy
 from execution_motor.toxicity import ToxicityParams, VenueObservation
@@ -80,9 +79,7 @@ def test_unscored_venue_denied_by_default() -> None:
 
 
 def test_insufficient_evidence_is_unscored() -> None:
-    decision = _router().route(
-        make_order(), ["A"], {"A": _stats("benign")[:1]}, now_ns=NOW_NS
-    )
+    decision = _router().route(make_order(), ["A"], {"A": _stats("benign")[:1]}, now_ns=NOW_NS)
     assert decision.venue is None
 
 
@@ -104,9 +101,18 @@ def test_order_level_threshold_can_tighten_but_not_loosen() -> None:
 def test_preferred_venue_honoured_only_when_eligible() -> None:
     stats = {"A": _stats("benign"), "B": _stats("mild"), "C": _stats("toxic")}
     router = _router()
-    assert router.route(make_order(preferred_venue="B"), ["A", "B", "C"], stats, now_ns=NOW_NS).venue == "B"
-    assert router.route(make_order(preferred_venue="C"), ["A", "B", "C"], stats, now_ns=NOW_NS).venue == "A"
-    assert router.route(make_order(preferred_venue="ZZZ"), ["A", "B", "C"], stats, now_ns=NOW_NS).venue == "A"
+    assert (
+        router.route(make_order(preferred_venue="B"), ["A", "B", "C"], stats, now_ns=NOW_NS).venue
+        == "B"
+    )
+    assert (
+        router.route(make_order(preferred_venue="C"), ["A", "B", "C"], stats, now_ns=NOW_NS).venue
+        == "A"
+    )
+    assert (
+        router.route(make_order(preferred_venue="ZZZ"), ["A", "B", "C"], stats, now_ns=NOW_NS).venue
+        == "A"
+    )
 
 
 def test_stale_observations_outside_window_are_ignored() -> None:

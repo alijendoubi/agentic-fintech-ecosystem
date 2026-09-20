@@ -13,7 +13,10 @@ from .helpers import HmacTestVerifier, attest, make_order
 def test_default_verifier_denies_everything() -> None:
     verifier = DenyAllVerifier()
     good = attest(make_order())
-    assert verifier.verify(good.attestation.signed_payload, good.attestation.signature, "test-key-1") is False
+    assert (
+        verifier.verify(good.attestation.signed_payload, good.attestation.signature, "test-key-1")
+        is False
+    )
     assert verifier.verify(b"", b"", "") is False
 
 
@@ -22,7 +25,10 @@ def test_valid_attestation_passes_with_test_double() -> None:
 
 
 def test_default_verifier_rejects_even_a_correctly_signed_order() -> None:
-    assert evaluate_attestation(DenyAllVerifier(), attest(make_order())) is RejectReason.ATTESTATION_INVALID
+    assert (
+        evaluate_attestation(DenyAllVerifier(), attest(make_order()))
+        is RejectReason.ATTESTATION_INVALID
+    )
 
 
 def _with(att: AttestedOrder, **changes: object) -> AttestedOrder:
@@ -31,17 +37,27 @@ def _with(att: AttestedOrder, **changes: object) -> AttestedOrder:
 
 def test_missing_signature_or_key_id() -> None:
     good = attest(make_order())
-    assert evaluate_attestation(HmacTestVerifier(), _with(good, signature=b"")) is RejectReason.ATTESTATION_MISSING
-    assert evaluate_attestation(HmacTestVerifier(), _with(good, key_id="")) is RejectReason.ATTESTATION_MISSING
+    assert (
+        evaluate_attestation(HmacTestVerifier(), _with(good, signature=b""))
+        is RejectReason.ATTESTATION_MISSING
+    )
+    assert (
+        evaluate_attestation(HmacTestVerifier(), _with(good, key_id=""))
+        is RejectReason.ATTESTATION_MISSING
+    )
 
 
 def test_tampered_signature_or_payload_or_key() -> None:
     good = attest(make_order())
     bad_sig = _with(good, signature=b"\x00" * 32)
-    bad_payload = _with(good, signed_payload=good.attestation.signed_payload + b"x")  # digest mismatch
+    bad_payload = _with(
+        good, signed_payload=good.attestation.signed_payload + b"x"
+    )  # digest mismatch
     bad_key = _with(good, key_id="other-key")
     for tampered in (bad_sig, bad_payload, bad_key):
-        assert evaluate_attestation(HmacTestVerifier(), tampered) is RejectReason.ATTESTATION_INVALID
+        assert (
+            evaluate_attestation(HmacTestVerifier(), tampered) is RejectReason.ATTESTATION_INVALID
+        )
 
 
 def test_payload_digest_mismatch_is_invalid() -> None:

@@ -6,8 +6,8 @@ from decimal import Decimal
 from types import ModuleType
 from typing import Any
 
+import httpx
 import pytest
-
 from execution_motor.alpaca import AlpacaPaperBroker
 from execution_motor.config import MotorConfig
 from execution_motor.halt import KillStateHaltSource, KillSwitch
@@ -19,8 +19,6 @@ from execution_motor.sor import RouterConfig, SmartOrderRouter, UnscoredPolicy
 from .helpers import NOW_NS, HmacTestVerifier
 from .test_alpaca_http import CID, CREDS, Script, jresp, order_json, timeout
 from .test_proto_adapter import build
-
-import httpx
 
 D = Decimal
 
@@ -62,8 +60,9 @@ def test_approved_decision_reaches_paper_broker_once(pb2: dict[str, ModuleType])
 
 
 def test_timeout_then_reconcile_reports_broker_truth(pb2: dict[str, ModuleType]) -> None:
-    filled = order_json(status="filled", filled_qty="10", filled_avg_price="190.5",
-                        filled_at="2026-09-20T10:00:01Z")
+    filled = order_json(
+        status="filled", filled_qty="10", filled_avg_price="190.5", filled_at="2026-09-20T10:00:01Z"
+    )
     script = Script(timeout(), jresp(200, filled))
     report = handle_decision(motor_over(script), decision(pb2), now_ns=NOW_NS)
     assert report.status is ExecutionStatus.FILLED
@@ -71,7 +70,9 @@ def test_timeout_then_reconcile_reports_broker_truth(pb2: dict[str, ModuleType])
     assert script.methods() == ["POST", "GET"]
 
 
-def test_timeout_and_not_found_is_unknown_halts_and_blocks_replay(pb2: dict[str, ModuleType]) -> None:
+def test_timeout_and_not_found_is_unknown_halts_and_blocks_replay(
+    pb2: dict[str, ModuleType],
+) -> None:
     script = Script(timeout(), jresp(404, {"message": "not found"}))
     kill = KillSwitch(start_halted=False)
     motor = motor_over(script, kill)
@@ -114,10 +115,16 @@ def test_non_approved_decision_is_refused(pb2: dict[str, ModuleType], status: in
 def test_approved_without_attestation_or_order_is_refused(pb2: dict[str, ModuleType]) -> None:
     msg = decision(pb2)
     msg.ClearField("attestation")
-    assert handle_decision(motor_over(Script()), msg, now_ns=NOW_NS).reject_reason is RejectReason.INVALID_ORDER
+    assert (
+        handle_decision(motor_over(Script()), msg, now_ns=NOW_NS).reject_reason
+        is RejectReason.INVALID_ORDER
+    )
     msg2 = decision(pb2)
     msg2.ClearField("order")
-    assert handle_decision(motor_over(Script()), msg2, now_ns=NOW_NS).reject_reason is RejectReason.INVALID_ORDER
+    assert (
+        handle_decision(motor_over(Script()), msg2, now_ns=NOW_NS).reject_reason
+        is RejectReason.INVALID_ORDER
+    )
 
 
 def test_malformed_order_in_decision_is_refused(pb2: dict[str, ModuleType]) -> None:
@@ -128,8 +135,12 @@ def test_malformed_order_in_decision_is_refused(pb2: dict[str, ModuleType]) -> N
 
 
 def test_report_to_aegis_proto(pb2: dict[str, ModuleType]) -> None:
-    filled = order_json(status="filled", filled_qty="10", filled_avg_price="190.4999",
-                        filled_at="2026-09-20T10:00:01Z")
+    filled = order_json(
+        status="filled",
+        filled_qty="10",
+        filled_avg_price="190.4999",
+        filled_at="2026-09-20T10:00:01Z",
+    )
     report = handle_decision(motor_over(Script(jresp(200, filled))), decision(pb2), now_ns=NOW_NS)
     msg = to_aegis_execution_report(
         pb2["aegis"].ExecutionReport, report, account_equity=D("50123.45"), reported_at_ns=NOW_NS
@@ -150,9 +161,15 @@ def test_nanos_conversion_rounds_half_even_and_refuses_nan() -> None:
 
 def test_unknown_status_is_not_reported_as_terminal(pb2: dict[str, ModuleType]) -> None:
     report = ExecutionReport(
-        order_id="o", client_order_id="o", signal_id="s", symbol="AAPL",
-        status=ExecutionStatus.UNKNOWN, requested_quantity=D("1"),
-        reject_reason=RejectReason.SUBMIT_OUTCOME_UNKNOWN, received_at_ns=1, updated_at_ns=2,
+        order_id="o",
+        client_order_id="o",
+        signal_id="s",
+        symbol="AAPL",
+        status=ExecutionStatus.UNKNOWN,
+        requested_quantity=D("1"),
+        reject_reason=RejectReason.SUBMIT_OUTCOME_UNKNOWN,
+        received_at_ns=1,
+        updated_at_ns=2,
     )
     msg = to_aegis_execution_report(
         pb2["aegis"].ExecutionReport, report, account_equity=D("1"), reported_at_ns=3

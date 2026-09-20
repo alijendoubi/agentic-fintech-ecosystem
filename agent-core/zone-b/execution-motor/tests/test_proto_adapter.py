@@ -6,7 +6,6 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-
 from execution_motor.attestation import evaluate_attestation
 from execution_motor.errors import OrderValidationError
 from execution_motor.models import ExecAlgo, OrderType, Side
@@ -22,8 +21,11 @@ NANO = 1_000_000_000
 KEY_ID = "test-key-1"
 
 
-def build(pb2: dict[str, ModuleType], order_over: dict[str, Any] | None = None,
-          att_over: dict[str, Any] | None = None) -> tuple[Any, Any]:
+def build(
+    pb2: dict[str, ModuleType],
+    order_over: dict[str, Any] | None = None,
+    att_over: dict[str, Any] | None = None,
+) -> tuple[Any, Any]:
     order = pb2["order"].OrderRequest(
         order_id="0b9c7f3e-6d0e-4a3a-9c53-0d9d5b8e1a11",
         signal_id="sig-1",
@@ -135,11 +137,19 @@ def test_missing_signature_kept_empty(pb2: dict[str, ModuleType]) -> None:
 @pytest.mark.parametrize(
     "order_over",
     [
-        {"side": 0}, {"side": 99}, {"order_type": 0}, {"algo": 0},
-        {"quantity_nanos": 0}, {"quantity_nanos": -5}, {"limit_price_nanos": -1},
+        {"side": 0},
+        {"side": 99},
+        {"order_type": 0},
+        {"algo": 0},
+        {"quantity_nanos": 0},
+        {"quantity_nanos": -5},
+        {"limit_price_nanos": -1},
         {"limit_price_nanos": 0},  # LIMIT without a price
-        {"symbol": ""}, {"order_id": ""}, {"created_at_ns": 0},
-        {"max_venue_toxicity": float("nan")}, {"max_venue_toxicity": float("inf")},
+        {"symbol": ""},
+        {"order_id": ""},
+        {"created_at_ns": 0},
+        {"max_venue_toxicity": float("nan")},
+        {"max_venue_toxicity": float("inf")},
     ],
 )
 def test_invalid_orders_raise_validation_error(

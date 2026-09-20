@@ -4,7 +4,6 @@ from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 
 import pytest
-
 from execution_motor.attestation import AttestationVerifier
 from execution_motor.broker import (
     AccountSnapshot,
@@ -33,6 +32,7 @@ from execution_motor.toxicity import ToxicityParams, VenueObservation
 from .helpers import NOW_NS, HmacTestVerifier, attest, make_order
 
 D = Decimal
+_VERIFIER = HmacTestVerifier()
 SEC = 1_000_000_000
 
 
@@ -67,20 +67,31 @@ class FakeBroker(Broker):
         raise NotImplementedError
 
 
-def broker_order(cid: str, status: ExecutionStatus = ExecutionStatus.FILLED, raw: str = "filled",
-                 filled: str = "10", price: str | None = "190.5") -> BrokerOrder:
+def broker_order(
+    cid: str,
+    status: ExecutionStatus = ExecutionStatus.FILLED,
+    raw: str = "filled",
+    filled: str = "10",
+    price: str | None = "190.5",
+) -> BrokerOrder:
     return BrokerOrder(
-        broker_order_id="b-1", client_order_id=cid, symbol="AAPL", status=status, raw_status=raw,
-        quantity=D("10"), filled_quantity=D(filled),
+        broker_order_id="b-1",
+        client_order_id=cid,
+        symbol="AAPL",
+        status=status,
+        raw_status=raw,
+        quantity=D("10"),
+        filled_quantity=D(filled),
         filled_avg_price=D(price) if price else None,
-        submitted_at_ns=NOW_NS, filled_at_ns=NOW_NS + 1,
+        submitted_at_ns=NOW_NS,
+        filled_at_ns=NOW_NS + 1,
     )
 
 
 def make_motor(
     broker: Broker | None = None,
     *,
-    verifier: AttestationVerifier | None = HmacTestVerifier(),
+    verifier: AttestationVerifier | None = _VERIFIER,
     halted: bool = False,
     order_cap: str = "25000",
     session_cap: str = "100000",
@@ -107,7 +118,9 @@ def make_motor(
     )
 
 
-def run(motor: ExecutionMotor, attested: AttestedOrder | None = None, **kw: object) -> ExecutionReport:
+def run(
+    motor: ExecutionMotor, attested: AttestedOrder | None = None, **kw: object
+) -> ExecutionReport:
     return motor.execute(attested or attest(make_order()), **kw)  # type: ignore[arg-type]
 
 
@@ -124,12 +137,19 @@ def test_valid_order_is_submitted_once_and_reported() -> None:
     assert len(broker.submitted) == 1
     sent = broker.submitted[0]
     assert sent.client_order_id == make_order().order_id
-    assert (sent.symbol, sent.side, sent.quantity, sent.limit_price) == ("AAPL", Side.BUY, D("10"), D("190.50"))
+    assert (sent.symbol, sent.side, sent.quantity, sent.limit_price) == (
+        "AAPL",
+        Side.BUY,
+        D("10"),
+        D("190.50"),
+    )
     assert sent.stop_price is None
 
 
 def test_partial_and_accepted_statuses_are_reported() -> None:
-    partial = FakeBroker(outcome=broker_order("x", ExecutionStatus.PARTIALLY_FILLED, "partially_filled", "4"))
+    partial = FakeBroker(
+        outcome=broker_order("x", ExecutionStatus.PARTIALLY_FILLED, "partially_filled", "4")
+    )
     assert run(make_motor(partial)).status is ExecutionStatus.PARTIALLY_FILLED
     accepted = FakeBroker(outcome=broker_order("x", ExecutionStatus.ACCEPTED, "new", "0", None))
     report = run(make_motor(accepted))
@@ -231,7 +251,10 @@ def test_same_order_id_with_new_signal_is_duplicate() -> None:
     broker = FakeBroker()
     motor = make_motor(broker)
     run(motor)
-    assert run(motor, attest(make_order(signal_id="sig-2"))).reject_reason is RejectReason.DUPLICATE_ORDER
+    assert (
+        run(motor, attest(make_order(signal_id="sig-2"))).reject_reason
+        is RejectReason.DUPLICATE_ORDER
+    )
 
 
 def test_invalid_attestation_does_not_burn_idempotency_keys() -> None:
@@ -361,7 +384,10 @@ def test_unexpected_broker_exception_is_unknown_and_halts() -> None:
     motor = make_motor(broker)
     report = run(motor)
     assert report.status is ExecutionStatus.UNKNOWN
-    assert run(motor, attest(make_order(order_id="o2", signal_id="s2"))).reject_reason is RejectReason.HALTED
+    assert (
+        run(motor, attest(make_order(order_id="o2", signal_id="s2"))).reject_reason
+        is RejectReason.HALTED
+    )
 
 
 def test_unmapped_broker_status_is_unknown_and_halts() -> None:
@@ -372,14 +398,19 @@ def test_unmapped_broker_status_is_unknown_and_halts() -> None:
 def test_broker_rejected_status_maps_to_rejected() -> None:
     broker = FakeBroker(outcome=broker_order("x", ExecutionStatus.REJECTED, "rejected", "0", None))
     report = run(make_motor(broker))
-    assert report.status is ExecutionStatus.REJECTED and report.reject_reason is RejectReason.BROKER_REJECTED
+    assert (
+        report.status is ExecutionStatus.REJECTED
+        and report.reject_reason is RejectReason.BROKER_REJECTED
+    )
 
 
 def test_definite_broker_reject_does_not_halt() -> None:
     motor = make_motor(FakeBroker(outcome=BrokerRejectedError("insufficient", http_status=403)))
     assert run(motor).reject_reason is RejectReason.BROKER_REJECTED
     other = attest(make_order(order_id="o2", signal_id="s2"))
-    assert run(motor, other).reject_reason is RejectReason.BROKER_REJECTED  # still trading, not halted
+    assert (
+        run(motor, other).reject_reason is RejectReason.BROKER_REJECTED
+    )  # still trading, not halted
 
 
 def test_internal_error_before_submit_halts_and_rejects() -> None:
@@ -391,7 +422,10 @@ def test_internal_error_before_submit_halts_and_rejects() -> None:
     report = run(motor)
     assert report.reject_reason is RejectReason.INTERNAL_ERROR
     assert broker.submitted == []
-    assert run(motor, attest(make_order(order_id="o2", signal_id="s2"))).reject_reason is RejectReason.HALTED
+    assert (
+        run(motor, attest(make_order(order_id="o2", signal_id="s2"))).reject_reason
+        is RejectReason.HALTED
+    )
 
 
 # ------------------------------------------------------------------ algo / SOR
@@ -411,8 +445,13 @@ def test_unscored_venue_denied_by_default_router() -> None:
 
 def _obs(fill: str, after: str, filled: str) -> VenueObservation:
     return VenueObservation(
-        timestamp_ns=NOW_NS - 1000, side=Side.BUY, ordered_qty=D("100"), filled_qty=D(filled),
-        avg_fill_price=D(fill), arrival_mid=D("100"), mid_after_horizon=D(after),
+        timestamp_ns=NOW_NS - 1000,
+        side=Side.BUY,
+        ordered_qty=D("100"),
+        filled_qty=D(filled),
+        avg_fill_price=D(fill),
+        arrival_mid=D("100"),
+        mid_after_horizon=D(after),
     )
 
 
@@ -431,8 +470,10 @@ def test_motor_routes_around_toxic_venue() -> None:
 def test_motor_requires_at_least_one_broker() -> None:
     with pytest.raises(ConfigError):
         ExecutionMotor(
-            config=MotorConfig(D("1"), D("1")), brokers={},
-            router=SmartOrderRouter(RouterConfig()), kill_switch=KillSwitch(),
+            config=MotorConfig(D("1"), D("1")),
+            brokers={},
+            router=SmartOrderRouter(RouterConfig()),
+            kill_switch=KillSwitch(),
         )
 
 

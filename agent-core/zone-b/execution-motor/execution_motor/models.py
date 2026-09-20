@@ -224,7 +224,7 @@ class ExecutionReport(_Frozen):
 
     @property
     def slippage_bps(self) -> Decimal | None:
-        """Signed cost vs arrival price in bps: positive = worse for us (buy paid up, sell sold down)."""
+        """Signed cost vs arrival price in bps; positive = worse for us (paid up / sold down)."""
         avg = self.avg_fill_price
         if avg is None or self.arrival_price is None or self.side is None:
             return None

@@ -7,6 +7,7 @@ copies in tests/proto_fixtures (verbatim from integration/wave1) are compiled in
 from __future__ import annotations
 
 import importlib
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -45,3 +46,14 @@ def pb2(tmp_path_factory: pytest.TempPathFactory) -> dict[str, ModuleType]:
         }
     finally:
         sys.path.remove(str(out))
+
+
+@pytest.fixture(autouse=True)
+def _forbid_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests must never touch the network: any socket connect fails the test."""
+
+    def _blocked(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("network access attempted in a unit test")
+
+    monkeypatch.setattr(socket.socket, "connect", _blocked)
+    monkeypatch.setattr(socket.socket, "connect_ex", _blocked)

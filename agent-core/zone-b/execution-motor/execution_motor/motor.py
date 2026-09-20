@@ -100,17 +100,13 @@ class ExecutionMotor:
 
     # ---------------------------------------------------------------- pipeline
 
-    def _run(
-        self, attested: AttestedOrder, ref: Decimal | None, received: int
-    ) -> ExecutionReport:
+    def _run(self, attested: AttestedOrder, ref: Decimal | None, received: int) -> ExecutionReport:
         order = attested.order
         pre = self._precheck(attested, ref, received)
         if isinstance(pre, ExecutionReport):
             return pre
         notional = pre
-        decision = self._router.route(
-            order, sorted(self._brokers), self._stats(), now_ns=received
-        )
+        decision = self._router.route(order, sorted(self._brokers), self._stats(), now_ns=received)
         if decision.venue is None:
             return self._rejected(order, RejectReason.NO_ELIGIBLE_VENUE, "", received, ref)
         gate = self._claim_and_reserve(order, notional, received, ref)
@@ -166,7 +162,9 @@ class ExecutionMotor:
     ) -> ExecutionReport:
         if self._kill.is_halted():  # checked immediately before every submit
             self._ledger.release(notional)
-            return self._rejected(order, RejectReason.HALTED, self._kill.reason, received, ref, venue)
+            return self._rejected(
+                order, RejectReason.HALTED, self._kill.reason, received, ref, venue
+            )
         request = BrokerOrderRequest(
             client_order_id=order.client_order_id,
             symbol=order.symbol,
@@ -181,7 +179,9 @@ class ExecutionMotor:
             result = self._brokers[venue].submit_order(request)
         except BrokerRejectedError as exc:
             self._ledger.release(notional)
-            return self._rejected(order, RejectReason.BROKER_REJECTED, str(exc), received, ref, venue)
+            return self._rejected(
+                order, RejectReason.BROKER_REJECTED, str(exc), received, ref, venue
+            )
         except SubmitOutcomeUnknown as exc:
             return self._unknown(order, venue, str(exc), received, submitted, ref)
         except Exception as exc:  # noqa: BLE001 - after the point of no return: assume it may exist
@@ -202,7 +202,12 @@ class ExecutionMotor:
     ) -> ExecutionReport:
         if result.status is ExecutionStatus.UNKNOWN:
             return self._unknown(
-                order, venue, f"unmapped broker status {result.raw_status}", received, submitted, ref
+                order,
+                venue,
+                f"unmapped broker status {result.raw_status}",
+                received,
+                submitted,
+                ref,
             )
         if result.status is ExecutionStatus.REJECTED:
             self._ledger.release(notional)

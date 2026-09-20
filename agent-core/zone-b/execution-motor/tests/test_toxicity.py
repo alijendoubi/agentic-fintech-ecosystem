@@ -3,7 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-
 from execution_motor.models import Side
 from execution_motor.toxicity import (
     ToxicityParams,
@@ -111,7 +110,10 @@ def test_unfilled_observations_still_count_for_fill_rate() -> None:
 
 def test_score_is_always_within_unit_interval() -> None:
     for fill, after, filled in [
-        ("90", "110", "100"), ("110", "90", "1"), ("100", "100", "100"), ("100.01", "99.99", "37"),
+        ("90", "110", "100"),
+        ("110", "90", "1"),
+        ("100", "100", "100"),
+        ("100.01", "99.99", "37"),
     ]:
         for side in (Side.BUY, Side.SELL):
             o = obs(side=side, fill=fill, after=after, filled=filled)
@@ -138,7 +140,9 @@ def test_observation_validation() -> None:
 
 def test_params_validation() -> None:
     with pytest.raises(ValueError):
-        ToxicityParams(weight_markout=D("0.5"), weight_slippage=D("0.5"), weight_fill_shortfall=D("0.5"))
+        ToxicityParams(
+            weight_markout=D("0.5"), weight_slippage=D("0.5"), weight_fill_shortfall=D("0.5")
+        )
     with pytest.raises(ValueError):
         ToxicityParams(markout_scale_bps=D("0"))
     with pytest.raises(ValueError):

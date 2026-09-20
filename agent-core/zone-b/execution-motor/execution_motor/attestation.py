@@ -9,10 +9,9 @@ the HMAC double used in tests lives under tests/ and is not importable from this
 
 from __future__ import annotations
 
-from typing import Protocol
-
 import hashlib
 import hmac
+from typing import Protocol
 
 import structlog
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-
 from execution_motor.config import MotorConfig
 from execution_motor.errors import ConfigError
 
@@ -22,7 +21,9 @@ def test_from_env_reads_required_caps_as_decimal() -> None:
 
 
 def test_from_env_overrides_optional_values() -> None:
-    cfg = MotorConfig.from_env({**_BASE, "MOTOR_MAX_ORDER_AGE_MS": "250", "MOTOR_MAX_CLOCK_SKEW_MS": "10"})
+    cfg = MotorConfig.from_env(
+        {**_BASE, "MOTOR_MAX_ORDER_AGE_MS": "250", "MOTOR_MAX_CLOCK_SKEW_MS": "10"}
+    )
     assert cfg.max_order_age_ns == 250_000_000
     assert cfg.max_clock_skew_ns == 10_000_000
 

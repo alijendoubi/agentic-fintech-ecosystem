@@ -3,8 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from pydantic import ValidationError
-
 from execution_motor.models import (
     ExecutionReport,
     ExecutionStatus,
@@ -12,6 +10,7 @@ from execution_motor.models import (
     OrderType,
     RejectReason,
 )
+from pydantic import ValidationError
 
 from .helpers import make_order
 
@@ -25,7 +24,7 @@ def test_valid_limit_order_builds() -> None:
 def test_order_is_immutable() -> None:
     order = make_order()
     with pytest.raises(ValidationError):
-        order.quantity = Decimal("11")  # type: ignore[misc]
+        order.quantity = Decimal("11")
 
 
 @pytest.mark.parametrize("qty", [Decimal("0"), Decimal("-1"), Decimal("NaN"), Decimal("Infinity")])
@@ -55,8 +54,12 @@ def test_stop_requires_stop_price_and_stop_limit_requires_both() -> None:
     with pytest.raises(ValidationError):
         make_order(order_type=OrderType.STOP, limit_price=Decimal("0"), stop_price=Decimal("0"))
     with pytest.raises(ValidationError):
-        make_order(order_type=OrderType.STOP_LIMIT, limit_price=Decimal("0"), stop_price=Decimal("9"))
-    ok = make_order(order_type=OrderType.STOP_LIMIT, limit_price=Decimal("8"), stop_price=Decimal("9"))
+        make_order(
+            order_type=OrderType.STOP_LIMIT, limit_price=Decimal("0"), stop_price=Decimal("9")
+        )
+    ok = make_order(
+        order_type=OrderType.STOP_LIMIT, limit_price=Decimal("8"), stop_price=Decimal("9")
+    )
     assert ok.stop_price == Decimal("9")
 
 

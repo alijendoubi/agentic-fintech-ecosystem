@@ -81,9 +81,7 @@ class SmartOrderRouter:
         threshold: Decimal,
         now_ns: int,
     ) -> VenueAssessment:
-        windowed = filter_window(
-            observations, now_ns=now_ns, window_days=self._config.window_days
-        )
+        windowed = filter_window(observations, now_ns=now_ns, window_days=self._config.window_days)
         result = compute_toxicity(windowed, self._config.params)
         if result is None:
             allowed = self._config.unscored_policy is UnscoredPolicy.ALLOW
@@ -111,7 +109,11 @@ class SmartOrderRouter:
         elif eligible:
             chosen = min(
                 eligible.values(),
-                key=lambda a: (a.score is None, a.score if a.score is not None else Decimal(0), a.venue),
+                key=lambda a: (
+                    a.score is None,
+                    a.score if a.score is not None else Decimal(0),
+                    a.venue,
+                ),
             ).venue
         _log.info(
             "route_decision",
