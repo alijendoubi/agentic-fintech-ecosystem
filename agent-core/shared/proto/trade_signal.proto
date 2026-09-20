@@ -13,7 +13,9 @@ message TradeSignal {
   int64 created_at_ns = 3;
 
   SignalSide side = 4;
-  double quantity = 5;                   // Target quantity in shares
+  // DEPRECATED (ALI-22): use quantity_nanos (22). Aegis converts a legacy double
+  // only at its boundary; see docs/specs/phase_3_aegis_execution.md section 3.
+  double quantity = 5 [deprecated = true];   // Target quantity in shares
 
   // Probabilistic decision matrix outputs
   double omega = 6;                       // Judge confidence score [0, 1]
@@ -35,10 +37,25 @@ message TradeSignal {
   string debate_summary = 18;            // Compressed 200-token Judge synthesis
 
   // Execution constraints
-  double price_limit = 19;              // 0 = market order
+  // DEPRECATED (ALI-22): use price_limit_nanos (23).
+  double price_limit = 19 [deprecated = true];   // 0 = market order
   int64 valid_until_ns = 20;            // Signal expiry timestamp
 
   SignalStatus status = 21;
+
+  // ---- ALI-22 / Phase 3 (spec section 3, Appendix A.2): fixed-point money ----
+  // Fixed-point (1e-9 "nanos") replacements for the double money fields above.
+  // Never renumber or reuse 22-28. Producers should set these and stop setting
+  // the deprecated doubles; Aegis will ignore the doubles once migrated.
+  int64 quantity_nanos = 22;
+  int64 price_limit_nanos = 23;           // 0 = market (Aegis will bound it, spec 4.5)
+  int64 estimated_total_cost_nanos = 24;
+  string strategy_id = 25;                // e.g. "AFE-STRATEGY-001"; used by the regime gate C18
+  // Nanos counterparts for the remaining estimated_* cost fields (Appendix A.2
+  // "if the manifest needs them"; the manifest does carry the full cost model).
+  int64 estimated_spread_cost_nanos = 26;
+  int64 estimated_market_impact_nanos = 27;
+  int64 estimated_venue_fees_nanos = 28;
 }
 
 enum SignalSide {
