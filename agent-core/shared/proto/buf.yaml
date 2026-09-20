@@ -1,0 +1,51 @@
+version: v2
+
+# Module root is this directory (agent-core/shared/proto). Files are imported by
+# bare name ("trade_signal.proto"), which is what generate.sh, the Rust build.rs
+# files and the Python stubs rely on. Do not move files into afe/shared/.
+modules:
+  - path: .
+
+lint:
+  use:
+    - STANDARD
+  # Every exception below is a deliberate, documented waiver. New protos must
+  # satisfy every other STANDARD rule. Do not add to this list without a reason.
+  #
+  # Group 1 - package layout. The package is `afe.shared` and all consumers
+  # (Python flat imports, Rust include_proto!("afe.shared"), the Phase 3 spec)
+  # depend on it. Renaming to afe.shared.v1 / afe/shared/ would change generated
+  # module names and every import site.
+  #   PACKAGE_DIRECTORY_MATCH, PACKAGE_VERSION_SUFFIX
+  #
+  # Group 2 - enum naming. Pre-existing protos (market_snapshot, trade_signal,
+  # order_request, compliance_manifest) use values such as BUY, CRISIS,
+  # HARD_BLOCK, SIGNAL_PENDING and *_UNKNOWN zero values that are already
+  # referenced by name in Python/Rust code. The wire encoding is numeric so a
+  # rename is wire-safe, but it is source-breaking for every producer/consumer.
+  # Also applies to aegis.proto enums, whose names are fixed by Appendix A of
+  # docs/specs/phase_3_aegis_execution.md (DECISION_*, REASON_*, KILL_LEVEL_*).
+  #   ENUM_VALUE_PREFIX, ENUM_ZERO_VALUE_SUFFIX
+  #
+  # Group 3 - aegis.proto service shape, fixed verbatim by Appendix A of the
+  # Phase 3 spec: the service is `Aegis` (not AegisService); SubmitSignal takes
+  # the existing TradeSignal message directly; several RPCs share Empty /
+  # KillSwitchState / AegisDecision as request or response type.
+  #   SERVICE_SUFFIX, RPC_REQUEST_STANDARD_NAME, RPC_RESPONSE_STANDARD_NAME,
+  #   RPC_REQUEST_RESPONSE_UNIQUE
+  except:
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_VERSION_SUFFIX
+    - ENUM_VALUE_PREFIX
+    - ENUM_ZERO_VALUE_SUFFIX
+    - SERVICE_SUFFIX
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+
+breaking:
+  # FILE is the strictest category: generated-code-level compatibility for every
+  # language. Adding fields/messages/enum values/rpcs is allowed; renumbering,
+  # retyping, removing or renaming is flagged.
+  use:
+    - FILE
