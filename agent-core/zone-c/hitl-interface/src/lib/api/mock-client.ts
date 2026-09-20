@@ -2,7 +2,7 @@ import { evaluateDecision, msToNs } from "@/lib/signals/policy";
 import type { FourEyesConfig } from "@/lib/signals/policy";
 import type { Signal } from "@/lib/signals/schema";
 import { err, ok } from "./types";
-import type { ApiError, DecisionSubmission, HitlApiClient, OperatorContext, Result } from "./types";
+import type { ApiError, DecisionSubmission, HitlApiClient, Result } from "./types";
 
 export interface MockAuditEntry {
   readonly atNs: string;
@@ -51,18 +51,18 @@ export class MockHitlApiClient implements HitlApiClient {
     return this.audit;
   }
 
-  async listHolds(_ctx: OperatorContext): Promise<Result<readonly Signal[]>> {
+  async listHolds(): Promise<Result<readonly Signal[]>> {
     if (this.failure) return { ok: false, error: this.failure };
     return ok([...this.signals.values()]);
   }
 
-  async getHold(holdId: string, _ctx: OperatorContext): Promise<Result<Signal>> {
+  async getHold(holdId: string): Promise<Result<Signal>> {
     if (this.failure) return { ok: false, error: this.failure };
     const signal = this.signals.get(holdId);
     return signal ? ok(signal) : err("not_found", "Hold not found");
   }
 
-  async submitDecision(submission: DecisionSubmission, _ctx: OperatorContext): Promise<Result<Signal>> {
+  async submitDecision(submission: DecisionSubmission): Promise<Result<Signal>> {
     if (this.failure) return { ok: false, error: this.failure };
     const replay = this.seenRequests.get(submission.clientRequestId);
     if (replay) return ok(replay);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockHitlApiClient } from "@/lib/api/mock-client";
-import type { ApiError, DecisionSubmission, HitlApiClient, OperatorContext, Result } from "@/lib/api/types";
+import type { ApiError, HitlApiClient, OperatorContext, Result } from "@/lib/api/types";
 import { submitOperatorDecision } from "@/lib/decision-service";
 import type { OperatorSession } from "@/lib/auth/verify";
 import type { Signal } from "@/lib/signals/schema";
@@ -130,7 +130,7 @@ describe("submitOperatorDecision: deny on error", () => {
     const lying: HitlApiClient = {
       listHolds: (ctx: OperatorContext) => base.listHolds(ctx),
       getHold: (id: string, ctx: OperatorContext) => base.getHold(id, ctx),
-      submitDecision: async (_s: DecisionSubmission): Promise<Result<Signal>> => ({ ok: true, value: makeSignal({ hitlStatus: "APPROVED" }) }),
+      submitDecision: async (): Promise<Result<Signal>> => ({ ok: true, value: makeSignal({ hitlStatus: "APPROVED" }) }),
     };
     const result = await submitOperatorDecision(
       { client: lying, fourEyes: FOUR_EYES, now: () => NOW_MS },

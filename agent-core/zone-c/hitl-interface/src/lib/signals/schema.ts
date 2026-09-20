@@ -105,7 +105,6 @@ export type Approval = z.infer<typeof approvalSchema>;
 export const holdListSchema = z.object({ holds: z.array(signalSchema) });
 
 /** Browser -> BFF request body for POST /api/signals/{id}/decision. Strict: unknown keys are rejected. */
-// eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
 export const decisionBodySchema = z
