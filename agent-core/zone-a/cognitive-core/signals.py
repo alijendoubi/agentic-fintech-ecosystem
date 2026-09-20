@@ -99,14 +99,20 @@ def to_trade_signal(
     """
     created = time.time_ns() if now_ns is None else now_ns
     verdict = state.judge_verdict
+    symbol = state.market_context.symbol
     if verdict is None:
-        log.error("signal_abstain", reasons=["missing_judge_verdict"], symbol=state.market_context.symbol)
+        log.error("signal_abstain", reasons=["missing_judge_verdict"], symbol=symbol)
         return _build(
-            state, JudgeVerdict.default_abstain(), settings, actionable=False, quantity=0.0, now_ns=created
+            state,
+            JudgeVerdict.default_abstain(),
+            settings,
+            actionable=False,
+            quantity=0.0,
+            now_ns=created,
         )
     reasons = abstain_reasons(state, verdict, settings, quantity)
     if reasons:
-        log.info("signal_abstain", reasons=reasons, symbol=state.market_context.symbol)
+        log.info("signal_abstain", reasons=reasons, symbol=symbol)
     return _build(
         state, verdict, settings, actionable=not reasons, quantity=quantity, now_ns=created
     )
@@ -123,5 +129,10 @@ def abstain_signal(
     created = time.time_ns() if now_ns is None else now_ns
     aborted = state.model_copy(update={"debate_summary": summary})
     return _build(
-        aborted, JudgeVerdict.default_abstain(), settings, actionable=False, quantity=0.0, now_ns=created
+        aborted,
+        JudgeVerdict.default_abstain(),
+        settings,
+        actionable=False,
+        quantity=0.0,
+        now_ns=created,
     )

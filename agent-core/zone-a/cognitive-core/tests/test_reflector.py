@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from cognitive_core.models import (
     REQUIRED_STAGES,
     RegimeLabel,
@@ -65,7 +64,7 @@ async def test_proposal_has_no_apply_or_deploy_surface() -> None:
     surface = set(RubricChangeProposal.model_fields) | set(dir(proposal))
     assert not surface & {"applied", "deployed", "apply", "deploy", "promote"}
     with pytest.raises(Exception):  # noqa: B017 - frozen model: pydantic ValidationError
-        proposal.status = "APPLIED"  # type: ignore[misc]
+        proposal.status = "APPLIED"  # type: ignore[misc, assignment]
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,6 @@ import asyncio
 from typing import Any
 
 import pytest
-
 from cognitive_core.graph import (
     _blue_step,
     _compression_step,
@@ -15,9 +14,9 @@ from cognitive_core.graph import (
 )
 from cognitive_core.models import (
     BlueThesis,
-    RedChallenge,
     DebateState,
     JudgeVerdict,
+    RedChallenge,
     SignalSide,
     SignalStatus,
 )

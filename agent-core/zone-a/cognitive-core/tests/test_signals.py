@@ -4,7 +4,6 @@ import math
 from typing import Any
 
 import pytest
-
 from cognitive_core.models import (
     BlueThesis,
     DebateState,
@@ -13,7 +12,7 @@ from cognitive_core.models import (
     SignalSide,
     SignalStatus,
 )
-from cognitive_core.signals import NO_SUMMARY, abstain_signal, abstain_reasons, to_trade_signal
+from cognitive_core.signals import NO_SUMMARY, abstain_reasons, abstain_signal, to_trade_signal
 from cognitive_core.tests.fakes import initial_state, make_settings
 
 SETTINGS = make_settings()
@@ -98,7 +97,8 @@ def test_any_single_forced_upstream_node_abstains(who: str) -> None:
         if who == "blue"
         else RedChallenge(forced_completion=True)
     )
-    assert _signal(_state(**{key: forced})).status == SignalStatus.SIGNAL_ABSTAIN
+    overrides: dict[str, Any] = {key: forced}
+    assert _signal(_state(**overrides)).status == SignalStatus.SIGNAL_ABSTAIN
 
 
 def test_defaulted_abstain_verdict_abstains() -> None:

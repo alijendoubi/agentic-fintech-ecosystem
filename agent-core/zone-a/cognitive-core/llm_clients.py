@@ -81,7 +81,7 @@ def _bedrock_chat(model_id: str, max_tokens: int, settings: CognitiveSettings) -
 
     # No credentials are passed: boto3's default chain resolves the IAM role.
     chat = ChatBedrockConverse(
-        model=model_id,
+        model_id=model_id,
         max_tokens=max_tokens,
         region_name=settings.bedrock_region,
         endpoint_url=settings.bedrock_endpoint_url,

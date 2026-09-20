@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from cognitive_core import prompts
 from cognitive_core.models import BlueThesis, JudgeVerdict, RedChallenge, ReflectorDraft
 from cognitive_core.parsing import (
@@ -29,7 +28,10 @@ def test_prompt_examples_validate_against_the_real_schema(example: str, model: t
 @pytest.mark.parametrize(
     ("template", "fields"),
     [
-        (prompts.BLUE_SYSTEM_PROMPT, {"market_context": "M", "regime": "R", "regime_confidence": 1}),
+        (
+            prompts.BLUE_SYSTEM_PROMPT,
+            {"market_context": "M", "regime": "R", "regime_confidence": 1},
+        ),
         (prompts.RED_SYSTEM_PROMPT, {"blue_thesis": "B", "regime": "R"}),
         (
             prompts.JUDGE_SYSTEM_PROMPT,

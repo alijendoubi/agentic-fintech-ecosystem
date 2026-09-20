@@ -16,3 +16,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 # Run from the parent directory through a package-named link so relative imports resolve:
 #   MYPYPATH=<dir containing a cognitive_core -> cognitive-core link> mypy -p cognitive_core
+
+[[tool.mypy.overrides]]
+module = ["grpc_tools", "grpc_tools.*"]
+ignore_missing_imports = true

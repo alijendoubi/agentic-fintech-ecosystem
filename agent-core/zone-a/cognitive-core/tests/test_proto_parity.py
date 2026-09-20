@@ -10,11 +10,10 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-from grpc_tools import protoc
-from pydantic import ValidationError
-
 from cognitive_core.models import RegimeLabel, SignalSide, SignalStatus, TradeSignal
 from cognitive_core.proto_mapping import from_proto, to_proto
+from grpc_tools import protoc
+from pydantic import ValidationError
 
 PROTO_DIR = Path(__file__).resolve().parents[3] / "shared" / "proto"
 

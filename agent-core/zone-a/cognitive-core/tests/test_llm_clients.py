@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
-
 from cognitive_core import llm_clients
 from cognitive_core.llm_clients import ChatTextClient, LLMResponseError, message_text
 from cognitive_core.models import BlueThesis
 from cognitive_core.parsing import parse_json_model
 from cognitive_core.tests.fakes import BLUE_JSON, make_settings
+from langchain_core.messages import AIMessage, HumanMessage
 
 
 class _FakeChat:
@@ -138,7 +138,7 @@ async def test_factories_use_bedrock_with_settings_and_no_api_keys(
     )
     client = factory(settings)
     kwargs = fake_bedrock.instances[-1].kwargs
-    assert kwargs["model"] == getattr(settings, model_field)
+    assert kwargs["model_id"] == getattr(settings, model_field)
     assert kwargs["max_tokens"] == getattr(settings, token_field)
     assert kwargs["region_name"] == "eu-west-1"
     assert kwargs["endpoint_url"] == "https://vpce.example"
@@ -147,6 +147,6 @@ async def test_factories_use_bedrock_with_settings_and_no_api_keys(
 
 
 def test_no_direct_provider_sdk_is_referenced() -> None:
-    source = open(llm_clients.__file__, encoding="utf-8").read()
-    for forbidden in ("langchain_anthropic", "langchain_mistralai", "ChatAnthropic", "ChatMistralAI"):
-        assert forbidden not in source
+    source = Path(llm_clients.__file__).read_text(encoding="utf-8")
+    forbidden = ("langchain_anthropic", "langchain_mistralai", "ChatAnthropic", "ChatMistralAI")
+    assert not [name for name in forbidden if name in source]

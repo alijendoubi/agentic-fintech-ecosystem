@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from cognitive_core import config
 from cognitive_core.config import ConfigError, load_settings
 

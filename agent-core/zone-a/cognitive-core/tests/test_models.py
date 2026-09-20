@@ -2,8 +2,6 @@ import math
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
-
 from cognitive_core.models import (
     MAX_SUMMARY_TOKENS,
     REQUIRED_STAGES,
@@ -18,6 +16,7 @@ from cognitive_core.models import (
     SignalStatus,
     TradeSignal,
 )
+from pydantic import ValidationError
 
 
 def _judge(**overrides: Any) -> JudgeVerdict:
