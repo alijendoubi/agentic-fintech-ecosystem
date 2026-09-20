@@ -1,9 +1,17 @@
-hmmlearn>=0.3.2
-numpy>=2.0.0
-pandas>=2.2.0
-scikit-learn>=1.5.0
-joblib>=1.4.0
-python-dotenv>=1.0.0
-structlog>=24.4.0
-redis>=5.0.0
-aiohttp>=3.10.0
+# Runtime dependencies for the regime detector (ranges; tested with the versions noted).
+# Tested: hmmlearn 0.3.3, numpy 2.5.3, scipy 1.18.1, scikit-learn 1.9.1,
+#         redis 8.1.0, structlog 26.1.0, aiohttp 3.14.3 (Python 3.12).
+#
+# numpy is capped below 2.6: hmmlearn 0.3.3 emits a NumPy 2.5 DeprecationWarning
+# ("setting the shape on an array") that a future NumPy release may turn into an error.
+#
+# No `questdb` package: QuestDB is read over its HTTP /exec API with aiohttp and
+# the old `questdb.ingress` import was unused. No joblib/pandas/dotenv: models are
+# stored as HMAC-verified numpy .npz (not pickle) and configuration is env-only.
+hmmlearn>=0.3.3,<0.4
+numpy>=2.0,<2.6
+scipy>=1.14,<2
+scikit-learn>=1.5,<2
+redis>=5.2,<9
+structlog>=24.4,<27
+aiohttp>=3.10,<4
