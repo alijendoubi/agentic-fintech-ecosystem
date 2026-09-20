@@ -1,6 +1,1 @@
-psycopg2-binary>=2.9.9
-grpcio>=1.67.0
 protobuf>=5.28.0
-python-dotenv>=1.0.0
-structlog>=24.4.0
-hashlib2>=1.0.0

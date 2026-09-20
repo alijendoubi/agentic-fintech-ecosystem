@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: needs Docker (real PostgreSQL container) and the audit-logger package"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["afe_manifest"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["afe_manifest", "tests"]
+mypy_path = ".,tests,../audit-logger,../audit-logger/tests"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["google.protobuf.*", "psycopg2.*", "pg_harness"]
+ignore_missing_imports = true
