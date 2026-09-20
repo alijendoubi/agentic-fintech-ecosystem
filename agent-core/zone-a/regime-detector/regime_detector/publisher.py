@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
 from redis.exceptions import RedisError
+
 from regime_detector.config import is_valid_symbol
 from regime_detector.labels import RegimeLabel
 
@@ -26,7 +28,7 @@ log = structlog.get_logger()
 class RedisPublisherClient(Protocol):
     """The slice of ``redis.asyncio.Redis`` this service needs."""
 
-    async def publish(self, channel: str, message: str) -> int: ...
+    def publish(self, channel: str, message: str) -> Awaitable[int]: ...
 
 
 @dataclass(frozen=True, slots=True)

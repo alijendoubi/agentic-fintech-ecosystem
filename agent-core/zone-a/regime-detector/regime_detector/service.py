@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import structlog
+
 from regime_detector.config import Settings
 from regime_detector.features import extract_features
 from regime_detector.labels import RegimeLabel

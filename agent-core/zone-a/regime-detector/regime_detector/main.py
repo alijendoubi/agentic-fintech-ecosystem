@@ -9,6 +9,7 @@ import sys
 
 import redis.asyncio as aioredis
 import structlog
+
 from regime_detector.config import ConfigError, Settings
 from regime_detector.model_store import ModelStore
 from regime_detector.publisher import RegimePublisher

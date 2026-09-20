@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
+
 from regime_detector.features import N_FEATURES, Scaler
 from regime_detector.labels import N_STATES, RegimeLabel
 

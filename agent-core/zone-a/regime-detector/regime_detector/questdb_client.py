@@ -20,6 +20,7 @@ from typing import Any
 
 import aiohttp
 import structlog
+
 from regime_detector.config import Settings, is_valid_symbol
 
 log = structlog.get_logger()

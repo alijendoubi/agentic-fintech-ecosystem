@@ -28,6 +28,7 @@ from pathlib import Path
 
 import numpy as np
 import structlog
+
 from regime_detector.config import is_valid_symbol
 from regime_detector.features import Scaler
 from regime_detector.model import (
