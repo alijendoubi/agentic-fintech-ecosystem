@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from cognitive_core.models import RegimeLabel, SignalSide, SignalStatus, TradeSignal
-from cognitive_core.proto_mapping import from_proto, to_proto
+from cognitive_core.proto_mapping import WIRE_ONLY_FIELDS, from_proto, to_nanos, to_proto
 from grpc_tools import protoc
 from pydantic import ValidationError
 
@@ -89,7 +89,8 @@ def test_regime_enum_matches_market_snapshot_message(pb2: ModuleType) -> None:
 
 def test_every_proto_field_is_modelled(pb2: ModuleType) -> None:
     proto_fields = set(pb2.TradeSignal.DESCRIPTOR.fields_by_name)
-    assert proto_fields == set(TradeSignal.model_fields)
+    assert proto_fields == set(TradeSignal.model_fields) | WIRE_ONLY_FIELDS
+    assert not WIRE_ONLY_FIELDS & set(TradeSignal.model_fields)
 
 
 def _pending() -> TradeSignal:
@@ -128,6 +129,7 @@ def test_round_trip_abstain_with_regime_unknown(pb2: ModuleType) -> None:
 def test_from_proto_rejects_actionable_signal_with_zero_quantity(pb2: ModuleType) -> None:
     message = to_proto(_pending(), pb2)
     message.quantity = 0.0
+    message.quantity_nanos = 0
     with pytest.raises(ValidationError):
         from_proto(message, pb2)
 
@@ -150,3 +152,42 @@ def test_to_proto_rejects_unknown_enum_name(pb2: ModuleType) -> None:
 
     with pytest.raises(ValueError, match="not defined"):
         to_proto(_Fake(), pb2)  # type: ignore[arg-type]
+
+
+def test_to_proto_sets_fixed_point_nanos_and_strategy_id(pb2: ModuleType) -> None:
+    message = to_proto(_pending(), pb2, strategy_id="AFE-STRATEGY-001")
+    assert message.quantity_nanos == 25_000_000_000
+    assert message.price_limit_nanos == 189_500_000_000
+    assert message.estimated_total_cost_nanos == 850_000_000
+    assert message.estimated_spread_cost_nanos == 500_000_000
+    assert message.estimated_market_impact_nanos == 250_000_000
+    assert message.estimated_venue_fees_nanos == 100_000_000
+    assert message.strategy_id == "AFE-STRATEGY-001"
+
+
+def test_round_trip_survives_nanos_fields(pb2: ModuleType) -> None:
+    original = _pending()
+    wire = pb2.TradeSignal.FromString(to_proto(original, pb2, strategy_id="S").SerializeToString())
+    assert from_proto(wire, pb2) == original
+
+
+def test_from_proto_rejects_double_and_nanos_disagreement(pb2: ModuleType) -> None:
+    message = to_proto(_pending(), pb2)
+    message.quantity_nanos = 1_000_000_000  # 1 share vs quantity=25.0
+    with pytest.raises(ValueError, match="quantity_nanos disagrees"):
+        from_proto(message, pb2)
+
+
+@pytest.mark.parametrize(
+    ("value", "nanos"),
+    [(0.0, 0), (0.1, 100_000_000), (1.5e-9, 2), (2.5e-9, 2), (189.5, 189_500_000_000)],
+)
+def test_to_nanos_uses_exact_decimal_rounding(value: float, nanos: int) -> None:
+    assert to_nanos(value) == nanos
+
+
+def test_to_nanos_rejects_int64_overflow_and_negatives() -> None:
+    with pytest.raises(ValueError, match="int64"):
+        to_nanos(1e10)
+    with pytest.raises(ValueError, match="int64"):
+        to_nanos(-1.0)
