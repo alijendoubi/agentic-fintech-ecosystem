@@ -215,6 +215,15 @@ class TradeOutcome(BaseModel):
     description: Annotated[str, Field(max_length=2000)] = ""
 
 
+class ReflectorDraft(BaseModel):
+    """The JSON the Reflector LLM must return (strict; validated before use)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    proposed_change: str = Field(min_length=1, max_length=4000)
+    rationale: str = Field(min_length=1, max_length=4000)
+
+
 class ProposalStage(StrEnum):
     """Promotion gate stages in order (docs/processes/sharp-promotion.md)."""
 
