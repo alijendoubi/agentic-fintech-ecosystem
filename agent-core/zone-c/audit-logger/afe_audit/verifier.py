@@ -1,7 +1,9 @@
 """Independent (client-side) chain verification.
 
-Deliberately re-implemented in Python rather than delegating to ``audit.verify_chain``: if the database owner's
-functions were replaced, this check still recomputes every hash from the stored canonical text. Defect codes match
+Deliberately re-implemented in Python rather than delegating to ``audit.verify_chain``: if the
+database owner's
+functions were replaced, this check still recomputes every hash from the stored canonical text.
+Defect codes match
 the SQL function; Python additionally reports ``non_canonical_serialization``.
 """
 
@@ -85,10 +87,14 @@ class ChainVerifier:
             raise AuditWriteError(f"cannot read audit head: {exc}") from exc
         return (int(row[0]), str(row[1])) if row else None
 
-    def verify_chain(self, from_seq: int | None = None, to_seq: int | None = None) -> VerificationResult:
-        """Verify all rows, or the inclusive range [from_seq, to_seq]. Returns the FIRST break, if any.
+    def verify_chain(
+        self, from_seq: int | None = None, to_seq: int | None = None
+    ) -> VerificationResult:
+        """Verify all rows, or the inclusive range [from_seq, to_seq]. Returns the FIRST break, if
+        any.
 
-        Range semantics match ``audit.verify_chain``: the row before ``from_seq`` supplies the expected prev_hash;
+        Range semantics match ``audit.verify_chain``: the row before ``from_seq`` supplies the
+        expected prev_hash;
         with no predecessor the first row must be seq 1 with the genesis prev_hash."""
         try:
             with self._source.connection() as conn:
@@ -98,7 +104,8 @@ class ChainVerifier:
             raise AuditWriteError(f"cannot read audit chain: {exc}") from exc
 
     def verify_anchors(self, anchors: Iterable[Anchor]) -> list[ChainBreak]:
-        """Compare externally published anchors with the table. Detects tail truncation and consistent rewrites
+        """Compare externally published anchors with the table. Detects tail truncation and
+        consistent rewrites
         that verify_chain alone cannot see. Returns [] when every anchor matches."""
         problems: list[ChainBreak] = []
         try:
@@ -107,9 +114,13 @@ class ChainVerifier:
                     cur.execute("SELECT hash FROM audit.audit_events WHERE seq = %s", (anchor.seq,))
                     row = cur.fetchone()
                     if row is None:
-                        problems.append(ChainBreak(anchor.seq, "anchor_row_missing", anchor.hash, None))
+                        problems.append(
+                            ChainBreak(anchor.seq, "anchor_row_missing", anchor.hash, None)
+                        )
                     elif row[0] != anchor.hash:
-                        problems.append(ChainBreak(anchor.seq, "anchor_hash_mismatch", anchor.hash, str(row[0])))
+                        problems.append(
+                            ChainBreak(anchor.seq, "anchor_hash_mismatch", anchor.hash, str(row[0]))
+                        )
         except psycopg2.Error as exc:
             raise AuditWriteError(f"cannot verify anchors: {exc}") from exc
         return problems
@@ -120,7 +131,8 @@ class ChainVerifier:
             return 0, GENESIS_HASH
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT seq, hash FROM audit.audit_events WHERE seq < %s ORDER BY seq DESC LIMIT 1", (from_seq,)
+                "SELECT seq, hash FROM audit.audit_events WHERE seq < %s ORDER BY seq DESC LIMIT 1",
+                (from_seq,),
             )
             row = cur.fetchone()
         return (int(row[0]), str(row[1])) if row else (0, GENESIS_HASH)
@@ -129,7 +141,8 @@ class ChainVerifier:
     def _iter_rows(conn: Any, from_seq: int | None, to_seq: int | None) -> Iterator[_Row]:
         query = (
             f"SELECT {_COLUMNS} FROM audit.audit_events "
-            "WHERE (%(lo)s::bigint IS NULL OR seq >= %(lo)s) AND (%(hi)s::bigint IS NULL OR seq <= %(hi)s) "
+            "WHERE (%(lo)s::bigint IS NULL OR seq >= %(lo)s) "
+            "AND (%(hi)s::bigint IS NULL OR seq <= %(hi)s) "
             "ORDER BY seq"
         )
         with conn.cursor(name="afe_audit_verify") as cur:

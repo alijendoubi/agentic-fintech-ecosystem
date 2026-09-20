@@ -1,10 +1,13 @@
 """AuditLogger: hash-chained, append-only writer.
 
-Fail-closed contract: ``append`` returns an AuditRecord only after the row is committed. On ANY failure it raises
+Fail-closed contract: ``append`` returns an AuditRecord only after the row is committed. On ANY
+failure it raises
 (AuditValidationError / AuditWriteError) and the caller MUST NOT perform the action being audited.
 
-Concurrency: every append takes the same transaction-scoped advisory lock (``audit.chain_lock_key()``), reads the
-head, computes the next hash and inserts, all in one transaction. The database insert trigger re-takes the lock and
+Concurrency: every append takes the same transaction-scoped advisory lock
+(``audit.chain_lock_key()``), reads the
+head, computes the next hash and inserts, all in one transaction. The database insert trigger re-
+takes the lock and
 re-validates the row, so even a misbehaving client cannot fork or gap the chain.
 """
 
@@ -80,7 +83,16 @@ class AuditLogger:
                 "INSERT INTO audit.audit_events "
                 "(seq, occurred_at, event_type, actor, payload, canonical, prev_hash, hash) "
                 "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)",
-                (seq, occurred_at, event.event_type, event.actor, event.payload_json, canonical, prev_hash, digest),
+                (
+                    seq,
+                    occurred_at,
+                    event.event_type,
+                    event.actor,
+                    event.payload_json,
+                    canonical,
+                    prev_hash,
+                    digest,
+                ),
             )
         return AuditRecord(
             seq=seq,
@@ -94,6 +106,7 @@ class AuditLogger:
 
 
 def _rollback_quietly(conn: Any) -> None:
-    # If the connection is already broken the original exception is what matters; it is re-raised by the caller.
+    # If the connection is already broken the original exception is what matters; it is re-raised by
+    # the caller.
     with contextlib.suppress(psycopg2.Error):
         conn.rollback()

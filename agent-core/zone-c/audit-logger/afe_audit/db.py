@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 import psycopg2
 from psycopg2.extensions import connection as PgConnection
+from psycopg2.extensions import make_dsn
 
 from afe_audit.errors import AuditError
 
@@ -17,14 +18,16 @@ ENV_KEYS = ("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER", "P
 
 
 class ConnectionSource(Protocol):
-    """Yields a connection for one unit of work and disposes of it afterwards (close or return-to-pool)."""
+    """Yields a connection for one unit of work and disposes of it afterwards (close or
+    return-to-pool)."""
 
     def connection(self) -> Any:  # a context manager yielding a psycopg2 connection
         ...
 
 
 class DsnConnectionSource:
-    """Opens a fresh connection per unit of work. Inject a pooled ConnectionSource for higher throughput."""
+    """Opens a fresh connection per unit of work. Inject a pooled ConnectionSource for higher
+    throughput."""
 
     def __init__(self, dsn: str, connect_timeout_s: int = 5) -> None:
         if not dsn.strip():
@@ -37,10 +40,14 @@ class DsnConnectionSource:
         source = os.environ if env is None else env
         missing = [key for key in ENV_KEYS if not source.get(key)]
         if missing:
-            raise AuditError(f"missing database environment variables: {', '.join(missing)}")
-        dsn = (
-            f"host={source['POSTGRES_HOST']} port={source['POSTGRES_PORT']} dbname={source['POSTGRES_DB']} "
-            f"user={source['POSTGRES_USER']} password={source['POSTGRES_PASSWORD']}"
+            names = ", ".join(missing)
+            raise AuditError(f"missing database environment variables: {names}")
+        dsn = make_dsn(
+            host=source["POSTGRES_HOST"],
+            port=source["POSTGRES_PORT"],
+            dbname=source["POSTGRES_DB"],
+            user=source["POSTGRES_USER"],
+            password=source["POSTGRES_PASSWORD"],
         )
         return cls(dsn)
 

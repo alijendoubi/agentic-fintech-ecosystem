@@ -6,17 +6,23 @@ Rules (version 1, part of the hash contract -- changing ANY of them requires a n
    ``actor, event_type, occurred_at, payload, prev_hash, seq, v`` (sorted).
 2. Object keys must be ``str`` and are sorted by Unicode code point; no insignificant whitespace
    (separators ``,`` and ``:``).
-3. Strings are written with every non-ASCII character escaped as ``\\uXXXX`` (astral characters as surrogate pairs),
-   so the canonical text is pure ASCII. **No Unicode normalisation** (NFC/NFKC) is applied: composed and decomposed
-   forms hash differently by design. NUL (``\\u0000``) and lone surrogates are rejected (PostgreSQL jsonb cannot
+3. Strings are written with every non-ASCII character escaped as ``\\uXXXX`` (astral characters as
+surrogate pairs),
+   so the canonical text is pure ASCII. **No Unicode normalisation** (NFC/NFKC) is applied: composed
+   and decomposed
+   forms hash differently by design. NUL (``\\u0000``) and lone surrogates are rejected (PostgreSQL
+   jsonb cannot
    store NUL; lone surrogates have no UTF-8 encoding).
-4. Numbers: only integers in the signed 64-bit range. ``bool`` is a JSON boolean, never a number. **Floats are
-   rejected**: their textual form is not stable across languages and PostgreSQL jsonb re-renders numerics.
+4. Numbers: only integers in the signed 64-bit range. ``bool`` is a JSON boolean, never a number.
+**Floats are
+   rejected**: their textual form is not stable across languages and PostgreSQL jsonb re-renders
+   numerics.
    Carry decimals as strings (e.g. ``"0.0123"``) or scaled integers.
 5. ``None`` -> ``null``; ``list``/``tuple`` -> arrays (order preserved). Any other type is rejected.
    Nesting depth is limited (also stops cycles) and total size is limited.
 6. ``occurred_at`` is UTC formatted ``YYYY-MM-DDTHH:MM:SS.ffffffZ`` (fixed 6 fractional digits).
-7. The hash is ``sha256(canonical_text.encode("utf-8"))`` as 64 lowercase hex characters; the genesis
+7. The hash is ``sha256(canonical_text.encode("utf-8"))`` as 64 lowercase hex characters; the
+genesis
    ``prev_hash`` is 64 zeros.
 """
 
@@ -51,7 +57,9 @@ def _check_string(value: str) -> str:
 
 def _normalise(value: object, depth: int) -> object:
     if depth > MAX_DEPTH:
-        raise AuditValidationError(f"payload nesting depth exceeds {MAX_DEPTH} (or contains a cycle)")
+        raise AuditValidationError(
+            f"payload nesting depth exceeds {MAX_DEPTH} (or contains a cycle)"
+        )
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):
@@ -59,7 +67,9 @@ def _normalise(value: object, depth: int) -> object:
             raise AuditValidationError("integer outside the int64 range")
         return value
     if isinstance(value, float):
-        raise AuditValidationError("float values are not allowed; encode decimals as strings or scaled ints")
+        raise AuditValidationError(
+            "float values are not allowed; encode decimals as strings or scaled ints"
+        )
     if isinstance(value, str):
         return _check_string(value)
     if isinstance(value, Mapping):
@@ -77,7 +87,11 @@ def _normalise(value: object, depth: int) -> object:
 def canonical_json(value: object) -> str:
     """Serialise ``value`` under the canonical rules above."""
     text = json.dumps(
-        _normalise(value, 0), sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        _normalise(value, 0),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
     )
     if len(text) > MAX_CANONICAL_BYTES:
         raise AuditValidationError(f"canonical form exceeds {MAX_CANONICAL_BYTES} bytes")

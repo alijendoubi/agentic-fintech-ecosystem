@@ -9,13 +9,16 @@ class AuditError(Exception):
 
 
 class AuditValidationError(AuditError):
-    """The event cannot be canonicalised (bad type, float, NUL, too deep, ...). Nothing was written."""
+    """The event cannot be canonicalised (bad type, float, NUL, too deep, ...). Nothing was
+    written."""
 
 
 class AuditWriteError(AuditError):
-    """The database write failed or its outcome is unknown. Treat as NOT audited; the caller must not proceed.
+    """The database write failed or its outcome is unknown. Treat as NOT audited; the caller must
+    not proceed.
 
-    If the connection was lost while COMMIT was in flight the row may or may not exist; the chain stays valid
+    If the connection was lost while COMMIT was in flight the row may or may not exist; the chain
+    stays valid
     either way, and the caller must not retry blindly (use ChainVerifier to reconcile)."""
 
 

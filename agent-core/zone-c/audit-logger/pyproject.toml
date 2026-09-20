@@ -14,7 +14,8 @@ show_missing = true
 strict = true
 python_version = "3.12"
 files = ["afe_audit", "tests"]
-mypy_path = "."
+mypy_path = ".,tests"
+explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = ["psycopg2.*"]

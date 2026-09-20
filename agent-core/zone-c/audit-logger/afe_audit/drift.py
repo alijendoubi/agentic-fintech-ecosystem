@@ -1,8 +1,11 @@
-"""KL-divergence drift monitor for decision-distribution shift (DORA framework 3.1, EU AI Act Art. 15).
+"""KL-divergence drift monitor for decision-distribution shift (DORA framework 3.1, EU AI Act Art.
+15).
 
-Pure functions plus small frozen value objects. Nothing here is calibrated: thresholds and the smoothing epsilon are
+Pure functions plus small frozen value objects. Nothing here is calibrated: thresholds and the
+smoothing epsilon are
 REQUIRED configuration (no built-in defaults) and must come from the owner's calibration process
-(docs/regulatory/ptc-calibration.md does not define KL values yet -- TODO(owner)). The 0.1/0.3/0.5 values in
+(docs/regulatory/ptc-calibration.md does not define KL values yet -- TODO(owner)). The 0.1/0.3/0.5
+values in
 docker-compose are placeholders, not calibrated limits.
 """
 
@@ -12,7 +15,7 @@ import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 import numpy as np
 from numpy.typing import NDArray
@@ -28,7 +31,7 @@ class DriftConfigError(ValueError):
     """Thresholds/epsilon are missing or invalid."""
 
 
-class DriftLevel(str, Enum):
+class DriftLevel(StrEnum):
     NONE = "none"
     SOFT_ALERT = "soft_alert"
     SOFT_SWITCH = "soft_switch"
@@ -63,8 +66,10 @@ def kl_divergence(p: _FloatArray, q: _FloatArray) -> float:
 def align_counts(
     reference: Mapping[str, int], current: Mapping[str, int], epsilon: float
 ) -> tuple[_FloatArray, _FloatArray, tuple[str, ...]]:
-    """Align two category->count mappings on the sorted union of labels and apply additive smoothing:
-    ``p_i = (c_i + epsilon) / (N + epsilon * K)``. Returns (reference_dist, current_dist, labels)."""
+    """Align two category->count mappings on the sorted union of labels and apply additive
+    smoothing:
+    ``p_i = (c_i + epsilon) / (N + epsilon * K)``. Returns (reference_dist, current_dist,
+    labels)."""
     if not math.isfinite(epsilon) or epsilon <= 0:
         raise ValueError("epsilon must be a positive finite number")
     labels = tuple(sorted(set(reference) | set(current)))
@@ -92,7 +97,9 @@ class DriftThresholds:
         if not all(math.isfinite(v) and v > 0 for v in values):
             raise DriftConfigError("thresholds must be finite and > 0")
         if not self.soft_alert < self.soft_switch < self.logic_switch:
-            raise DriftConfigError("thresholds must be strictly increasing: soft_alert < soft_switch < logic_switch")
+            raise DriftConfigError(
+                "thresholds must be strictly increasing: soft_alert < soft_switch < logic_switch"
+            )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> DriftThresholds:
@@ -110,7 +117,8 @@ class DriftThresholds:
 
 
 def classify(kl: float, thresholds: DriftThresholds) -> DriftLevel:
-    """Map a KL value to a level. Non-finite input (nan/inf) fails closed to the most severe level."""
+    """Map a KL value to a level. Non-finite input (nan/inf) fails closed to the most severe
+    level."""
     if not math.isfinite(kl):
         return DriftLevel.LOGIC_SWITCH
     if kl >= thresholds.logic_switch:
@@ -131,7 +139,8 @@ class DriftReading:
     current_counts: tuple[int, ...]
 
     def to_audit_payload(self) -> dict[str, object]:
-        """Audit-safe (float-free) representation: KL is carried as a string with 12 significant digits."""
+        """Audit-safe (float-free) representation: KL is carried as a string with 12 significant
+        digits."""
         return {
             "kl_nats": format(self.kl, ".12g"),
             "level": self.level.value,
@@ -148,11 +157,14 @@ class DriftMonitor:
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.epsilon) or self.epsilon <= 0:
-            raise DriftConfigError("epsilon (smoothing) must be a positive finite number, supplied by the owner")
+            raise DriftConfigError(
+                "epsilon (smoothing) must be a positive finite number, supplied by the owner"
+            )
 
     def evaluate(self, reference: Mapping[str, int], current: Mapping[str, int]) -> DriftReading:
         p_dist, q_dist, labels = align_counts(current, reference, self.epsilon)
-        # D_KL(current || reference): how surprising the live decision mix is relative to the reference mix.
+        # D_KL(current || reference): how surprising the live decision mix is relative to the
+        # reference mix.
         kl = kl_divergence(p_dist, q_dist)
         return DriftReading(
             kl=kl,

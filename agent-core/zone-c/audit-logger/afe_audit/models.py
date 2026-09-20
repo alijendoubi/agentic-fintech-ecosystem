@@ -25,7 +25,8 @@ def _check_label(name: str, value: str) -> None:
 
 @dataclass(frozen=True)
 class AuditEvent:
-    """What a caller wants recorded. The payload is validated and frozen (as canonical JSON) at construction,
+    """What a caller wants recorded. The payload is validated and frozen (as canonical JSON) at
+    construction,
     so later mutation of the caller's dict cannot change what gets hashed."""
 
     event_type: str
