@@ -2,39 +2,48 @@
 name = "sensory-array"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.82"
 description = "Zone B: Real-time WebSocket ingestor for US equities Level 2 order book data"
+publish = false
 
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
-futures-util = "0.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# UUID for snapshot IDs
-uuid = { version = "1", features = ["v4"] }
-# Time
-chrono = { version = "0.4", features = ["serde"] }
-# gRPC for regime label subscription from Zone A
-tonic = "0.12"
-prost = "0.13"
-# Redis pub/sub for snapshot publishing + regime label subscription
-redis = { version = "0.27", features = ["tokio-comp", "aio"] }
-# Metrics / structured logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-# Config
-dotenvy = "0.15"
-anyhow = "1"
-thiserror = "1"
-# Statistics (Z-Score + MAD normalization)
-statrs = "0.17"
-
-[dev-dependencies]
-tokio-test = "0.4"
-
-[build-dependencies]
-tonic-build = "0.12"
+[lib]
+name = "sensory_array"
+path = "src/lib.rs"
 
 [[bin]]
 name = "sensory-array"
 path = "src/main.rs"
+
+[features]
+default = []
+# QuestDB ILP over TLS + ECDSA challenge/response auth. Off by default so local
+# dev against a plain QuestDB keeps working. See the module docs of ilp_secure.rs.
+ilp-secure = ["dep:tokio-native-tls", "dep:native-tls", "dep:p256", "dep:base64"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync", "signal", "io-util", "fs"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Redis: publisher uses ConnectionManager (auto-reconnect); regime subscriber uses pub/sub
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dotenvy = "0.15"
+thiserror = "1"
+# Jitter for reconnect backoff
+fastrand = "2"
+
+# Optional: secure ILP transport (feature `ilp-secure`)
+tokio-native-tls = { version = "0.3", optional = true }
+native-tls = { version = "0.2", optional = true }
+p256 = { version = "0.13", features = ["ecdsa"], optional = true }
+base64 = { version = "0.22", optional = true }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# A panic anywhere must take the whole process down (fail closed; the
+# orchestrator restarts it) rather than silently killing one task.
+panic = "abort"

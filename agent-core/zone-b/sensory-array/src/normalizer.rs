@@ -251,7 +251,7 @@ fn compute_realized_vol(prices: &VecDeque<f64>) -> f64 {
 
     // Annualize: US equity market ~6.5h/day * 3600s/h * ticks vary.
     // Use 252 trading days; tick-based frequency is approximate.
-    let ticks_per_year = 252.0 * 6.5 * 3600.0; // rough estimate for annualization
+    let ticks_per_year: f64 = 252.0 * 6.5 * 3600.0; // rough estimate for annualization
     std * ticks_per_year.sqrt()
 }
 
