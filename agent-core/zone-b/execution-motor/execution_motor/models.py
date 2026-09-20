@@ -79,9 +79,9 @@ class Order(_Frozen):
     """Domain view of ``afe.shared.OrderRequest`` (signature/status handled separately)."""
 
     order_id: str
-    signal_id: str
+    signal_id: str  # SIGNED by Aegis, so it is also the replay key (order_id is not signed)
     symbol: str
-    created_at_ns: int
+    created_at_ns: int  # informational only: NOT signed, never used for expiry
     side: Side
     order_type: OrderType
     quantity: Decimal
@@ -162,7 +162,10 @@ class Attestation(_Frozen):
 
     signature: bytes
     key_id: str
-    signed_payload: bytes
+    signed_payload: bytes  # canonical text the signature covers (see proto_adapter)
+    payload_sha256: bytes = b""  # Attestation.payload_sha256; must equal SHA-256(signed_payload)
+    decided_at_ns: int = 0  # signed by Aegis
+    expires_at_ns: int = 0  # signed by Aegis; 0 = absent -> treated as expired
 
 
 class AttestedOrder(_Frozen):

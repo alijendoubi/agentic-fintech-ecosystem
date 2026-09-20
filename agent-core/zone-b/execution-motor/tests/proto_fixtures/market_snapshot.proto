@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package afe.shared;
+
+// Normalized Level 2 market snapshot produced by the Sensory Array hot path.
+// Stamped with ingestion_timestamp_ns for freshness TTL enforcement.
+message MarketSnapshot {
+  string symbol = 1;
+  int64 ingestion_timestamp_ns = 2;    // nanoseconds since Unix epoch
+  int64 exchange_timestamp_ns = 3;
+
+  double mid_price = 4;
+  double bid_price = 5;
+  double ask_price = 6;
+  double bid_size = 7;
+  double ask_size = 8;
+  double spread = 9;
+
+  double last_trade_price = 10;
+  double last_trade_size = 11;
+
+  // Normalized values (Z-Score + MAD dual computation)
+  double z_score = 12;
+  double mad_score = 13;
+  bool z_mad_divergence = 14;          // true if |z - mad| > 2σ
+
+  // Order flow imbalance: (bid_size - ask_size) / (bid_size + ask_size)
+  double order_flow_imbalance = 15;
+
+  // 20-period rolling realized volatility (annualized)
+  double realized_volatility = 16;
+
+  // Average Daily Volume (30-day rolling)
+  double adv_30d = 17;
+
+  // Regime label appended by the HMM Regime Detector
+  RegimeLabel regime = 18;
+
+  // Staleness flags
+  bool is_stale = 19;
+  string stale_reason = 20;
+}
+
+enum RegimeLabel {
+  REGIME_UNKNOWN = 0;
+  TRENDING_BULL = 1;
+  TRENDING_BEAR = 2;
+  HIGH_VOL_CHOP = 3;
+  LOW_VOL_CHOP = 4;
+  CRISIS = 5;
+}
+
+message RegimeLabelPacket {
+  RegimeLabel label = 1;
+  double confidence = 2;              // HMM posterior probability [0, 1]
+  int64 timestamp_ns = 3;
+  int32 state_index = 4;
+}

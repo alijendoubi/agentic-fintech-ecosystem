@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
+import hashlib
+import hmac
+
 import structlog
 
 from .models import AttestedOrder, RejectReason
@@ -38,6 +41,9 @@ def evaluate_attestation(
     att = attested.attestation
     if not att.signature or not att.key_id or not att.signed_payload:
         return RejectReason.ATTESTATION_MISSING
+    digest = hashlib.sha256(att.signed_payload).digest()
+    if not hmac.compare_digest(digest, att.payload_sha256):
+        return RejectReason.ATTESTATION_INVALID
     try:
         verdict = verifier.verify(att.signed_payload, att.signature, att.key_id)
     except Exception as exc:  # noqa: BLE001 - a verifier failure is a denial (fail closed)

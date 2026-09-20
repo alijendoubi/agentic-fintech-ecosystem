@@ -38,10 +38,18 @@ def test_missing_signature_or_key_id() -> None:
 def test_tampered_signature_or_payload_or_key() -> None:
     good = attest(make_order())
     bad_sig = _with(good, signature=b"\x00" * 32)
-    bad_payload = _with(good, signed_payload=good.attestation.signed_payload + b"x")
+    bad_payload = _with(good, signed_payload=good.attestation.signed_payload + b"x")  # digest mismatch
     bad_key = _with(good, key_id="other-key")
     for tampered in (bad_sig, bad_payload, bad_key):
         assert evaluate_attestation(HmacTestVerifier(), tampered) is RejectReason.ATTESTATION_INVALID
+
+
+def test_payload_digest_mismatch_is_invalid() -> None:
+    good = attest(make_order())
+    assert (
+        evaluate_attestation(HmacTestVerifier(), _with(good, payload_sha256=b"\x00" * 32))
+        is RejectReason.ATTESTATION_INVALID
+    )
 
 
 def test_signature_by_wrong_secret_is_invalid() -> None:

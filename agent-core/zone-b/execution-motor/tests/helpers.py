@@ -63,10 +63,27 @@ def sign(payload: bytes, secret: bytes = TEST_SECRET) -> bytes:
     return hmac.new(secret, payload, hashlib.sha256).digest()
 
 
-def attest(order: Order, *, secret: bytes = TEST_SECRET, key_id: str = TEST_KEY_ID) -> AttestedOrder:
-    """Build an AttestedOrder whose payload is a fixed function of the order fields."""
-    payload = f"{order.order_id}|{order.symbol}|{order.quantity}|{order.created_at_ns}".encode()
+def attest(
+    order: Order,
+    *,
+    secret: bytes = TEST_SECRET,
+    key_id: str = TEST_KEY_ID,
+    decided_at_ns: int = NOW_NS - 500_000_000,
+    expires_at_ns: int = NOW_NS + 4_000_000_000,
+) -> AttestedOrder:
+    """Build an AttestedOrder whose payload is a fixed function of the signed fields."""
+    payload = (
+        f"{order.signal_id}|{order.symbol}|{order.side}|{order.order_type}|{order.quantity}|"
+        f"{order.limit_price}|{order.stop_price}|{decided_at_ns}|{expires_at_ns}"
+    ).encode()
     return AttestedOrder(
         order=order,
-        attestation=Attestation(signature=sign(payload, secret), key_id=key_id, signed_payload=payload),
+        attestation=Attestation(
+            signature=sign(payload, secret),
+            key_id=key_id,
+            signed_payload=payload,
+            payload_sha256=hashlib.sha256(payload).digest(),
+            decided_at_ns=decided_at_ns,
+            expires_at_ns=expires_at_ns,
+        ),
     )

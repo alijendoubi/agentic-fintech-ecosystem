@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package afe.shared;
+
+
+import "market_snapshot.proto";
+
+// Trade signal produced by the Cognitive Core (Judge Node) after Blue/Red debate.
+// Must pass Aegis PTC validation before reaching the Execution Motor.
+message TradeSignal {
+  string signal_id = 1;                  // UUID
+  string symbol = 2;
+  int64 created_at_ns = 3;
+
+  SignalSide side = 4;
+  // DEPRECATED (ALI-22): use quantity_nanos (22). Aegis converts a legacy double
+  // only at its boundary; see docs/specs/phase_3_aegis_execution.md section 3.
+  double quantity = 5 [deprecated = true];   // Target quantity in shares
+
+  // Probabilistic decision matrix outputs
+  double omega = 6;                       // Judge confidence score [0, 1]
+  double expected_value = 7;             // E[V] from decision matrix
+  double p_success = 8;                  // Regime-conditional win rate
+  double p_failure = 9;
+  double reward_estimate = 10;
+  double risk_estimate = 11;
+
+  // Cost model
+  double estimated_spread_cost = 12;
+  double estimated_market_impact = 13;
+  double estimated_venue_fees = 14;
+  double estimated_total_cost = 15;
+
+  // Context
+  RegimeLabel regime = 16;
+  double regime_confidence = 17;
+  string debate_summary = 18;            // Compressed 200-token Judge synthesis
+
+  // Execution constraints
+  // DEPRECATED (ALI-22): use price_limit_nanos (23).
+  double price_limit = 19 [deprecated = true];   // 0 = market order
+  int64 valid_until_ns = 20;            // Signal expiry timestamp
+
+  SignalStatus status = 21;
+
+  // ---- ALI-22 / Phase 3 (spec section 3, Appendix A.2): fixed-point money ----
+  // Fixed-point (1e-9 "nanos") replacements for the double money fields above.
+  // Never renumber or reuse 22-28. Producers should set these and stop setting
+  // the deprecated doubles; Aegis will ignore the doubles once migrated.
+  int64 quantity_nanos = 22;
+  int64 price_limit_nanos = 23;           // 0 = market (Aegis will bound it, spec 4.5)
+  int64 estimated_total_cost_nanos = 24;
+  string strategy_id = 25;                // e.g. "AFE-STRATEGY-001"; used by the regime gate C18
+  // Nanos counterparts for the remaining estimated_* cost fields (Appendix A.2
+  // "if the manifest needs them"; the manifest does carry the full cost model).
+  int64 estimated_spread_cost_nanos = 26;
+  int64 estimated_market_impact_nanos = 27;
+  int64 estimated_venue_fees_nanos = 28;
+}
+
+enum SignalSide {
+  SIDE_UNKNOWN = 0;
+  BUY = 1;
+  SELL = 2;
+  SELL_SHORT = 3;
+}
+
+enum SignalStatus {
+  SIGNAL_PENDING = 0;
+  SIGNAL_APPROVED = 1;               // Passed Aegis PTCs
+  SIGNAL_REJECTED_HARD_BLOCK = 2;   // Failed a hard PTC
+  SIGNAL_SOFT_BLOCK_PENDING = 3;    // Awaiting HITL confirmation (soft block)
+  SIGNAL_ABSTAIN = 4;               // omega < threshold, no trade
+  SIGNAL_EXPIRED = 5;
+}
