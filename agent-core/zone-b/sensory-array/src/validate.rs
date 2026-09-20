@@ -22,9 +22,8 @@ pub fn is_valid_ticker(s: &str) -> bool {
     if b.is_empty() || b.len() > MAX_TICKER_LEN || !b[0].is_ascii_alphanumeric() {
         return false;
     }
-    b.iter().all(|c| {
-        c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, b'.' | b'-' | b'_')
-    })
+    b.iter()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, b'.' | b'-' | b'_'))
 }
 
 pub fn is_valid_price(p: f64) -> bool {

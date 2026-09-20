@@ -109,7 +109,11 @@ fn tf(b: bool) -> &'static str {
 fn write_line(s: &MarketSnapshot) -> Result<String, IlpError> {
     let mut l = String::with_capacity(420);
     write!(l, "{TABLE},symbol={} ", escape_tag(&s.symbol))?;
-    write!(l, "ingestion_ts={}i,exchange_ts={}i,", s.ingestion_ts_ns, s.exchange_ts_ns)?;
+    write!(
+        l,
+        "ingestion_ts={}i,exchange_ts={}i,",
+        s.ingestion_ts_ns, s.exchange_ts_ns
+    )?;
     write!(
         l,
         "mid_price={:.6},bid_price={:.6},ask_price={:.6},bid_size={:.2},ask_size={:.2},spread={:.6},",
@@ -191,9 +195,23 @@ regime_confidence=0.8700,warmup=f,is_stale=f 1700000000000000123\n";
     fn has_all_spec_field_names() {
         let line = build_ilp_line(&make_snap()).expect("valid");
         for f in [
-            "ingestion_ts=", "exchange_ts=", "mid_price=", "bid_price=", "ask_price=", "bid_size=",
-            "ask_size=", "spread=", "last_trade_price=", "last_trade_size=", "z_score=",
-            "mad_score=", "z_mad_divergence=", "ofi=", "realized_vol=", "adv_30d=", "is_stale=",
+            "ingestion_ts=",
+            "exchange_ts=",
+            "mid_price=",
+            "bid_price=",
+            "ask_price=",
+            "bid_size=",
+            "ask_size=",
+            "spread=",
+            "last_trade_price=",
+            "last_trade_size=",
+            "z_score=",
+            "mad_score=",
+            "z_mad_divergence=",
+            "ofi=",
+            "realized_vol=",
+            "adv_30d=",
+            "is_stale=",
         ] {
             assert!(line.contains(f), "missing {f}");
         }
@@ -248,14 +266,20 @@ regime_confidence=0.8700,warmup=f,is_stale=f 1700000000000000123\n";
 
     #[test]
     fn non_finite_values_are_rejected_not_written() {
-        for (i, v) in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY].into_iter().enumerate() {
+        for (i, v) in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY]
+            .into_iter()
+            .enumerate()
+        {
             let mut s = make_snap();
             match i % 3 {
                 0 => s.z_score = v,
                 1 => s.mid_price = v,
                 _ => s.regime_confidence = v,
             }
-            assert!(matches!(build_ilp_line(&s), Err(IlpError::NonFinite(_))), "{v}");
+            assert!(
+                matches!(build_ilp_line(&s), Err(IlpError::NonFinite(_))),
+                "{v}"
+            );
         }
         let mut s = make_snap();
         s.realized_volatility = f64::NAN;

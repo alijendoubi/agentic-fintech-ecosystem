@@ -113,7 +113,9 @@ async fn open_connection(s: &WriterSettings) -> Result<Conn> {
     stream.set_nodelay(true)?;
     timeout(s.connect_timeout, wrap_secure(stream, s))
         .await
-        .map_err(|_| SensoryError::session(format!("QuestDB secure handshake with {addr} timed out")))?
+        .map_err(|_| {
+            SensoryError::session(format!("QuestDB secure handshake with {addr} timed out"))
+        })?
 }
 
 /// Encoded batch: the bytes, the end offset of every line and the snapshots
@@ -159,13 +161,21 @@ async fn write_tracked(conn: &mut Conn, buf: &[u8], per_write: Duration) -> (usi
             Ok(Ok(0)) => return (written, Err(SensoryError::session("QuestDB wrote 0 bytes"))),
             Ok(Ok(n)) => written += n,
             Ok(Err(e)) => return (written, Err(e.into())),
-            Err(_) => return (written, Err(SensoryError::session("QuestDB write timed out"))),
+            Err(_) => {
+                return (
+                    written,
+                    Err(SensoryError::session("QuestDB write timed out")),
+                )
+            }
         }
     }
     match timeout(per_write, conn.flush()).await {
         Ok(Ok(())) => (written, Ok(())),
         Ok(Err(e)) => (written, Err(e.into())),
-        Err(_) => (written, Err(SensoryError::session("QuestDB flush timed out"))),
+        Err(_) => (
+            written,
+            Err(SensoryError::session("QuestDB flush timed out")),
+        ),
     }
 }
 
@@ -312,7 +322,10 @@ mod tests {
     }
 
     async fn read_lines(listener: &TcpListener, want: usize, max: Duration) -> Vec<String> {
-        let (mut sock, _) = timeout(max, listener.accept()).await.expect("accept").expect("io");
+        let (mut sock, _) = timeout(max, listener.accept())
+            .await
+            .expect("accept")
+            .expect("io");
         let mut acc = String::new();
         let mut buf = [0_u8; 8192];
         let deadline = tokio::time::Instant::now() + max;
@@ -344,7 +357,12 @@ mod tests {
         bad.z_score = f64::NAN;
         let mut evil = sample_snapshot("AAPL", 1_700_000_000_000_000_002);
         evil.symbol = "X\nEVIL".into();
-        let batch = vec![snap("AAPL", 3), Arc::new(bad), Arc::new(evil), snap("MSFT", 4)];
+        let batch = vec![
+            snap("AAPL", 3),
+            Arc::new(bad),
+            Arc::new(evil),
+            snap("MSFT", 4),
+        ];
         let enc = encode_batch(&batch, &metrics);
         assert_eq!(enc.items.len(), 2);
         assert_eq!(enc.line_ends.len(), 2);
@@ -360,16 +378,29 @@ mod tests {
         let queue: SnapshotQueue = Arc::new(BoundedQueue::new(1024));
         let metrics = Arc::new(Metrics::default());
         let (tx, rx) = tokio::sync::watch::channel(false);
-        let task = tokio::spawn(run_writer(settings(port), Arc::clone(&queue), Arc::clone(&metrics), rx));
+        let task = tokio::spawn(run_writer(
+            settings(port),
+            Arc::clone(&queue),
+            Arc::clone(&metrics),
+            rx,
+        ));
         for i in 0..5 {
             queue.push(snap("AAPL", i));
         }
         let lines = read_lines(&listener, 5, Duration::from_secs(3)).await;
         assert_eq!(lines.len(), 5);
-        assert!(lines.iter().all(|l| l.starts_with("market_data,symbol=AAPL ")));
-        assert_eq!(lines[0], build_ilp_line(&snap("AAPL", 0)).expect("ilp").trim_end());
+        assert!(lines
+            .iter()
+            .all(|l| l.starts_with("market_data,symbol=AAPL ")));
+        assert_eq!(
+            lines[0],
+            build_ilp_line(&snap("AAPL", 0)).expect("ilp").trim_end()
+        );
         tx.send(true).expect("send");
-        timeout(Duration::from_secs(3), task).await.expect("stops").expect("join");
+        timeout(Duration::from_secs(3), task)
+            .await
+            .expect("stops")
+            .expect("join");
         assert_eq!(Metrics::get(&metrics.ilp_written), 5);
     }
 
@@ -383,23 +414,39 @@ mod tests {
         let queue: SnapshotQueue = Arc::new(BoundedQueue::new(20));
         let metrics = Arc::new(Metrics::default());
         let (tx, rx) = tokio::sync::watch::channel(false);
-        let task = tokio::spawn(run_writer(settings(port), Arc::clone(&queue), Arc::clone(&metrics), rx));
+        let task = tokio::spawn(run_writer(
+            settings(port),
+            Arc::clone(&queue),
+            Arc::clone(&metrics),
+            rx,
+        ));
 
         let started = std::time::Instant::now();
         for i in 0..1_000 {
             queue.push(snap("AAPL", i));
         }
-        assert!(started.elapsed() < Duration::from_millis(500), "producer must not block");
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "producer must not block"
+        );
         tokio::time::sleep(Duration::from_millis(150)).await; // several failed connects
 
         // QuestDB comes back on the same port.
-        let listener = TcpListener::bind(("127.0.0.1", port)).await.expect("rebind");
+        let listener = TcpListener::bind(("127.0.0.1", port))
+            .await
+            .expect("rebind");
         queue.push(snap("MSFT", 5_000));
         let lines = read_lines(&listener, 1, Duration::from_secs(5)).await;
         assert!(!lines.is_empty(), "writer must reconnect on its own");
-        assert!(queue.dropped() >= 980, "old items were dropped, not buffered forever");
+        assert!(
+            queue.dropped() >= 980,
+            "old items were dropped, not buffered forever"
+        );
         tx.send(true).expect("send");
-        timeout(Duration::from_secs(3), task).await.expect("stops").expect("join");
+        timeout(Duration::from_secs(3), task)
+            .await
+            .expect("stops")
+            .expect("join");
     }
 
     #[tokio::test]

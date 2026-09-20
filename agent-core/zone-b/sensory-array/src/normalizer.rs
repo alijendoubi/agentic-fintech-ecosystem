@@ -191,7 +191,12 @@ impl Normalizer {
         if state.mid_prices.len() > window {
             state.mid_prices.pop_front();
         }
-        push_bar(&mut state.bars, q.exchange_ts_ns / NS_PER_SEC, mid, window + 1);
+        push_bar(
+            &mut state.bars,
+            q.exchange_ts_ns / NS_PER_SEC,
+            mid,
+            window + 1,
+        );
 
         state.bid_price = q.bid_price;
         state.ask_price = q.ask_price;
@@ -494,7 +499,10 @@ mod tests {
         // More than half the window identical => MAD == 0.
         let prior = dq(&[100.0, 100.0, 100.0, 100.0, 100.05, 100.0]);
         let (_, mad) = scores(&prior, 105.0);
-        assert!(mad.abs() > 3.5, "MAD==0 must not return 0 for a spike: {mad}");
+        assert!(
+            mad.abs() > 3.5,
+            "MAD==0 must not return 0 for a spike: {mad}"
+        );
         assert!(mad.is_finite());
     }
 
@@ -558,13 +566,17 @@ mod tests {
             n.update_quote("A", quote(10.0, 10.01, 0)),
             Err(Reject::InvalidTimestamp)
         );
-        assert!(n.update_quote("A", quote(10.0, 10.0, T0)).is_ok(), "locked is allowed");
+        assert!(
+            n.update_quote("A", quote(10.0, 10.0, T0)).is_ok(),
+            "locked is allowed"
+        );
     }
 
     #[test]
     fn ofi_balanced_is_zero_and_skewed_is_signed() {
         let mut n = Normalizer::new(20, 30);
-        n.update_quote("AAPL", quote(150.0, 150.05, T0)).expect("valid");
+        n.update_quote("AAPL", quote(150.0, 150.05, T0))
+            .expect("valid");
         let s = n.snapshot("AAPL", T0, "U".into(), 0.0).expect("snap");
         assert!(s.order_flow_imbalance.abs() < 1e-9);
 
@@ -670,7 +682,8 @@ mod tests {
         assert_eq!(s.adv_30d, 150.0, "mean of completed days");
 
         // Late trade from the previous day updates nothing about volume.
-        n.update_trade("AAPL", t(999.0, 19_000, T0 + 3)).expect("late");
+        n.update_trade("AAPL", t(999.0, 19_000, T0 + 3))
+            .expect("late");
         n.update_trade("AAPL", t(10.0, 19_002, T0 + 4)).expect("t4");
         let s = n.snapshot("AAPL", T0, "U".into(), 0.0).expect("snap");
         assert_eq!(s.adv_30d, (150.0 + 10.0) / 2.0);
@@ -703,7 +716,10 @@ mod tests {
             recv_ts_ns: T0,
             day: 19_000,
         };
-        assert_eq!(n.update_trade("A", mk(f64::NAN, 1.0)), Err(Reject::InvalidPrice));
+        assert_eq!(
+            n.update_trade("A", mk(f64::NAN, 1.0)),
+            Err(Reject::InvalidPrice)
+        );
         assert_eq!(n.update_trade("A", mk(1.0, -1.0)), Err(Reject::InvalidSize));
         assert_eq!(
             n.update_trade(
@@ -721,7 +737,9 @@ mod tests {
     fn snapshot_serializes_and_round_trips() {
         let mut n = Normalizer::new(20, 30);
         n.update_quote("AAPL", quote(150.0, 150.05, T0)).expect("q");
-        let s = n.snapshot("AAPL", T0, "TRENDING_BULL".into(), 0.9).expect("snap");
+        let s = n
+            .snapshot("AAPL", T0, "TRENDING_BULL".into(), 0.9)
+            .expect("snap");
         let json = serde_json::to_string(&s).expect("ser");
         let back: MarketSnapshot = serde_json::from_str(&json).expect("de");
         assert_eq!(back.symbol, "AAPL");

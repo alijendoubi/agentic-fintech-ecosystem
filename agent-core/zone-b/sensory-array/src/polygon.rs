@@ -181,12 +181,30 @@ mod tests {
             status: status.into(),
             message: message.into(),
         };
-        assert_eq!(classify_handshake(&st("auth_success", "authenticated")), Handshake::Authenticated);
-        assert!(matches!(classify_handshake(&st("auth_failed", "authentication failed")), Handshake::Rejected(_)));
-        assert!(matches!(classify_handshake(&st("error", "authentication failed")), Handshake::Rejected(_)));
-        assert!(matches!(classify_handshake(&st("max_connections", "x")), Handshake::Transient(_)));
-        assert!(matches!(classify_handshake(&st("error", "boom")), Handshake::Transient(_)));
-        assert_eq!(classify_handshake(&st("connected", "Connected Successfully")), Handshake::Ignore);
+        assert_eq!(
+            classify_handshake(&st("auth_success", "authenticated")),
+            Handshake::Authenticated
+        );
+        assert!(matches!(
+            classify_handshake(&st("auth_failed", "authentication failed")),
+            Handshake::Rejected(_)
+        ));
+        assert!(matches!(
+            classify_handshake(&st("error", "authentication failed")),
+            Handshake::Rejected(_)
+        ));
+        assert!(matches!(
+            classify_handshake(&st("max_connections", "x")),
+            Handshake::Transient(_)
+        ));
+        assert!(matches!(
+            classify_handshake(&st("error", "boom")),
+            Handshake::Transient(_)
+        ));
+        assert_eq!(
+            classify_handshake(&st("connected", "Connected Successfully")),
+            Handshake::Ignore
+        );
         assert_eq!(classify_handshake(&PolyMsg::Unknown), Handshake::Ignore);
     }
 
@@ -195,7 +213,10 @@ mod tests {
         let a = item(r#"{"ev":"status","status":"auth_success","message":"authenticated"}"#);
         let b = item(r#"{"ev":"auth","status":"auth_success"}"#);
         for m in [a, b] {
-            assert_eq!(classify_handshake(&m.expect("parsed")), Handshake::Authenticated);
+            assert_eq!(
+                classify_handshake(&m.expect("parsed")),
+                Handshake::Authenticated
+            );
         }
     }
 

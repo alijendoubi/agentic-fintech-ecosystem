@@ -165,14 +165,23 @@ pub async fn run_regime_subscriber(
     let mut failures = 0_u32;
     loop {
         let mut subscribed = false;
-        let outcome = subscribe_once(&redis_url, &cache, &metrics, &mut shutdown, &mut subscribed).await;
+        let outcome =
+            subscribe_once(&redis_url, &cache, &metrics, &mut shutdown, &mut subscribed).await;
         match outcome {
             Ok(true) => return,
             Ok(false) => warn!("regime subscription stream ended; reconnecting"),
             Err(e) => warn!(error = %e, "regime subscriber failed; reconnecting"),
         }
-        failures = if subscribed { 1 } else { failures.saturating_add(1) };
-        let delay = jittered_backoff(Duration::from_millis(500), Duration::from_secs(10), failures);
+        failures = if subscribed {
+            1
+        } else {
+            failures.saturating_add(1)
+        };
+        let delay = jittered_backoff(
+            Duration::from_millis(500),
+            Duration::from_secs(10),
+            failures,
+        );
         if sleep_or_shutdown(delay, &mut shutdown).await {
             return;
         }
@@ -240,7 +249,9 @@ mod tests {
 
     fn payload(symbol: &str, label: &str, conf: &str, ts: Option<i64>) -> String {
         match ts {
-            Some(t) => format!(r#"{{"symbol":"{symbol}","label":"{label}","confidence":{conf},"ts_ns":{t}}}"#),
+            Some(t) => format!(
+                r#"{{"symbol":"{symbol}","label":"{label}","confidence":{conf},"ts_ns":{t}}}"#
+            ),
             None => format!(r#"{{"symbol":"{symbol}","label":"{label}","confidence":{conf}}}"#),
         }
     }
@@ -248,7 +259,11 @@ mod tests {
     #[test]
     fn accepts_the_format_zone_a_publishes() {
         let c = cache();
-        c.ingest(&payload("AAPL", "TRENDING_BULL", "0.87", Some(NOW - 1_000)), NOW).expect("ok");
+        c.ingest(
+            &payload("AAPL", "TRENDING_BULL", "0.87", Some(NOW - 1_000)),
+            NOW,
+        )
+        .expect("ok");
         assert_eq!(c.lookup("AAPL", NOW), ("TRENDING_BULL", 0.87));
     }
 
@@ -260,7 +275,8 @@ mod tests {
     #[test]
     fn stale_entries_are_served_as_unknown() {
         let c = cache();
-        c.ingest(&payload("AAPL", "CRISIS", "0.9", Some(NOW)), NOW).expect("ok");
+        c.ingest(&payload("AAPL", "CRISIS", "0.9", Some(NOW)), NOW)
+            .expect("ok");
         assert_eq!(c.lookup("AAPL", NOW + 14_000_000_000).0, "CRISIS");
         assert_eq!(c.lookup("AAPL", NOW + 16_000_000_000), (UNKNOWN_LABEL, 0.0));
     }
@@ -268,7 +284,8 @@ mod tests {
     #[test]
     fn entry_without_timestamp_uses_receive_time() {
         let c = cache();
-        c.ingest(&payload("AAPL", "LOW_VOL_CHOP", "0.5", None), NOW).expect("ok");
+        c.ingest(&payload("AAPL", "LOW_VOL_CHOP", "0.5", None), NOW)
+            .expect("ok");
         assert_eq!(c.lookup("AAPL", NOW + 1).0, "LOW_VOL_CHOP");
         assert_eq!(c.lookup("AAPL", NOW + 20_000_000_000).0, UNKNOWN_LABEL);
     }
@@ -276,7 +293,11 @@ mod tests {
     #[test]
     fn a_stale_publisher_timestamp_is_stale_even_if_just_received() {
         let c = cache();
-        c.ingest(&payload("AAPL", "CRISIS", "0.9", Some(NOW - 60_000_000_000)), NOW).expect("ok");
+        c.ingest(
+            &payload("AAPL", "CRISIS", "0.9", Some(NOW - 60_000_000_000)),
+            NOW,
+        )
+        .expect("ok");
         assert_eq!(c.lookup("AAPL", NOW).0, UNKNOWN_LABEL);
     }
 
@@ -285,12 +306,27 @@ mod tests {
         let c = cache();
         let cases: [(String, RegimeReject); 9] = [
             (payload("AAPL", "MOON", "0.5", None), RegimeReject::Label),
-            (payload("AAPL", "CRISIS", "1.5", None), RegimeReject::Confidence),
-            (payload("AAPL", "CRISIS", "-0.1", None), RegimeReject::Confidence),
+            (
+                payload("AAPL", "CRISIS", "1.5", None),
+                RegimeReject::Confidence,
+            ),
+            (
+                payload("AAPL", "CRISIS", "-0.1", None),
+                RegimeReject::Confidence,
+            ),
             (payload("TSLA", "CRISIS", "0.5", None), RegimeReject::Symbol),
-            (payload("AAPL\\nX", "CRISIS", "0.5", None), RegimeReject::Symbol),
-            (payload("AAPL", "CRISIS", "0.5", Some(NOW + 60_000_000_000)), RegimeReject::Timestamp),
-            (payload("AAPL", "CRISIS", "0.5", Some(-5)), RegimeReject::Timestamp),
+            (
+                payload("AAPL\\nX", "CRISIS", "0.5", None),
+                RegimeReject::Symbol,
+            ),
+            (
+                payload("AAPL", "CRISIS", "0.5", Some(NOW + 60_000_000_000)),
+                RegimeReject::Timestamp,
+            ),
+            (
+                payload("AAPL", "CRISIS", "0.5", Some(-5)),
+                RegimeReject::Timestamp,
+            ),
             ("not json".to_string(), RegimeReject::Malformed),
             ("x".repeat(MAX_PAYLOAD_BYTES + 1), RegimeReject::TooLarge),
         ];
@@ -305,15 +341,26 @@ mod tests {
         // JSON has no NaN literal, but a malicious/buggy publisher may send one
         // as a string or via a lenient encoder; both must be refused.
         let c = cache();
-        assert!(c.ingest(r#"{"symbol":"AAPL","label":"CRISIS","confidence":"NaN"}"#, NOW).is_err());
-        assert!(c.ingest(r#"{"symbol":"AAPL","label":"CRISIS","confidence":NaN}"#, NOW).is_err());
+        assert!(c
+            .ingest(
+                r#"{"symbol":"AAPL","label":"CRISIS","confidence":"NaN"}"#,
+                NOW
+            )
+            .is_err());
+        assert!(c
+            .ingest(
+                r#"{"symbol":"AAPL","label":"CRISIS","confidence":NaN}"#,
+                NOW
+            )
+            .is_err());
     }
 
     #[test]
     fn cache_is_bounded_with_wildcard_filter() {
         let c = RegimeCache::new(Duration::from_secs(15), SymbolFilter::Any);
         for i in 0..MAX_SYMBOLS {
-            c.ingest(&payload(&format!("S{i}"), "CRISIS", "0.5", None), NOW).expect("under bound");
+            c.ingest(&payload(&format!("S{i}"), "CRISIS", "0.5", None), NOW)
+                .expect("under bound");
         }
         assert_eq!(
             c.ingest(&payload("OVERFLOW", "CRISIS", "0.5", None), NOW),
@@ -327,8 +374,13 @@ mod tests {
     #[test]
     fn newer_label_replaces_older() {
         let c = cache();
-        c.ingest(&payload("AAPL", "CRISIS", "0.9", Some(NOW)), NOW).expect("ok");
-        c.ingest(&payload("AAPL", "TRENDING_BULL", "0.6", Some(NOW + 1)), NOW + 1).expect("ok");
+        c.ingest(&payload("AAPL", "CRISIS", "0.9", Some(NOW)), NOW)
+            .expect("ok");
+        c.ingest(
+            &payload("AAPL", "TRENDING_BULL", "0.6", Some(NOW + 1)),
+            NOW + 1,
+        )
+        .expect("ok");
         assert_eq!(c.lookup("AAPL", NOW + 2), ("TRENDING_BULL", 0.6));
     }
 }

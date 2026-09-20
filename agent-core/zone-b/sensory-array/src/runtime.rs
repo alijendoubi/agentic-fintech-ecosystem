@@ -94,7 +94,10 @@ mod tests {
 
     #[test]
     fn nan_jitter_falls_back_to_nominal() {
-        assert_eq!(backoff_delay(S, Duration::from_secs(16), 2, f64::NAN), Duration::from_secs(2));
+        assert_eq!(
+            backoff_delay(S, Duration::from_secs(16), 2, f64::NAN),
+            Duration::from_secs(2)
+        );
     }
 
     #[test]
@@ -105,7 +108,8 @@ mod tests {
     #[tokio::test]
     async fn sleep_is_interrupted_by_shutdown() {
         let (tx, mut rx) = watch::channel(false);
-        let h = tokio::spawn(async move { sleep_or_shutdown(Duration::from_secs(30), &mut rx).await });
+        let h =
+            tokio::spawn(async move { sleep_or_shutdown(Duration::from_secs(30), &mut rx).await });
         tokio::time::sleep(Duration::from_millis(20)).await;
         tx.send(true).expect("send");
         let interrupted = tokio::time::timeout(Duration::from_secs(2), h)

@@ -33,7 +33,9 @@ use crate::error::{Result, SensoryError};
 use crate::health::Health;
 use crate::metrics::Metrics;
 use crate::normalizer::{MarketSnapshot, Normalizer, QuoteInput, TradeInput};
-use crate::polygon::{classify_handshake, parse_frame, parse_item, subscription_params, Handshake, PolyMsg};
+use crate::polygon::{
+    classify_handshake, parse_frame, parse_item, subscription_params, Handshake, PolyMsg,
+};
 use crate::questdb_writer::SnapshotQueue;
 use crate::regime::RegimeCache;
 use crate::runtime::{jittered_backoff, sleep_or_shutdown, unix_ns, wait_shutdown, Shutdown};
@@ -136,7 +138,11 @@ impl Ingestor {
                     "CRITICAL: feed unavailable after repeated reconnect attempts; still retrying"
                 );
             }
-            let delay = jittered_backoff(self.config.reconnect_base(), self.config.reconnect_max(), attempt);
+            let delay = jittered_backoff(
+                self.config.reconnect_base(),
+                self.config.reconnect_max(),
+                attempt,
+            );
             if sleep_or_shutdown(delay, shutdown).await {
                 return Ok(());
             }
@@ -277,8 +283,12 @@ impl Ingestor {
     fn handle_item(&mut self, msg: PolyMsg, recv_ns: i64) {
         if let PolyMsg::Status { status, message } = &msg {
             match classify_handshake(&msg) {
-                Handshake::Ignore | Handshake::Authenticated => info!(%status, %message, "Polygon status"),
-                Handshake::Rejected(_) | Handshake::Transient(_) => warn!(%status, %message, "Polygon status"),
+                Handshake::Ignore | Handshake::Authenticated => {
+                    info!(%status, %message, "Polygon status")
+                }
+                Handshake::Rejected(_) | Handshake::Transient(_) => {
+                    warn!(%status, %message, "Polygon status")
+                }
             }
             return;
         }
@@ -339,9 +349,9 @@ impl Ingestor {
         // must show up as staleness in later ones.
         let now_ns = unix_ns();
         let (label, confidence) = self.regime.lookup(ticker, now_ns);
-        let Some(mut snap) = self
-            .normalizer
-            .snapshot(ticker, now_ns, Cow::Borrowed(label), confidence)
+        let Some(mut snap) =
+            self.normalizer
+                .snapshot(ticker, now_ns, Cow::Borrowed(label), confidence)
         else {
             return;
         };
@@ -349,7 +359,14 @@ impl Ingestor {
         self.emit(snap);
     }
 
-    fn handle_trade(&mut self, ticker: &str, price: f64, size: f64, timestamp_ms: i64, recv_ns: i64) {
+    fn handle_trade(
+        &mut self,
+        ticker: &str,
+        price: f64,
+        size: f64,
+        timestamp_ms: i64,
+        recv_ns: i64,
+    ) {
         if !self.filter.allows(ticker) {
             return self.reject("symbol not allowed");
         }
@@ -395,7 +412,9 @@ async fn await_auth(source: &mut WsSource) -> Result<()> {
             None => return Err(SensoryError::session("connection closed during handshake")),
             Some(Err(e)) => return Err(e.into()),
             Some(Ok(Message::Close(_))) => {
-                return Err(SensoryError::session("server closed connection during handshake"))
+                return Err(SensoryError::session(
+                    "server closed connection during handshake",
+                ))
             }
             Some(Ok(Message::Text(text))) => {
                 if let Some(result) = auth_result(&text) {
@@ -431,14 +450,21 @@ mod tests {
         let ok = r#"[{"ev":"status","status":"auth_success","message":"authenticated"}]"#;
         assert!(matches!(auth_result(ok), Some(Ok(()))));
         let bad = r#"[{"ev":"status","status":"auth_failed","message":"authentication failed"}]"#;
-        assert!(matches!(auth_result(bad), Some(Err(SensoryError::AuthFailed { .. }))));
+        assert!(matches!(
+            auth_result(bad),
+            Some(Err(SensoryError::AuthFailed { .. }))
+        ));
         let limit = r#"[{"ev":"status","status":"max_connections","message":"Maximum number of websocket connections exceeded."}]"#;
-        assert!(matches!(auth_result(limit), Some(Err(SensoryError::Session { .. }))));
+        assert!(matches!(
+            auth_result(limit),
+            Some(Err(SensoryError::Session { .. }))
+        ));
     }
 
     #[test]
     fn auth_result_ignores_connected_and_garbage() {
-        let connected = r#"[{"ev":"status","status":"connected","message":"Connected Successfully"}]"#;
+        let connected =
+            r#"[{"ev":"status","status":"connected","message":"Connected Successfully"}]"#;
         assert!(auth_result(connected).is_none());
         assert!(auth_result("not json").is_none());
         assert!(auth_result(r#"{"ev":"status"}"#).is_none());
@@ -446,7 +472,8 @@ mod tests {
 
     #[test]
     fn auth_result_sees_success_after_connected_in_same_frame() {
-        let both = r#"[{"ev":"status","status":"connected"},{"ev":"status","status":"auth_success"}]"#;
+        let both =
+            r#"[{"ev":"status","status":"connected"},{"ev":"status","status":"auth_success"}]"#;
         assert!(matches!(auth_result(both), Some(Ok(()))));
     }
 }

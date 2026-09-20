@@ -242,12 +242,17 @@ impl Config {
 
     fn validate_secrets_and_urls(&self) -> Result<()> {
         let key = &self.polygon_api_key;
-        if key.is_empty() || key.len() > 128 || key.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        if key.is_empty()
+            || key.len() > 128
+            || key.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
             return bad("POLYGON_API_KEY must be 1-128 chars without whitespace/control chars");
         }
         if !self.polygon_ws_url.starts_with("wss://") || self.polygon_ws_url.len() <= "wss://".len()
         {
-            return bad("POLYGON_WS_URL must be a wss:// URL (plaintext ws:// would leak the API key)");
+            return bad(
+                "POLYGON_WS_URL must be a wss:// URL (plaintext ws:// would leak the API key)",
+            );
         }
         if !(self.redis_url.starts_with("redis://") || self.redis_url.starts_with("rediss://")) {
             return bad("REDIS_URL must start with redis:// or rediss://");
@@ -269,31 +274,95 @@ impl Config {
         if self.symbols.len() > MAX_SYMBOLS {
             return bad("POLYGON_SYMBOLS: too many symbols");
         }
-        if let Some(s) = self.symbols.iter().find(|s| *s != "*" && !is_valid_ticker(s)) {
+        if let Some(s) = self
+            .symbols
+            .iter()
+            .find(|s| *s != "*" && !is_valid_ticker(s))
+        {
             return bad(&format!("POLYGON_SYMBOLS: invalid ticker '{s}'"));
         }
         Ok(())
     }
 
     fn validate_numeric_ranges(&self) -> Result<()> {
-        check_range("ROLLING_WINDOW", self.rolling_window as u64, MIN_WINDOW as u64, MAX_WINDOW as u64)?;
+        check_range(
+            "ROLLING_WINDOW",
+            self.rolling_window as u64,
+            MIN_WINDOW as u64,
+            MAX_WINDOW as u64,
+        )?;
         check_range("ADV_WINDOW_DAYS", self.adv_window_days as u64, 1, 365)?;
-        check_range("QUESTDB_ILP_PORT", u64::from(self.questdb_ilp_port), 1, 65_535)?;
+        check_range(
+            "QUESTDB_ILP_PORT",
+            u64::from(self.questdb_ilp_port),
+            1,
+            65_535,
+        )?;
         check_range("FRESHNESS_L2_MS", self.freshness_l2_ms, 1, 60_000)?;
         check_range("FRESHNESS_PRINT_MS", self.freshness_print_ms, 1, 60_000)?;
         check_range("FEED_MAX_LAG_MS", self.feed_max_lag_ms, 1, 3_600_000)?;
-        check_range("FEED_FUTURE_TOLERANCE_MS", self.feed_future_tolerance_ms, 0, 60_000)?;
-        check_range("MAX_RECONNECT_ATTEMPTS", u64::from(self.max_reconnect_attempts), 1, 1_000)?;
+        check_range(
+            "FEED_FUTURE_TOLERANCE_MS",
+            self.feed_future_tolerance_ms,
+            0,
+            60_000,
+        )?;
+        check_range(
+            "MAX_RECONNECT_ATTEMPTS",
+            u64::from(self.max_reconnect_attempts),
+            1,
+            1_000,
+        )?;
         check_range("RECONNECT_BASE_MS", self.reconnect_base_ms, 1, 60_000)?;
-        check_range("RECONNECT_MAX_MS", self.reconnect_max_ms, self.reconnect_base_ms, 600_000)?;
-        check_range("WS_CONNECT_TIMEOUT_MS", self.ws_connect_timeout_ms, 1, 120_000)?;
-        check_range("WS_HANDSHAKE_TIMEOUT_MS", self.ws_handshake_timeout_ms, 1, 120_000)?;
+        check_range(
+            "RECONNECT_MAX_MS",
+            self.reconnect_max_ms,
+            self.reconnect_base_ms,
+            600_000,
+        )?;
+        check_range(
+            "WS_CONNECT_TIMEOUT_MS",
+            self.ws_connect_timeout_ms,
+            1,
+            120_000,
+        )?;
+        check_range(
+            "WS_HANDSHAKE_TIMEOUT_MS",
+            self.ws_handshake_timeout_ms,
+            1,
+            120_000,
+        )?;
         check_range("WS_IDLE_TIMEOUT_MS", self.ws_idle_timeout_ms, 1, 600_000)?;
-        check_range("QUESTDB_CONNECT_TIMEOUT_MS", self.questdb_connect_timeout_ms, 1, 60_000)?;
-        check_range("QUESTDB_WRITE_TIMEOUT_MS", self.questdb_write_timeout_ms, 1, 60_000)?;
-        check_range("QUESTDB_FLUSH_INTERVAL_MS", self.questdb_flush_interval_ms, 1, 5_000)?;
-        check_range("QUESTDB_QUEUE_CAPACITY", self.questdb_queue_capacity as u64, 16, 10_000_000)?;
-        check_range("REDIS_QUEUE_CAPACITY", self.redis_queue_capacity as u64, 16, 10_000_000)?;
+        check_range(
+            "QUESTDB_CONNECT_TIMEOUT_MS",
+            self.questdb_connect_timeout_ms,
+            1,
+            60_000,
+        )?;
+        check_range(
+            "QUESTDB_WRITE_TIMEOUT_MS",
+            self.questdb_write_timeout_ms,
+            1,
+            60_000,
+        )?;
+        check_range(
+            "QUESTDB_FLUSH_INTERVAL_MS",
+            self.questdb_flush_interval_ms,
+            1,
+            5_000,
+        )?;
+        check_range(
+            "QUESTDB_QUEUE_CAPACITY",
+            self.questdb_queue_capacity as u64,
+            16,
+            10_000_000,
+        )?;
+        check_range(
+            "REDIS_QUEUE_CAPACITY",
+            self.redis_queue_capacity as u64,
+            16,
+            10_000_000,
+        )?;
         check_range("REGIME_MAX_AGE_S", self.regime_max_age_s, 1, 3_600)
     }
 
@@ -510,7 +579,10 @@ mod tests {
     #[test]
     fn redact_url_handles_shapes() {
         assert_eq!(redact_url("redis://redis:6379"), "redis://redis:6379");
-        assert_eq!(redact_url("redis://:pw@redis:6379"), "redis://<redacted>@redis:6379");
+        assert_eq!(
+            redact_url("redis://:pw@redis:6379"),
+            "redis://<redacted>@redis:6379"
+        );
     }
 
     #[cfg(not(feature = "ilp-secure"))]

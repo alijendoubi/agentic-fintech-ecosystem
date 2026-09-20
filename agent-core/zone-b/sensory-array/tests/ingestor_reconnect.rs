@@ -16,15 +16,17 @@ use sensory_array::health::Health;
 use sensory_array::ingestor::{Ingestor, Sinks};
 use sensory_array::metrics::Metrics;
 use sensory_array::normalizer::MarketSnapshot;
-use sensory_array::queue::BoundedQueue;
 use sensory_array::questdb_writer::SnapshotQueue;
+use sensory_array::queue::BoundedQueue;
 use sensory_array::regime::RegimeCache;
 use sensory_array::runtime::unix_ns;
 use sensory_array::validate::SymbolFilter;
 
-const CONNECTED: &str = r#"[{"ev":"status","status":"connected","message":"Connected Successfully"}]"#;
+const CONNECTED: &str =
+    r#"[{"ev":"status","status":"connected","message":"Connected Successfully"}]"#;
 const AUTH_OK: &str = r#"[{"ev":"status","status":"auth_success","message":"authenticated"}]"#;
-const AUTH_FAIL: &str = r#"[{"ev":"status","status":"auth_failed","message":"authentication failed"}]"#;
+const AUTH_FAIL: &str =
+    r#"[{"ev":"status","status":"auth_failed","message":"authentication failed"}]"#;
 
 #[derive(Clone, Copy)]
 enum After {
@@ -241,12 +243,18 @@ async fn ingestor_reconnect_survives_many_drops_with_backoff() {
         "expected reconnects, saw {}",
         server.connections()
     );
-    assert!(!h.join.is_finished(), "ingestor must keep running after repeated drops");
+    assert!(
+        !h.join.is_finished(),
+        "ingestor must keep running after repeated drops"
+    );
 
     let times = server.accept_times();
     for pair in times.windows(2).take(6) {
         let gap = pair[1].duration_since(pair[0]);
-        assert!(gap >= Duration::from_millis(20), "reconnect fired without backoff: {gap:?}");
+        assert!(
+            gap >= Duration::from_millis(20),
+            "reconnect fired without backoff: {gap:?}"
+        );
     }
     assert!(eventually(Duration::from_secs(3), || h.questdb.len() >= 7).await);
     assert!(Metrics::get(&h.metrics.reconnects) >= 6);
@@ -264,7 +272,10 @@ async fn close_frame_reconnects_instead_of_exiting() {
     .await;
     let h = start_ingestor(test_config(server.port));
     assert!(eventually(Duration::from_secs(5), || server.connections() >= 2).await);
-    assert!(!h.join.is_finished(), "a Close frame used to end run() and exit 0");
+    assert!(
+        !h.join.is_finished(),
+        "a Close frame used to end run() and exit 0"
+    );
     h.stop().await.expect("clean shutdown");
 }
 
@@ -281,8 +292,15 @@ async fn auth_failed_is_fatal_and_reported() {
         .await
         .expect("returns")
         .expect("join");
-    assert!(matches!(result, Err(SensoryError::AuthFailed { .. })), "{result:?}");
-    assert_eq!(server.connections(), 1, "bad credentials must not be retried");
+    assert!(
+        matches!(result, Err(SensoryError::AuthFailed { .. })),
+        "{result:?}"
+    );
+    assert_eq!(
+        server.connections(),
+        1,
+        "bad credentials must not be retried"
+    );
 }
 
 #[tokio::test]
@@ -309,30 +327,37 @@ async fn malformed_frames_are_skipped_without_dropping_the_connection() {
 async fn invalid_quotes_are_rejected_and_only_the_valid_one_emits() {
     let t = now_ms();
     let frames = vec![
-        quote_frame(150.05, 150.0, t),                                             // crossed
-        quote_frame(-1.0, 150.0, t),                                               // negative
-        quote_frame(150.0, 150.05, 9_223_372_036_855),                             // ms->ns overflow
-        quote_frame(150.0, 150.05, 0),                                             // no timestamp
-        quote_frame(1e308, 1e308, t),                                              // absurd price
-        quote_frame(150.0, 150.05, t).replace("AAPL", "EVIL,x=1"),                 // hostile ticker
-        quote_frame(150.0, 150.05, t).replace("AAPL", "MSFT"),                     // not subscribed
-        quote_frame(150.0, 150.05, t),                                             // valid
+        quote_frame(150.05, 150.0, t),                             // crossed
+        quote_frame(-1.0, 150.0, t),                               // negative
+        quote_frame(150.0, 150.05, 9_223_372_036_855),             // ms->ns overflow
+        quote_frame(150.0, 150.05, 0),                             // no timestamp
+        quote_frame(1e308, 1e308, t),                              // absurd price
+        quote_frame(150.0, 150.05, t).replace("AAPL", "EVIL,x=1"), // hostile ticker
+        quote_frame(150.0, 150.05, t).replace("AAPL", "MSFT"),     // not subscribed
+        quote_frame(150.0, 150.05, t),                             // valid
     ];
     let server = start_server(move |_| behavior(frames.clone(), After::Hold)).await;
     let h = start_ingestor(test_config(server.port));
-    assert!(eventually(Duration::from_secs(5), || Metrics::get(&h.metrics.rejected_messages) >= 7).await);
+    assert!(
+        eventually(Duration::from_secs(5), || Metrics::get(
+            &h.metrics.rejected_messages
+        ) >= 7)
+        .await
+    );
     let snaps = h.snapshots();
-    assert_eq!(snaps.len(), 1, "only the valid quote may produce a snapshot");
+    assert_eq!(
+        snaps.len(),
+        1,
+        "only the valid quote may produce a snapshot"
+    );
     assert_eq!(snaps[0].symbol, "AAPL");
     h.stop().await.expect("clean shutdown");
 }
 
 #[tokio::test]
 async fn idle_feed_is_pinged_then_dropped_and_reconnected() {
-    let server = start_server(|i| {
-        behavior(vec![], if i == 0 { After::Silent } else { After::Hold })
-    })
-    .await;
+    let server =
+        start_server(|i| behavior(vec![], if i == 0 { After::Silent } else { After::Hold })).await;
     let h = start_ingestor(test_config(server.port));
     // idle 150ms -> ping -> 150ms -> drop -> ~30ms backoff -> reconnect
     assert!(
@@ -347,7 +372,13 @@ async fn rolling_state_survives_a_reconnect() {
     let base = now_ms();
     let server = start_server(move |i| {
         // Quotes one second apart so each becomes its own 1s bar.
-        let q = |k: i64| quote_frame(100.0 + 0.01 * k as f64, 100.05 + 0.01 * k as f64, base + k * 1_000);
+        let q = |k: i64| {
+            quote_frame(
+                100.0 + 0.01 * k as f64,
+                100.05 + 0.01 * k as f64,
+                base + k * 1_000,
+            )
+        };
         if i == 0 {
             behavior((0..4).map(q).collect(), After::Drop)
         } else {
@@ -368,7 +399,8 @@ async fn rolling_state_survives_a_reconnect() {
 
 #[tokio::test]
 async fn shutdown_ends_a_live_session_cleanly() {
-    let server = start_server(|_| behavior(vec![quote_frame(150.0, 150.05, now_ms())], After::Hold)).await;
+    let server =
+        start_server(|_| behavior(vec![quote_frame(150.0, 150.05, now_ms())], After::Hold)).await;
     let h = start_ingestor(test_config(server.port));
     assert!(eventually(Duration::from_secs(5), || h.questdb.len() == 1).await);
     let started = Instant::now();

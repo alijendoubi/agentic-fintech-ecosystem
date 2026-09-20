@@ -50,7 +50,8 @@ async fn connect_with_retry(url: &str, shutdown: &mut Shutdown) -> Option<Connec
             Err(e) => {
                 failures = failures.saturating_add(1);
                 warn!(failures, error = %e, "Redis publisher cannot connect; retrying");
-                let d = jittered_backoff(Duration::from_millis(200), Duration::from_secs(5), failures);
+                let d =
+                    jittered_backoff(Duration::from_millis(200), Duration::from_secs(5), failures);
                 if sleep_or_shutdown(d, shutdown).await {
                     return None;
                 }
@@ -111,7 +112,10 @@ pub async fn run_publisher(
             Ok(with_subscribers) => {
                 consecutive_errors = 0;
                 Metrics::add(&metrics.redis_published, payloads.len() as u64);
-                debug!(published = payloads.len(), with_subscribers, "published snapshots");
+                debug!(
+                    published = payloads.len(),
+                    with_subscribers, "published snapshots"
+                );
             }
             Err(e) => {
                 Metrics::add(&metrics.redis_errors, payloads.len() as u64);
@@ -169,10 +173,17 @@ mod tests {
     #[tokio::test]
     async fn shutdown_interrupts_connect_retry() {
         let (tx, mut rx) = tokio::sync::watch::channel(false);
-        let h = tokio::spawn(async move { connect_with_retry("redis://127.0.0.1:1", &mut rx).await.is_none() });
+        let h = tokio::spawn(async move {
+            connect_with_retry("redis://127.0.0.1:1", &mut rx)
+                .await
+                .is_none()
+        });
         tokio::time::sleep(Duration::from_millis(100)).await;
         tx.send(true).expect("send");
-        let stopped = timeout(Duration::from_secs(8), h).await.expect("no timeout").expect("join");
+        let stopped = timeout(Duration::from_secs(8), h)
+            .await
+            .expect("no timeout")
+            .expect("join");
         assert!(stopped);
     }
 }

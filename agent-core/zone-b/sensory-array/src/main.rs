@@ -17,9 +17,9 @@ use sensory_array::config::Config;
 use sensory_array::health::{check_file, run_heartbeat, Health, HEALTHCHECK_MAX_AGE_S};
 use sensory_array::ingestor::{Ingestor, Sinks};
 use sensory_array::metrics::Metrics;
+use sensory_array::publisher::run_publisher;
 use sensory_array::questdb_writer::{run_writer, SnapshotQueue, WriterSettings};
 use sensory_array::queue::BoundedQueue;
-use sensory_array::publisher::run_publisher;
 use sensory_array::regime::{run_regime_subscriber, RegimeCache};
 use sensory_array::runtime::unix_ns;
 use sensory_array::validate::SymbolFilter;
@@ -48,12 +48,19 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(&level))
         .unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).json().init();
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .json()
+        .init();
 }
 
 fn healthcheck() -> ExitCode {
     let path = std::env::var("HEALTH_FILE").unwrap_or_else(|_| DEFAULT_HEALTH_FILE.to_string());
-    match check_file(Path::new(&path), unix_ns() / 1_000_000_000, HEALTHCHECK_MAX_AGE_S) {
+    match check_file(
+        Path::new(&path),
+        unix_ns() / 1_000_000_000,
+        HEALTHCHECK_MAX_AGE_S,
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(reason) => {
             let _ = writeln!(std::io::stderr(), "unhealthy: {reason}");
@@ -203,7 +210,10 @@ async fn signal_listener(shutdown_tx: Arc<watch::Sender<bool>>) {
 #[cfg(unix)]
 async fn wait_for_termination_signal() {
     use tokio::signal::unix::{signal, SignalKind};
-    let (term, int) = (signal(SignalKind::terminate()), signal(SignalKind::interrupt()));
+    let (term, int) = (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    );
     match (term, int) {
         (Ok(mut term), Ok(mut int)) => {
             tokio::select! {
@@ -212,7 +222,11 @@ async fn wait_for_termination_signal() {
             }
         }
         (a, b) => {
-            error!(term_ok = a.is_ok(), int_ok = b.is_ok(), "cannot install signal handlers; falling back to Ctrl-C");
+            error!(
+                term_ok = a.is_ok(),
+                int_ok = b.is_ok(),
+                "cannot install signal handlers; falling back to Ctrl-C"
+            );
             wait_ctrl_c().await;
         }
     }

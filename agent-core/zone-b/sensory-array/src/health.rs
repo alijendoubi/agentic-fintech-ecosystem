@@ -73,7 +73,8 @@ pub async fn run_heartbeat(
 
 /// `--healthcheck`: `Ok(())` iff the health file exists and is fresh.
 pub fn check_file(path: &Path, now_s: i64, max_age_s: i64) -> Result<(), String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let stamp: i64 = text
         .trim()
         .parse()
@@ -99,7 +100,10 @@ mod tests {
         std::fs::write(&p, "1000").expect("write");
         assert!(check_file(&p, 1010, 30).is_ok());
         assert!(check_file(&p, 1031, 30).is_err(), "stale");
-        assert!(check_file(&p, 900, 30).is_err(), "timestamp from the future");
+        assert!(
+            check_file(&p, 900, 30).is_err(),
+            "timestamp from the future"
+        );
         std::fs::write(&p, "garbage").expect("write");
         assert!(check_file(&p, 1010, 30).is_err());
         std::fs::remove_file(&p).expect("cleanup");
@@ -121,7 +125,12 @@ mod tests {
         let _ = std::fs::remove_file(&p);
         let (tx, rx) = tokio::sync::watch::channel(false);
         let h = Arc::new(Health::new());
-        let task = tokio::spawn(run_heartbeat(p.to_string_lossy().into_owned(), Arc::clone(&h), Duration::from_secs(60), rx));
+        let task = tokio::spawn(run_heartbeat(
+            p.to_string_lossy().into_owned(),
+            Arc::clone(&h),
+            Duration::from_secs(60),
+            rx,
+        ));
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(check_file(&p, unix_ns() / 1_000_000_000, HEALTHCHECK_MAX_AGE_S).is_ok());
         tx.send(true).expect("send");
@@ -134,7 +143,12 @@ mod tests {
         let (tx2, rx2) = tokio::sync::watch::channel(false);
         let dead = Arc::new(Health::new());
         tokio::time::sleep(Duration::from_millis(5)).await;
-        let task = tokio::spawn(run_heartbeat(p2.to_string_lossy().into_owned(), dead, Duration::ZERO, rx2));
+        let task = tokio::spawn(run_heartbeat(
+            p2.to_string_lossy().into_owned(),
+            dead,
+            Duration::ZERO,
+            rx2,
+        ));
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!p2.exists());
         tx2.send(true).expect("send");

@@ -166,7 +166,9 @@ mod tests {
         let b64 = sign_challenge(&key, challenge);
         let der = STANDARD.decode(b64).expect("b64");
         let sig = Signature::from_der(&der).expect("der");
-        VerifyingKey::from(&key).verify(challenge, &sig).expect("verifies");
+        VerifyingKey::from(&key)
+            .verify(challenge, &sig)
+            .expect("verifies");
     }
 
     #[tokio::test]
@@ -180,14 +182,20 @@ mod tests {
             reader.read_line(&mut kid).await.expect("kid");
             assert_eq!(kid, "my-key\n");
             let challenge = b"0123456789abcdef";
-            reader.get_mut().write_all(b"0123456789abcdef\n").await.expect("chal");
+            reader
+                .get_mut()
+                .write_all(b"0123456789abcdef\n")
+                .await
+                .expect("chal");
             let mut resp = String::new();
             reader.read_line(&mut resp).await.expect("resp");
             let der = STANDARD.decode(resp.trim_end()).expect("b64");
             let sig = Signature::from_der(&der).expect("der");
             vk.verify(challenge, &sig).expect("signature valid");
         });
-        authenticate(&mut client, "my-key", &token).await.expect("auth ok");
+        authenticate(&mut client, "my-key", &token)
+            .await
+            .expect("auth ok");
         srv.await.expect("server task");
     }
 
