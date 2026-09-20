@@ -16,6 +16,7 @@ pub mod killswitch;
 pub mod limits;
 pub mod money;
 pub mod pb;
+pub mod signing;
 pub mod validate;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

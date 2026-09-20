@@ -30,7 +30,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
-ed25519-dalek = { version = "2", features = ["std"] }
+ed25519-dalek = { version = "2", features = ["std", "rand_core"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 x509-parser = "0.16"
 cryptoki = { version = "0.7", optional = true }
