@@ -102,7 +102,7 @@ def max_drawdown(equity: FloatArray, ts_ns: NDArray[np.int64]) -> tuple[float, i
     return dd, best_periods, best_ns
 
 
-def _ratio_stats(
+def ratio_stats(
     returns: FloatArray, cfg: MetricsConfig
 ) -> tuple[float | None, float | None, float | None]:
     """Return ``(annualised vol, sharpe, sortino)``."""
@@ -146,7 +146,7 @@ def compute_metrics(
     n = int(returns.shape[0])
     total = float(equity[-1] / equity[0] - 1.0)
     ann_ret = (1.0 + total) ** (cfg.periods_per_year / n) - 1.0
-    vol, sharpe, sortino = _ratio_stats(returns, cfg)
+    vol, sharpe, sortino = ratio_stats(returns, cfg)
     dd, dd_periods, dd_ns = max_drawdown(equity, ts_ns)
     hit, pf = _trade_stats(trades)
     mean_eq = float(np.mean(equity))
