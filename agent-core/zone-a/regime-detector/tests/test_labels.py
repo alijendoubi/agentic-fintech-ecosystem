@@ -6,7 +6,6 @@ import re
 from pathlib import Path
 
 import pytest
-
 from regime_detector.labels import N_STATES, STATE_REGIMES, RegimeLabel
 
 PROTO = Path(__file__).resolve().parents[3] / "shared" / "proto" / "market_snapshot.proto"
