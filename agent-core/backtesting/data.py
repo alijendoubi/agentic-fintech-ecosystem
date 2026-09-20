@@ -16,9 +16,10 @@ Parquet with the same columns is supported when ``pyarrow`` is installed.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -33,9 +34,9 @@ IntArray = NDArray[np.int64]
 FloatArray = NDArray[np.float64]
 
 
-def _readonly(array: np.ndarray, dtype: type) -> np.ndarray:
+def _readonly(array: Any, dtype: Any) -> Any:
     """Return a private, read-only copy of ``array`` with the given dtype."""
-    out = np.array(array, dtype=dtype, copy=True)
+    out: Any = np.array(array, dtype=dtype, copy=True)
     out.setflags(write=False)
     return out
 
@@ -192,12 +193,18 @@ class MarketData:
             raise DataValidationError("empty regime series")
         order = np.argsort(np.asarray(label_ts_ns, dtype=np.int64), kind="stable")
         sorted_ts = np.asarray(label_ts_ns, dtype=np.int64)[order]
-        sorted_lab = np.asarray([int(parse_regime(labels[i])) for i in order], dtype=np.int8)
+        sorted_lab = np.asarray(
+            [int(parse_regime(labels[int(i)])) for i in order], dtype=np.int8
+        )
         out: list[SymbolSeries] = []
         for s in self._series.values():
             pos = np.searchsorted(sorted_ts, s.ts, side="right") - 1
             reg = np.where(pos >= 0, sorted_lab[np.maximum(pos, 0)], 0).astype(np.int8)
-            out.append(SymbolSeries.create(s.symbol, s.ts, s.open, s.high, s.low, s.close, s.volume, reg))
+            out.append(
+                SymbolSeries.create(
+                    s.symbol, s.ts, s.open, s.high, s.low, s.close, s.volume, reg
+                )
+            )
         return MarketData(out)
 
     @classmethod
@@ -321,9 +328,3 @@ def load_market_data(path: str | Path) -> MarketData:
     """Load a CSV/Parquet bar file into :class:`MarketData`."""
     frame, _ = read_bar_frame(path)
     return MarketData.from_frame(frame)
-
-
-def regimes_from_mapping(mapping: Mapping[int, object]) -> tuple[list[int], list[object]]:
-    """Split ``{timestamp_ns: label}`` into parallel lists for :meth:`MarketData.with_regimes`."""
-    keys = sorted(mapping)
-    return keys, [mapping[k] for k in keys]
