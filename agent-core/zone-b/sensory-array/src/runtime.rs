@@ -7,6 +7,17 @@ use tokio::sync::watch;
 /// Shutdown signal: `true` once shutdown was requested.
 pub type Shutdown = watch::Receiver<bool>;
 
+/// Wall-clock nanoseconds since the Unix epoch. Returns 0 if the clock is
+/// unusable; every consumer rejects non-positive timestamps (fail closed).
+pub fn unix_ns() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_nanos()).ok())
+        .unwrap_or(0)
+}
+
 /// Resolves when shutdown was requested (or the sender was dropped).
 pub async fn wait_shutdown(rx: &mut Shutdown) {
     loop {
@@ -84,6 +95,11 @@ mod tests {
     #[test]
     fn nan_jitter_falls_back_to_nominal() {
         assert_eq!(backoff_delay(S, Duration::from_secs(16), 2, f64::NAN), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn unix_ns_is_plausible() {
+        assert!(unix_ns() > 1_700_000_000_000_000_000);
     }
 
     #[tokio::test]

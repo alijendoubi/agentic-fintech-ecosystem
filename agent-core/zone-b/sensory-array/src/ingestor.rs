@@ -1,448 +1,452 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+//! Polygon WebSocket ingestor: connect, authenticate, subscribe, route quotes
+//! and trades through the normaliser, TTL check and out to the sink queues.
+//!
+//! Reconnect policy (spec): exponential backoff 1s -> 16s cap with +-20%
+//! jitter. Reconnecting never stops on its own: after `max_reconnect_attempts`
+//! consecutive failed sessions a CRITICAL event is logged on every further
+//! attempt. A session that lived at least `reconnect_stable` resets the
+//! counter. Only bad credentials (fatal) or shutdown end `run`.
+//!
+//! Liveness: no frame for `ws_idle_timeout` triggers a WebSocket ping; no
+//! frame (pong included) within another `ws_idle_timeout` drops the session.
+//! Connecting and the handshake are bounded by timeouts too.
+//!
+//! The normaliser lives in the `Ingestor`, so rolling windows survive
+//! reconnects. Sinks are non-blocking queues: nothing here awaits QuestDB or
+//! Redis.
 
+use std::borrow::Cow;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
-use tokio::sync::RwLock;
-use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::net::TcpStream;
+use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async_with_config, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::error::{Result, SensoryError};
-use crate::normalizer::{MarketSnapshot, Normalizer};
-use crate::questdb_writer::QuestDbWriter;
-use crate::ttl::TtlChecker;
+use crate::health::Health;
+use crate::metrics::Metrics;
+use crate::normalizer::{MarketSnapshot, Normalizer, QuoteInput, TradeInput};
+use crate::polygon::{classify_handshake, parse_frame, parse_item, subscription_params, Handshake, PolyMsg};
+use crate::questdb_writer::SnapshotQueue;
+use crate::regime::RegimeCache;
+use crate::runtime::{jittered_backoff, sleep_or_shutdown, unix_ns, wait_shutdown, Shutdown};
+use crate::ttl::{TtlChecker, TtlLimits};
+use crate::validate::{ms_to_ns, SymbolFilter};
 
-// ─────────────────────────────────────────────────────────────
-// Polygon.io WebSocket message types
-// ─────────────────────────────────────────────────────────────
+type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type WsSink = SplitSink<Ws, Message>;
+type WsSource = SplitStream<Ws>;
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "ev")]
-enum PolyMsg {
-    /// Connection status
-    #[serde(rename = "status")]
-    Status { status: String, message: String },
+const NS_PER_DAY: i64 = 86_400 * 1_000_000_000;
+const MAX_WS_MESSAGE_BYTES: usize = 8 << 20;
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
-    /// Auth result
-    #[serde(rename = "auth")]
-    Auth { status: String, message: String },
-
-    /// NBBO Quote
-    #[serde(rename = "Q")]
-    Quote {
-        #[serde(rename = "T")]
-        ticker: String,
-        #[serde(rename = "bp")]
-        bid_price: f64,
-        #[serde(rename = "bs")]
-        bid_size: f64,
-        #[serde(rename = "ap")]
-        ask_price: f64,
-        #[serde(rename = "as")]
-        ask_size: f64,
-        /// SIP timestamp (milliseconds)
-        #[serde(rename = "t")]
-        timestamp_ms: i64,
-        /// Exchange timestamp (milliseconds)
-        #[serde(rename = "y", default)]
-        exchange_ts_ms: i64,
-    },
-
-    /// Trade print
-    #[serde(rename = "T")]
-    Trade {
-        #[serde(rename = "T")]
-        ticker: String,
-        #[serde(rename = "p")]
-        price: f64,
-        #[serde(rename = "s")]
-        size: f64,
-        /// SIP timestamp (milliseconds)
-        #[serde(rename = "t")]
-        timestamp_ms: i64,
-    },
-
-    /// Catch-all for unknown event types
-    #[serde(other)]
-    Unknown,
+/// Output queues (drop-oldest, never block the read loop).
+#[derive(Clone)]
+pub struct Sinks {
+    pub questdb: SnapshotQueue,
+    pub redis: SnapshotQueue,
 }
 
-// ─────────────────────────────────────────────────────────────
-// Regime label cache (populated by regime subscriber side-task)
-// ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Default)]
-pub struct RegimeEntry {
-    pub label: String,
-    pub confidence: f64,
+/// How a session that did not fail ended.
+#[derive(Debug, PartialEq, Eq)]
+enum SessionEnd {
+    Shutdown,
+    /// Server closed the connection or the stream ended: reconnect.
+    Closed,
 }
 
-pub type RegimeCache = Arc<RwLock<HashMap<String, RegimeEntry>>>;
-
-// ─────────────────────────────────────────────────────────────
-// Main ingestor
-// ─────────────────────────────────────────────────────────────
+struct SessionReport {
+    /// Set once authenticated and subscribed.
+    established_at: Option<Instant>,
+    outcome: Result<SessionEnd>,
+}
 
 pub struct Ingestor {
     config: Config,
-    regime_cache: RegimeCache,
+    regime: Arc<RegimeCache>,
+    sinks: Sinks,
+    metrics: Arc<Metrics>,
+    health: Arc<Health>,
+    normalizer: Normalizer,
+    ttl: TtlChecker,
+    filter: SymbolFilter,
 }
 
 impl Ingestor {
-    pub fn new(config: Config, regime_cache: RegimeCache) -> Self {
+    pub fn new(
+        config: Config,
+        regime: Arc<RegimeCache>,
+        sinks: Sinks,
+        metrics: Arc<Metrics>,
+        health: Arc<Health>,
+    ) -> Self {
+        let normalizer = Normalizer::new(config.rolling_window, config.adv_window_days);
+        let ttl = TtlChecker::new(TtlLimits {
+            l2_max_ms: config.freshness_l2_ms,
+            trade_max_ms: config.freshness_print_ms,
+            feed_max_lag_ms: config.feed_max_lag_ms,
+            future_tolerance_ms: config.feed_future_tolerance_ms,
+        });
+        let filter = SymbolFilter::from_symbols(&config.symbols);
         Self {
             config,
-            regime_cache,
+            regime,
+            sinks,
+            metrics,
+            health,
+            normalizer,
+            ttl,
+            filter,
         }
     }
 
-    /// Run the ingestor loop. Reconnects on failure with exponential backoff.
-    pub async fn run(self) -> Result<()> {
-        let mut attempt = 0u32;
-        let mut delay_secs: f64 = 1.0;
-        const MAX_DELAY: f64 = 16.0;
-
+    /// Run until shutdown (`Ok`) or a fatal error such as bad credentials.
+    pub async fn run(&mut self, shutdown: &mut Shutdown) -> Result<()> {
+        let mut attempt = 0_u32;
         loop {
-            match self.run_once().await {
-                Ok(()) => {
-                    info!("Ingestor exited cleanly");
-                    return Ok(());
+            if *shutdown.borrow() {
+                return Ok(());
+            }
+            let report = self.run_session(shutdown).await;
+            let stable = report
+                .established_at
+                .is_some_and(|t| t.elapsed() >= self.config.reconnect_stable());
+            match report.outcome {
+                Ok(SessionEnd::Shutdown) => return Ok(()),
+                Ok(SessionEnd::Closed) => warn!("Polygon closed the connection; reconnecting"),
+                Err(e) if e.is_fatal() => {
+                    error!(error = %e, "fatal feed error; not retrying");
+                    return Err(e);
                 }
-                Err(SensoryError::MaxReconnectExceeded { attempts }) => {
-                    error!("Max reconnect attempts reached ({})", attempts);
-                    return Err(SensoryError::MaxReconnectExceeded { attempts });
-                }
-                Err(e) => {
-                    attempt += 1;
-                    if attempt >= self.config.max_reconnect_attempts {
-                        error!(
-                            attempts = attempt,
-                            "CRITICAL: Max reconnect attempts exceeded: {e}"
-                        );
-                        return Err(SensoryError::MaxReconnectExceeded { attempts: attempt });
-                    }
-
-                    // Jitter: ±20%
-                    let jitter = delay_secs * 0.2 * (rand_jitter() - 0.5) * 2.0;
-                    let actual_delay = (delay_secs + jitter).max(0.1);
-                    warn!(
-                        attempt,
-                        delay_secs = actual_delay,
-                        "WebSocket error, reconnecting: {e}"
-                    );
-                    sleep(Duration::from_secs_f64(actual_delay)).await;
-                    delay_secs = (delay_secs * 2.0).min(MAX_DELAY);
-                }
+                Err(e) => warn!(error = %e, "feed session failed; reconnecting"),
+            }
+            Metrics::inc(&self.metrics.reconnects);
+            attempt = if stable { 1 } else { attempt.saturating_add(1) };
+            if attempt >= self.config.max_reconnect_attempts {
+                error!(
+                    consecutive_failures = attempt,
+                    "CRITICAL: feed unavailable after repeated reconnect attempts; still retrying"
+                );
+            }
+            let delay = jittered_backoff(self.config.reconnect_base(), self.config.reconnect_max(), attempt);
+            if sleep_or_shutdown(delay, shutdown).await {
+                return Ok(());
             }
         }
     }
 
-    async fn run_once(&self) -> Result<()> {
-        info!("Connecting to Polygon.io: {}", self.config.polygon_ws_url);
-
-        let (ws_stream, _) = connect_async(&self.config.polygon_ws_url)
-            .await
-            .map_err(SensoryError::WebSocket)?;
-
-        let (mut ws_sink, mut ws_source) = ws_stream.split();
-
-        // Wait for "connected" status message
-        self.wait_for_status(&mut ws_source, "connected").await?;
-
-        // Authenticate
-        let auth_msg = serde_json::json!({
-            "action": "auth",
-            "params": self.config.polygon_api_key,
-        });
-        ws_sink
-            .send(Message::Text(auth_msg.to_string()))
-            .await
-            .map_err(SensoryError::WebSocket)?;
-
-        self.wait_for_auth(&mut ws_source).await?;
-        info!("Authenticated with Polygon.io");
-
-        // Subscribe to quotes + trades for configured symbols
-        let params = if self.config.symbols.contains(&"*".to_string()) {
-            "Q.*,T.*".to_string()
-        } else {
-            self.config
-                .symbols
-                .iter()
-                .flat_map(|s| [format!("Q.{s}"), format!("T.{s}")])
-                .collect::<Vec<_>>()
-                .join(",")
-        };
-
-        let sub_msg = serde_json::json!({ "action": "subscribe", "params": params });
-        ws_sink
-            .send(Message::Text(sub_msg.to_string()))
-            .await
-            .map_err(SensoryError::WebSocket)?;
-
-        info!("Subscribed: {}", params);
-
-        // Initialize processing components
-        let mut normalizer = Normalizer::new(
-            self.config.rolling_window,
-            self.config.adv_window_days,
-        );
-        let ttl = TtlChecker::new(self.config.freshness_l2_ms, self.config.freshness_print_ms);
-        let mut qdb = QuestDbWriter::new(
-            self.config.questdb_ilp_host.clone(),
-            self.config.questdb_ilp_port,
-        );
-
-        // Redis publisher for snapshots
-        let redis_client = redis::Client::open(self.config.redis_url.clone())
-            .map_err(SensoryError::Redis)?;
-        let mut redis_conn = redis_client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(SensoryError::Redis)?;
-
-        // Message loop
-        while let Some(msg) = ws_source.next().await {
-            let msg = msg.map_err(SensoryError::WebSocket)?;
-
-            let text = match msg {
-                Message::Text(t) => t,
-                Message::Ping(payload) => {
-                    ws_sink
-                        .send(Message::Pong(payload))
-                        .await
-                        .map_err(SensoryError::WebSocket)?;
-                    continue;
-                }
-                Message::Close(_) => {
-                    info!("Server closed WebSocket");
-                    break;
-                }
-                _ => continue,
-            };
-
-            let now_ns = unix_ns();
-
-            // Polygon sends arrays of messages
-            let msgs: Vec<serde_json::Value> =
-                serde_json::from_str(&text).map_err(SensoryError::Json)?;
-
-            for raw in msgs {
-                let poly_msg: PolyMsg = match serde_json::from_value(raw) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        debug!("Unrecognized message: {e}");
-                        continue;
-                    }
-                };
-
-                match poly_msg {
-                    PolyMsg::Quote {
-                        ticker,
-                        bid_price,
-                        bid_size,
-                        ask_price,
-                        ask_size,
-                        timestamp_ms,
-                        exchange_ts_ms,
-                    } => {
-                        let exchange_ts_ns = if exchange_ts_ms > 0 {
-                            exchange_ts_ms * 1_000_000
-                        } else {
-                            timestamp_ms * 1_000_000
-                        };
-
-                        normalizer.update_quote(
-                            &ticker,
-                            bid_price,
-                            ask_price,
-                            bid_size,
-                            ask_size,
-                            exchange_ts_ns,
-                        );
-
-                        let (regime_label, regime_confidence) =
-                            self.get_regime(&ticker).await;
-
-                        if let Some(mut snap) = normalizer.snapshot(
-                            &ticker,
-                            now_ns,
-                            regime_label,
-                            regime_confidence,
-                        ) {
-                            ttl.check(&mut snap, now_ns);
-                            self.emit(&mut qdb, &mut redis_conn, &snap).await;
-                        }
-                    }
-
-                    PolyMsg::Trade {
-                        ticker,
-                        price,
-                        size,
-                        timestamp_ms,
-                    } => {
-                        let ts_ns = timestamp_ms * 1_000_000;
-                        let day = day_of_year_from_ns(ts_ns);
-                        normalizer.update_trade(&ticker, price, size, ts_ns, day);
-                        debug!(symbol = %ticker, price, size, "Trade");
-                    }
-
-                    PolyMsg::Status { status, message } => {
-                        info!("Polygon status: {} — {}", status, message);
-                    }
-
-                    PolyMsg::Auth { status, message } => {
-                        info!("Polygon auth: {} — {}", status, message);
-                    }
-
-                    PolyMsg::Unknown => {}
-                }
-            }
+    async fn run_session(&mut self, shutdown: &mut Shutdown) -> SessionReport {
+        let mut established_at = None;
+        let outcome = self.session(shutdown, &mut established_at).await;
+        SessionReport {
+            established_at,
+            outcome,
         }
+    }
 
-        qdb.flush().await?;
-        qdb.close().await;
+    async fn session(
+        &mut self,
+        shutdown: &mut Shutdown,
+        established_at: &mut Option<Instant>,
+    ) -> Result<SessionEnd> {
+        let (mut sink, mut source) = self.connect_and_auth().await?;
+        self.subscribe(&mut sink).await?;
+        *established_at = Some(Instant::now());
+        self.health.beat();
+        self.pump(&mut sink, &mut source, shutdown).await
+    }
+
+    async fn connect_and_auth(&self) -> Result<(WsSink, WsSource)> {
+        info!(url = %self.config.polygon_ws_url, "connecting to Polygon");
+        let ws_config = WebSocketConfig {
+            max_message_size: Some(MAX_WS_MESSAGE_BYTES),
+            max_frame_size: Some(MAX_WS_MESSAGE_BYTES),
+            ..WebSocketConfig::default()
+        };
+        let (ws, _) = timeout(
+            self.config.ws_connect_timeout(),
+            connect_async_with_config(&self.config.polygon_ws_url, Some(ws_config), false),
+        )
+        .await
+        .map_err(|_| SensoryError::session("WebSocket connect timed out"))??;
+        let (mut sink, mut source) = ws.split();
+
+        // Sent immediately: Polygon queues it behind its own `connected` status.
+        let auth = serde_json::json!({ "action": "auth", "params": self.config.polygon_api_key });
+        sink.send(Message::Text(auth.to_string())).await?;
+        timeout(self.config.ws_handshake_timeout(), await_auth(&mut source))
+            .await
+            .map_err(|_| SensoryError::session("timed out waiting for auth response"))??;
+        info!("authenticated with Polygon");
+        Ok((sink, source))
+    }
+
+    async fn subscribe(&self, sink: &mut WsSink) -> Result<()> {
+        let params = subscription_params(&self.config.symbols);
+        let msg = serde_json::json!({ "action": "subscribe", "params": params });
+        sink.send(Message::Text(msg.to_string())).await?;
+        info!(subscriptions = %params, "subscribed");
         Ok(())
     }
 
-    async fn wait_for_status<S>(
-        &self,
-        source: &mut S,
-        expected: &str,
-    ) -> Result<()>
-    where
-        S: StreamExt<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
-            + Unpin,
-    {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while let Some(msg) = source.next().await {
-                let msg = msg.map_err(SensoryError::WebSocket)?;
-                if let Message::Text(t) = msg {
-                    let v: Vec<serde_json::Value> = serde_json::from_str(&t)?;
-                    for item in &v {
-                        if item.get("ev").and_then(|e| e.as_str()) == Some("status") {
-                            let status = item
-                                .get("status")
-                                .and_then(|s| s.as_str())
-                                .unwrap_or("");
-                            if status == expected {
-                                return Ok(());
-                            }
+    /// Read loop with idle watchdog and shutdown handling.
+    async fn pump(
+        &mut self,
+        sink: &mut WsSink,
+        source: &mut WsSource,
+        shutdown: &mut Shutdown,
+    ) -> Result<SessionEnd> {
+        let idle = self.config.ws_idle_timeout();
+        let mut pinged = false;
+        loop {
+            tokio::select! {
+                () = wait_shutdown(shutdown) => {
+                    let _ = timeout(CLOSE_TIMEOUT, sink.send(Message::Close(None))).await;
+                    return Ok(SessionEnd::Shutdown);
+                }
+                next = timeout(idle, source.next()) => match next {
+                    Err(_) => {
+                        if pinged {
+                            return Err(SensoryError::session("no frames or pong within two idle periods"));
+                        }
+                        debug!("feed idle; pinging");
+                        timeout(idle, sink.send(Message::Ping(Vec::new())))
+                            .await
+                            .map_err(|_| SensoryError::session("ping send timed out"))??;
+                        pinged = true;
+                    }
+                    Ok(None) => return Ok(SessionEnd::Closed),
+                    Ok(Some(Err(e))) => return Err(e.into()),
+                    Ok(Some(Ok(msg))) => {
+                        pinged = false;
+                        self.health.beat();
+                        if let Some(end) = self.on_message(msg, sink).await? {
+                            return Ok(end);
                         }
                     }
-                }
+                },
             }
-            Err(SensoryError::AuthFailed {
-                reason: "Connection closed before status received".into(),
-            })
-        })
-        .await
-        .map_err(|_| SensoryError::AuthFailed {
-            reason: format!("Timeout waiting for status '{expected}'"),
-        })?
-    }
-
-    async fn wait_for_auth<S>(&self, source: &mut S) -> Result<()>
-    where
-        S: StreamExt<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
-            + Unpin,
-    {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while let Some(msg) = source.next().await {
-                let msg = msg.map_err(SensoryError::WebSocket)?;
-                if let Message::Text(t) = msg {
-                    let v: Vec<serde_json::Value> = serde_json::from_str(&t)?;
-                    for item in &v {
-                        let ev = item.get("ev").and_then(|e| e.as_str()).unwrap_or("");
-                        let status = item
-                            .get("status")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("");
-                        if ev == "auth" {
-                            if status == "auth_success" {
-                                return Ok(());
-                            } else {
-                                return Err(SensoryError::AuthFailed {
-                                    reason: format!("Auth failed: status={status}"),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            Err(SensoryError::AuthFailed {
-                reason: "Connection closed before auth response".into(),
-            })
-        })
-        .await
-        .map_err(|_| SensoryError::AuthFailed {
-            reason: "Timeout waiting for auth response".into(),
-        })?
-    }
-
-    async fn get_regime(&self, symbol: &str) -> (String, f64) {
-        let cache = self.regime_cache.read().await;
-        cache
-            .get(symbol)
-            .map(|e| (e.label.clone(), e.confidence))
-            .unwrap_or_else(|| ("REGIME_UNKNOWN".to_string(), 0.0))
-    }
-
-    async fn emit(
-        &self,
-        qdb: &mut QuestDbWriter,
-        redis_conn: &mut redis::aio::MultiplexedConnection,
-        snap: &MarketSnapshot,
-    ) {
-        // Write to QuestDB
-        if let Err(e) = qdb.write(snap).await {
-            error!(symbol = %snap.symbol, "QuestDB write failed: {e}");
         }
+    }
 
-        // Publish to Redis channel for Zone A consumption
-        let payload = match serde_json::to_string(snap) {
-            Ok(p) => p,
+    async fn on_message(&mut self, msg: Message, sink: &mut WsSink) -> Result<Option<SessionEnd>> {
+        match msg {
+            Message::Text(text) => self.handle_text(&text, unix_ns()),
+            Message::Ping(payload) => sink.send(Message::Pong(payload)).await?,
+            Message::Close(_) => return Ok(Some(SessionEnd::Closed)),
+            Message::Binary(_) => {
+                Metrics::inc(&self.metrics.bad_frames);
+                debug!("unexpected binary frame ignored");
+            }
+            Message::Pong(_) | Message::Frame(_) => {}
+        }
+        Ok(None)
+    }
+
+    /// Process one text frame. A malformed frame is logged and skipped; it
+    /// never tears the connection down.
+    fn handle_text(&mut self, text: &str, recv_ns: i64) {
+        Metrics::inc(&self.metrics.frames);
+        let items = match parse_frame(text) {
+            Ok(items) => items,
             Err(e) => {
-                error!("Failed to serialize snapshot: {e}");
+                Metrics::inc(&self.metrics.bad_frames);
+                let n = Metrics::get(&self.metrics.bad_frames);
+                if n.is_power_of_two() {
+                    warn!(count = n, error = %e, "non-array/invalid frame skipped");
+                }
                 return;
             }
         };
-        let _: std::result::Result<(), _> = redis::cmd("PUBLISH")
-            .arg("sensory:snapshots")
-            .arg(&payload)
-            .query_async(redis_conn)
-            .await;
+        for raw in items {
+            match parse_item(raw) {
+                Some(msg) => self.handle_item(msg, recv_ns),
+                None => Metrics::inc(&self.metrics.rejected_messages),
+            }
+        }
+    }
+
+    fn handle_item(&mut self, msg: PolyMsg, recv_ns: i64) {
+        if let PolyMsg::Status { status, message } = &msg {
+            match classify_handshake(&msg) {
+                Handshake::Ignore | Handshake::Authenticated => info!(%status, %message, "Polygon status"),
+                Handshake::Rejected(_) | Handshake::Transient(_) => warn!(%status, %message, "Polygon status"),
+            }
+            return;
+        }
+        match msg {
+            PolyMsg::Quote {
+                ticker,
+                bid_price,
+                bid_size,
+                ask_price,
+                ask_size,
+                timestamp_ms,
+            } => {
+                let quote = RawQuote {
+                    bid_price,
+                    bid_size,
+                    ask_price,
+                    ask_size,
+                    timestamp_ms,
+                };
+                self.handle_quote(&ticker, quote, recv_ns);
+            }
+            PolyMsg::Trade {
+                ticker,
+                price,
+                size,
+                timestamp_ms,
+            } => self.handle_trade(&ticker, price, size, timestamp_ms, recv_ns),
+            PolyMsg::Status { .. } | PolyMsg::Unknown => {}
+        }
+    }
+
+    fn reject(&self, reason: &str) {
+        Metrics::inc(&self.metrics.rejected_messages);
+        debug!(reason, "feed message rejected");
+    }
+
+    fn handle_quote(&mut self, ticker: &str, q: RawQuote, recv_ns: i64) {
+        if !self.filter.allows(ticker) {
+            return self.reject("symbol not allowed");
+        }
+        let Some(exchange_ts_ns) = ms_to_ns(q.timestamp_ms) else {
+            return self.reject("invalid quote timestamp");
+        };
+        let input = QuoteInput {
+            bid_price: q.bid_price,
+            ask_price: q.ask_price,
+            bid_size: q.bid_size,
+            ask_size: q.ask_size,
+            exchange_ts_ns,
+            recv_ts_ns: recv_ns,
+        };
+        if let Err(reason) = self.normalizer.update_quote(ticker, input) {
+            return self.reject(&reason.to_string());
+        }
+        Metrics::inc(&self.metrics.quotes);
+
+        // `now` is taken per message: a slow earlier message in the same frame
+        // must show up as staleness in later ones.
+        let now_ns = unix_ns();
+        let (label, confidence) = self.regime.lookup(ticker, now_ns);
+        let Some(mut snap) = self
+            .normalizer
+            .snapshot(ticker, now_ns, Cow::Borrowed(label), confidence)
+        else {
+            return;
+        };
+        self.ttl.check(&mut snap, now_ns);
+        self.emit(snap);
+    }
+
+    fn handle_trade(&mut self, ticker: &str, price: f64, size: f64, timestamp_ms: i64, recv_ns: i64) {
+        if !self.filter.allows(ticker) {
+            return self.reject("symbol not allowed");
+        }
+        let Some(exchange_ts_ns) = ms_to_ns(timestamp_ms) else {
+            return self.reject("invalid trade timestamp");
+        };
+        let input = TradeInput {
+            price,
+            size,
+            exchange_ts_ns,
+            recv_ts_ns: recv_ns,
+            day: exchange_ts_ns / NS_PER_DAY,
+        };
+        match self.normalizer.update_trade(ticker, input) {
+            Ok(()) => Metrics::inc(&self.metrics.trades),
+            Err(reason) => self.reject(&reason.to_string()),
+        }
+    }
+
+    fn emit(&self, snap: MarketSnapshot) {
+        if snap.is_stale {
+            Metrics::inc(&self.metrics.stale_snapshots);
+        }
+        Metrics::inc(&self.metrics.snapshots);
+        let snap = Arc::new(snap);
+        self.sinks.questdb.push(Arc::clone(&snap));
+        self.sinks.redis.push(snap);
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────
-
-fn unix_ns() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as i64
+struct RawQuote {
+    bid_price: f64,
+    bid_size: f64,
+    ask_price: f64,
+    ask_size: f64,
+    timestamp_ms: i64,
 }
 
-fn day_of_year_from_ns(ts_ns: i64) -> u32 {
-    use chrono::{Datelike, TimeZone, Utc};
-    let secs = ts_ns / 1_000_000_000;
-    let dt = Utc.timestamp_opt(secs, 0).single().unwrap_or_default();
-    dt.ordinal()
+/// Read until Polygon confirms (or rejects) authentication.
+async fn await_auth(source: &mut WsSource) -> Result<()> {
+    loop {
+        match source.next().await {
+            None => return Err(SensoryError::session("connection closed during handshake")),
+            Some(Err(e)) => return Err(e.into()),
+            Some(Ok(Message::Close(_))) => {
+                return Err(SensoryError::session("server closed connection during handshake"))
+            }
+            Some(Ok(Message::Text(text))) => {
+                if let Some(result) = auth_result(&text) {
+                    return result;
+                }
+            }
+            Some(Ok(_)) => {}
+        }
+    }
 }
 
-/// Lightweight pseudo-random jitter in [0, 1) without pulling in rand crate.
-fn rand_jitter() -> f64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    (ns % 1000) as f64 / 1000.0
+/// `Some(result)` once `text` carries a decisive handshake status.
+fn auth_result(text: &str) -> Option<Result<()>> {
+    let items = parse_frame(text).ok()?;
+    for raw in items {
+        let Some(msg) = parse_item(raw) else { continue };
+        match classify_handshake(&msg) {
+            Handshake::Authenticated => return Some(Ok(())),
+            Handshake::Rejected(reason) => return Some(Err(SensoryError::AuthFailed { reason })),
+            Handshake::Transient(reason) => return Some(Err(SensoryError::session(reason))),
+            Handshake::Ignore => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_result_accepts_documented_and_rejects_failure() {
+        let ok = r#"[{"ev":"status","status":"auth_success","message":"authenticated"}]"#;
+        assert!(matches!(auth_result(ok), Some(Ok(()))));
+        let bad = r#"[{"ev":"status","status":"auth_failed","message":"authentication failed"}]"#;
+        assert!(matches!(auth_result(bad), Some(Err(SensoryError::AuthFailed { .. }))));
+        let limit = r#"[{"ev":"status","status":"max_connections","message":"Maximum number of websocket connections exceeded."}]"#;
+        assert!(matches!(auth_result(limit), Some(Err(SensoryError::Session { .. }))));
+    }
+
+    #[test]
+    fn auth_result_ignores_connected_and_garbage() {
+        let connected = r#"[{"ev":"status","status":"connected","message":"Connected Successfully"}]"#;
+        assert!(auth_result(connected).is_none());
+        assert!(auth_result("not json").is_none());
+        assert!(auth_result(r#"{"ev":"status"}"#).is_none());
+    }
+
+    #[test]
+    fn auth_result_sees_success_after_connected_in_same_frame() {
+        let both = r#"[{"ev":"status","status":"connected"},{"ev":"status","status":"auth_success"}]"#;
+        assert!(matches!(auth_result(both), Some(Ok(()))));
+    }
 }
