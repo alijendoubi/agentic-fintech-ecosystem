@@ -6,9 +6,14 @@
 pub mod config;
 pub mod error;
 pub mod ilp;
+#[cfg(feature = "ilp-secure")]
+pub mod ilp_secure;
 pub mod metrics;
 pub mod normalizer;
 pub mod polygon;
+pub mod questdb_writer;
 pub mod queue;
+pub mod runtime;
+pub mod testutil;
 pub mod ttl;
 pub mod validate;
