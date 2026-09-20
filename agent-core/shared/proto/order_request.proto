@@ -13,9 +13,11 @@ message OrderRequest {
 
   OrderSide side = 5;
   OrderType order_type = 6;
-  double quantity = 7;
-  double limit_price = 8;        // 0 for market orders
-  double stop_price = 9;         // 0 if not stop order
+  // DEPRECATED (ALI-22): use quantity_nanos (18), limit_price_nanos (19),
+  // stop_price_nanos (20).
+  double quantity = 7 [deprecated = true];
+  double limit_price = 8 [deprecated = true];        // 0 for market orders
+  double stop_price = 9 [deprecated = true];         // 0 if not stop order
 
   // HSM signature (PKCS#11 ECDSA over canonical order bytes)
   bytes hsm_signature = 10;
@@ -31,6 +33,13 @@ message OrderRequest {
   double iceberg_display_size = 16;  // For Iceberg: visible quantity
 
   OrderStatus status = 17;
+
+  // ---- ALI-22 / Phase 3 (spec sections 3 and 7, Appendix A.2) ----
+  // Fixed-point (1e-9 "nanos") money fields. Never renumber or reuse 18-21.
+  int64 quantity_nanos = 18;
+  int64 limit_price_nanos = 19;          // 0 for market orders
+  int64 stop_price_nanos = 20;           // 0 if not stop order
+  int64 attestation_expires_at_ns = 21;  // mirrors Attestation.expires_at_ns
 }
 
 enum OrderSide {
