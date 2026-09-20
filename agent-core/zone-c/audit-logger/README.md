@@ -62,7 +62,7 @@ Details: `afe_audit/canonical.py`.
 ```python
 from afe_audit import AuditLogger, DsnConnectionSource, AuditError
 
-logger = AuditLogger(DsnConnectionSource.from_env())   # POSTGRES_* env, app role only
+logger = AuditLogger(DsnConnectionSource.from_env())  # POSTGRES_* env, app role only
 try:
     logger.record("order.submitted", actor="aegis", payload={"order_id": "...", "qty": 10})
 except AuditError:

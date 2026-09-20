@@ -1,4 +1,4 @@
-"""Docker-free tests: fail-closed behaviour of AuditLogger with a broken connection, config checks."""
+"""Docker-free tests: fail-closed AuditLogger behaviour with a broken connection."""
 
 from __future__ import annotations
 
