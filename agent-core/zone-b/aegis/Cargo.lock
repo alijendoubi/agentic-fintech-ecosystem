@@ -6,6 +6,7 @@ version = 4
 name = "aegis"
 version = "0.1.0"
 dependencies = [
+ "aegis",
  "cryptoki",
  "ed25519-dalek",
  "p256",

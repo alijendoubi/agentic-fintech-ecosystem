@@ -17,6 +17,8 @@ path = "src/main.rs"
 default = []
 # PKCS#11 signer adapter (SoftHSM2 in dev, HSM in production). ADR-001.
 pkcs11 = ["dep:cryptoki", "dep:p256"]
+# In-memory test rig shared with integration tests (enabled via the dev-dependency below).
+testkit = []
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net"] }
@@ -37,6 +39,7 @@ cryptoki = { version = "0.7", optional = true }
 p256 = { version = "0.13", optional = true, features = ["ecdsa"] }
 
 [dev-dependencies]
+aegis = { path = ".", features = ["testkit"] }
 proptest = "1"
 rcgen = "0.13"
 tempfile = "3"

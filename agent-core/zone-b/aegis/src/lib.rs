@@ -10,6 +10,7 @@ pub mod clock;
 pub mod config;
 pub mod controls;
 pub mod domain;
+pub mod engine;
 pub mod error;
 pub mod hex;
 pub mod killswitch;
@@ -17,6 +18,9 @@ pub mod limits;
 pub mod money;
 pub mod pb;
 pub mod signing;
+pub mod state;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 pub mod validate;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
