@@ -6,10 +6,13 @@
 //! fixed-point int64 nanos; there is no `f64` money on the decision path.
 
 pub mod config;
+pub mod controls;
+pub mod domain;
 pub mod error;
 pub mod hex;
 pub mod limits;
 pub mod money;
 pub mod pb;
+pub mod validate;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

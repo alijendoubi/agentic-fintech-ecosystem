@@ -37,6 +37,7 @@ cryptoki = { version = "0.7", optional = true }
 p256 = { version = "0.13", optional = true, features = ["ecdsa"] }
 
 [dev-dependencies]
+proptest = "1"
 rcgen = "0.13"
 tempfile = "3"
 

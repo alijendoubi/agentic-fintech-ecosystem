@@ -261,6 +261,13 @@ impl LimitsConfig {
             !self.regime.allowed.is_empty(),
             "regime.allowed must not be empty",
         )?;
+        require(
+            self.regime.allowed.iter().all(|n| {
+                crate::pb::RegimeLabel::from_str_name(n)
+                    .is_some_and(|l| l != crate::pb::RegimeLabel::RegimeUnknown)
+            }),
+            "regime.allowed must contain known RegimeLabel names (not REGIME_UNKNOWN)",
+        )?;
         let d = self.hold_max_distress_score;
         require(
             d.is_finite() && (0.0..=1.0).contains(&d),
