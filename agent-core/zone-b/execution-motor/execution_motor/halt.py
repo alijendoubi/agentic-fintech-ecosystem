@@ -9,6 +9,7 @@ and ``resume`` is ignored while the external source still reports halted.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Protocol
 
 import structlog
@@ -78,3 +79,18 @@ class KillSwitch:
         if halted:
             self.halt("external halt signal")
         return halted
+
+
+class KillStateHaltSource:
+    """Adapts Aegis ``KillSwitchState.effective_level`` (0 = KILL_LEVEL_NORMAL) to a halt signal.
+
+    Any level above NORMAL halts new submissions. ``fetch_level`` (e.g. a GetKillSwitchState
+    call or a WatchKillSwitchState cache) is supplied by the gRPC wiring; if it raises,
+    ``KillSwitch`` treats that as halted.
+    """
+
+    def __init__(self, fetch_level: Callable[[], int]) -> None:
+        self._fetch = fetch_level
+
+    def is_halted(self) -> bool:
+        return int(self._fetch()) != 0
