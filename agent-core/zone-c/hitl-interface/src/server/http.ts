@@ -1,6 +1,7 @@
 import { SESSION_COOKIE, extractToken } from "@/lib/auth/identity";
 import { verifyOperatorToken } from "@/lib/auth/verify";
 import type { AuthResult } from "@/lib/auth/verify";
+import type { RevocationList } from "@/lib/auth/revocation";
 import type { AppConfig } from "@/lib/config";
 
 export function jsonResponse(body: unknown, status: number, extraHeaders: Record<string, string> = {}): Response {
@@ -32,12 +33,20 @@ export function clearedSessionCookie(isProduction: boolean): string {
 }
 
 /** Verifies the operator from Authorization (gateway-injected) or the session cookie. Deny on anything else. */
-export function authenticate(request: Request, config: AppConfig): Promise<AuthResult> {
-  const token = extractToken({
+export function authenticate(
+  request: Request,
+  config: AppConfig,
+  revocations?: RevocationList,
+): Promise<AuthResult> {
+  return verifyOperatorToken(requestToken(request), config, new Date(), revocations);
+}
+
+/** The raw operator token of a request (Authorization Bearer first, then the session cookie), if any. */
+export function requestToken(request: Request): string | null {
+  return extractToken({
     authorization: request.headers.get("authorization"),
     cookie: readCookie(request.headers.get("cookie"), SESSION_COOKIE),
   });
-  return verifyOperatorToken(token, config);
 }
 
 /** First hop of X-Forwarded-For when present (only meaningful behind a trusted proxy), else "unknown". */

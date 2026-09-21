@@ -48,7 +48,10 @@ cannot make an expired signal look live; the server re-checks on every action.
 
 * `HITL_FOUR_EYES_QUANTITY_THRESHOLD` default (1000 shares) is a placeholder, not a calibrated value. TODO(owner).
 * `debate.blue/red/judge` are not in `trade_signal.proto`; the terminal shows them only if the backend supplies them.
-* Session cookie has no server-side revocation; it expires with the token. Logout only clears the cookie.
+* Logout revokes the presented token (by `jti`, or a SHA-256 of the token when it has none) in an **in-process** list and clears the cookie.
+  With several replicas a token revoked on replica A stays valid on replica B until it expires (bounded by
+  `HITL_JWT_MAX_LIFETIME_SEC`), and a restart forgets every revocation. Use a shared denylist (Redis or a gateway) before
+  running more than one replica; until then keep the lifetime cap short. The list is bounded (10 000 entries, closest-to-expiry evicted first).
 * No mTLS to the backend, no persistent storage, no metrics. TLS must be terminated in front (cookies are `Secure` in production).
 * Accessibility was designed for (labels, roles, focus styles, contrast) and tested via Testing Library roles, but no
   screen-reader or automated axe audit was run.

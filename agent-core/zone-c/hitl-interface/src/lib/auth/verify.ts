@@ -1,6 +1,8 @@
 import { errors, jwtVerify } from "jose";
 import { z } from "zod";
 import type { AppConfig } from "@/lib/config";
+import { defaultRevocationList, revocationKey } from "./revocation";
+import type { RevocationList } from "./revocation";
 
 export const ROLES = ["approver", "viewer"] as const;
 export type Role = (typeof ROLES)[number];
@@ -11,6 +13,7 @@ export interface OperatorSession {
   readonly role: Role;
   readonly amr: readonly string[];
   readonly expiresAt: number;
+  readonly jti?: string | null;
   readonly token: string;
 }
 
@@ -23,7 +26,8 @@ export type AuthFailureCode =
   | "invalid_role"
   | "mfa_required"
   | "missing_jti"
-  | "lifetime_too_long";
+  | "lifetime_too_long"
+  | "revoked";
 
 export type AuthResult =
   | { readonly ok: true; readonly session: OperatorSession }
@@ -97,6 +101,7 @@ export async function verifyOperatorToken(
   token: string | null | undefined,
   config: VerifierConfig,
   now: Date = new Date(),
+  revocations: RevocationList = defaultRevocationList(),
 ): Promise<AuthResult> {
   if (!token) return fail("missing_token");
   // Defence in depth: loadConfig already refuses to start without these in production.
@@ -128,6 +133,9 @@ export async function verifyOperatorToken(
     if (denied) return denied;
   }
 
+  const jti = typeof payload.jti === "string" && payload.jti.length > 0 ? payload.jti : null;
+  if (revocations.isRevoked(revocationKey({ jti, token }))) return fail("revoked");
+
   return {
     ok: true,
     session: {
@@ -135,6 +143,7 @@ export async function verifyOperatorToken(
       role: claims.data.role,
       amr: claims.data.amr,
       expiresAt: payload.exp,
+      jti,
       token,
     },
   };
@@ -145,6 +154,6 @@ export function canAct(session: Pick<OperatorSession, "role" | "amr">): boolean 
   return session.role === "approver" && session.amr.includes(MFA_METHOD);
 }
 
-export function createHmacVerifier(config: VerifierConfig): TokenVerifier {
-  return { verify: (token) => verifyOperatorToken(token, config) };
+export function createHmacVerifier(config: VerifierConfig, revocations?: RevocationList): TokenVerifier {
+  return { verify: (token) => verifyOperatorToken(token, config, new Date(), revocations) };
 }

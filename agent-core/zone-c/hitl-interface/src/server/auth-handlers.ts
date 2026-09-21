@@ -1,13 +1,17 @@
 import { mintDemoToken, isDemoPersona } from "@/lib/demo";
+import type { RevocationList } from "@/lib/auth/revocation";
+import { defaultRevocationList } from "@/lib/auth/revocation";
 import { verifyOperatorToken } from "@/lib/auth/verify";
 import type { AppConfig } from "@/lib/config";
 import { isAllowedOrigin } from "@/lib/security/csrf";
 import type { SlidingWindowRateLimiter } from "@/lib/security/rate-limit";
-import { clearedSessionCookie, clientKey, sessionCookie } from "./http";
+import { clearedSessionCookie, clientKey, requestToken, sessionCookie } from "./http";
 
 export interface AuthHandlerDeps {
   readonly config: AppConfig;
   readonly limiter: SlidingWindowRateLimiter;
+  /** Defaults to the process-wide list (single replica only; see revocation.ts). */
+  readonly revocations?: RevocationList;
   readonly now?: () => number;
 }
 
@@ -46,7 +50,7 @@ export async function handleLogin(request: Request, deps: AuthHandlerDeps): Prom
   const token = (await formField(request, "token"))?.trim();
   if (!token || token.length > MAX_TOKEN_LENGTH) return redirect(request, "/login?error=invalid");
 
-  const result = await verifyOperatorToken(token, config, new Date((deps.now ?? Date.now)()));
+  const result = await verifyOperatorToken(token, config, new Date((deps.now ?? Date.now)()), deps.revocations);
   if (!result.ok) return redirect(request, "/login?error=invalid");
 
   const maxAge = result.session.expiresAt - Math.floor((deps.now ?? Date.now)() / 1000);
@@ -69,7 +73,15 @@ export async function handleDemoLogin(request: Request, deps: AuthHandlerDeps): 
   return redirect(request, "/", sessionCookie(token, 3600, false));
 }
 
-export function handleLogout(request: Request, deps: AuthHandlerDeps): Response {
+/**
+ * POST /api/auth/logout: revokes the presented token (in-process list) and clears the cookie.
+ * A missing or invalid token still clears the cookie; there is nothing to revoke.
+ */
+export async function handleLogout(request: Request, deps: AuthHandlerDeps): Promise<Response> {
   if (!originOk(request, deps.config)) return new Response("Cross-origin request refused", { status: 403 });
+  const revocations = deps.revocations ?? defaultRevocationList();
+  const result = await verifyOperatorToken(
+    requestToken(request), deps.config, new Date((deps.now ?? Date.now)()), revocations);
+  if (result.ok) revocations.revokeSession(result.session);
   return redirect(request, "/login", clearedSessionCookie(deps.config.isProduction));
 }
