@@ -54,6 +54,8 @@ class RejectReason(StrEnum):
     ATTESTATION_INVALID = "attestation_invalid"
     ORDER_EXPIRED = "order_expired"
     ORDER_FROM_FUTURE = "order_from_future"
+    SHORT_NOT_PERMITTED = "short_not_permitted"
+    ORDER_ID_MISMATCH = "order_id_mismatch"
     DUPLICATE_ORDER = "duplicate_order"
     NOTIONAL_UNDETERMINABLE = "notional_undeterminable"
     NOTIONAL_CAP_EXCEEDED = "notional_cap_exceeded"
@@ -166,6 +168,7 @@ class Attestation(_Frozen):
     payload_sha256: bytes = b""  # Attestation.payload_sha256; must equal SHA-256(signed_payload)
     decided_at_ns: int = 0  # signed by Aegis
     expires_at_ns: int = 0  # signed by Aegis; 0 = absent -> treated as expired
+    attested_side: str = ""  # BUY | SELL | SELL_SHORT as found in the matching signed text
 
 
 class AttestedOrder(_Frozen):

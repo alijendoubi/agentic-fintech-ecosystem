@@ -39,6 +39,8 @@ def make_order(**overrides: Any) -> Order:
         "iceberg_display_size": Decimal("0"),
     }
     fields.update(overrides)
+    if "signal_id" not in overrides:
+        fields["signal_id"] = fields["order_id"]  # Aegis contract: order_id == signal_id
     return Order(**fields)
 
 

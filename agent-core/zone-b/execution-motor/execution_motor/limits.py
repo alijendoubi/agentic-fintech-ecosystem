@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 from decimal import Decimal
+from pathlib import Path
 from typing import Protocol
 
+from .errors import ConfigError, IdempotencyStoreError
 from .models import Order
 
 _ZERO = Decimal(0)
@@ -35,6 +39,58 @@ class InMemoryIdempotencyStore:
                 return False
             self._seen.add(key)
             return True
+
+
+class FileIdempotencyStore:
+    """Persistent single-use store: append-only JSON lines, fsynced BEFORE ``claim`` returns
+    True, so a restart cannot forget a claimed signal_id/order_id (replay across restarts).
+
+    Fail closed: an unreadable or corrupt file refuses to load (ConfigError). If a claim cannot
+    be persisted, the key is still remembered in memory and ``IdempotencyStoreError`` is
+    raised; the motor's last-resort boundary halts and rejects. Single process only: run one
+    motor per file (multi-instance needs a shared store such as Redis, a follow-up).
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+        self._seen: set[str] = set()
+        self._load()
+        try:
+            self._fh = path.open("a", encoding="utf-8")
+        except OSError as exc:
+            raise ConfigError(f"idempotency store not writable: {path}") from exc
+
+    def _load(self) -> None:
+        if not self._path.exists():
+            return
+        number = 0
+        try:
+            for line in self._path.read_text(encoding="utf-8").splitlines():
+                number += 1
+                key = json.loads(line)["key"]
+                if not isinstance(key, str) or not key:
+                    raise ValueError("bad key")
+                self._seen.add(key)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ConfigError(f"idempotency store corrupt near line {number}") from exc
+
+    def claim(self, key: str) -> bool:
+        with self._lock:
+            if key in self._seen:
+                return False
+            self._seen.add(key)
+            try:
+                self._fh.write(json.dumps({"key": key}) + "\n")
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+            except (OSError, ValueError) as exc:  # ValueError: write on a closed file
+                raise IdempotencyStoreError("claim could not be persisted") from exc
+            return True
+
+    def close(self) -> None:
+        with self._lock:
+            self._fh.close()
 
 
 def _usable_price(value: Decimal | None) -> Decimal | None:

@@ -21,6 +21,7 @@ import structlog
 
 from .attestation import AttestationVerifier, DenyAllVerifier, evaluate_attestation
 from .broker import Broker, BrokerOrder, BrokerOrderRequest
+from .canonical import SIDE_SELL_SHORT
 from .config import MotorConfig
 from .errors import BrokerRejectedError, ConfigError, SubmitOutcomeUnknown
 from .halt import KillSwitch
@@ -66,12 +67,18 @@ class ExecutionMotor:
         self._router = router
         self._kill = kill_switch
         self._verifier: AttestationVerifier = verifier or DenyAllVerifier()
+        if config.is_production and getattr(self._verifier, "accepts_dev_keys", False) is True:
+            raise ConfigError("a verifier that accepts dev signing keys is forbidden in production")
         self._idem: IdempotencyStore = idempotency or InMemoryIdempotencyStore()
         self._stats = venue_stats
         self._clock = clock_ns
         self._ledger = NotionalLedger(config.max_session_notional)
 
     # ------------------------------------------------------------------ public
+
+    @property
+    def allow_short_selling(self) -> bool:
+        return self._config.allow_short_selling
 
     def execute(
         self, attested: AttestedOrder, *, reference_price: Decimal | None = None
@@ -120,9 +127,13 @@ class ExecutionMotor:
         order = attested.order
         if self._kill.is_halted():
             return self._rejected(order, RejectReason.HALTED, self._kill.reason, received, ref)
+        if order.order_id != order.signal_id:  # only signal_id is signed: fail closed
+            return self._rejected(order, RejectReason.ORDER_ID_MISMATCH, "", received, ref)
         denial = evaluate_attestation(self._verifier, attested)
         if denial is not None:
             return self._rejected(order, denial, "", received, ref)
+        if attested.attestation.attested_side == SIDE_SELL_SHORT and not self.allow_short_selling:
+            return self._rejected(order, RejectReason.SHORT_NOT_PERMITTED, "", received, ref)
         timing = self._timing_reason(attested, received)
         if timing is not None:
             return self._rejected(order, timing, "", received, ref)

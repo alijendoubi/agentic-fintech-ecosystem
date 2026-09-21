@@ -7,28 +7,26 @@ Money contract (integration/wave1): quantity/prices are int64 "nanos" (1e-9). Th
 into Decimal exactly at this edge. The deprecated double fields (7, 8, 9) are IGNORED: they
 are not part of the signed text, so they are unauthenticated.
 
-Signing contract (ASSUMED from docs/specs/phase_3_aegis_execution.md section 7,
-"afe-attest-v1", marked PROPOSED there; the Aegis crate has not defined it yet):
-  text = "afe-attest-v1\\n" then one ``key=value\\n`` line each, in this order:
-         signal_id, symbol, side (BUY|SELL), order_type (MARKET|LIMIT|STOP|STOP_LIMIT),
-         qty_nanos, limit_price_nanos, stop_price_nanos, decided_at_ns, expires_at_ns,
-         aegis_state_seq, limits_config_sha256, key_id
-  Attestation.payload_sha256 = SHA-256(text); signature is over that payload under key_id
-  (ECDSA P-256/SHA-256 proposed). Not signed, hence untrusted hints only: order_id,
-  created_at_ns, preferred_venue, max_venue_toxicity, algo and the other algo fields.
+Signing contract: Aegis is the source of truth (``canonical.py`` documents the text and is
+verified against fixtures produced by the real Aegis crate). Not signed, hence untrusted hints
+only: created_at_ns, preferred_venue, max_venue_toxicity, algo and the other algo fields.
+``order_id`` is not in the text, but Aegis sets ``order_id == signal_id``; this adapter refuses
+any order where they differ.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from decimal import Decimal
 from typing import Any, Final
 
 from pydantic import ValidationError
 
+from .canonical import CANONICAL_VERSION, build_canonical_text, candidate_side_names
 from .errors import OrderValidationError
 from .models import Attestation, AttestedOrder, ExecAlgo, Order, OrderType, Side
 
-CANONICAL_VERSION: Final = "afe-attest-v1"
 _NANOS: Final = 9
 
 # Numeric values of afe.shared enums (order_request.proto). Unknown/0 values are refused.
@@ -65,26 +63,49 @@ def _lookup(mapping: dict[int, Any], value: int, name: str) -> Any:
         raise OrderValidationError(f"{name} has unsupported value {value}") from exc
 
 
-def canonical_attestation_text(order: Any, attestation: Any) -> bytes:
-    """Rebuild the text Aegis is expected to have signed, from the received fields."""
-    side_name = _lookup(_SIDES, order.side, "side")[0]
+def canonical_attestation_text(
+    order: Any, attestation: Any, *, side_name: str | None = None
+) -> bytes:
+    """Rebuild the text Aegis signed from the received fields.
+
+    ``side_name`` selects BUY/SELL/SELL_SHORT; the default is the first candidate for the
+    order's side (BUY for ORDER_BUY, SELL for ORDER_SELL).
+    """
     type_name = _lookup(_TYPES, order.order_type, "order_type")[0]
-    lines = (
-        CANONICAL_VERSION,
-        f"signal_id={order.signal_id}",
-        f"symbol={order.symbol}",
-        f"side={side_name}",
-        f"order_type={type_name}",
-        f"qty_nanos={int(order.quantity_nanos)}",
-        f"limit_price_nanos={int(order.limit_price_nanos)}",
-        f"stop_price_nanos={int(order.stop_price_nanos)}",
-        f"decided_at_ns={int(attestation.decided_at_ns)}",
-        f"expires_at_ns={int(attestation.expires_at_ns)}",
-        f"aegis_state_seq={int(attestation.aegis_state_seq)}",
-        f"limits_config_sha256={attestation.limits_config_sha256}",
-        f"key_id={attestation.key_id}",
+    if side_name is None:
+        side_name = candidate_side_names(int(order.side), allow_short=False)[0]
+    return build_canonical_text(
+        signal_id=order.signal_id,
+        symbol=order.symbol,
+        side=side_name,
+        order_type=type_name,
+        qty_nanos=order.quantity_nanos,
+        limit_price_nanos=order.limit_price_nanos,
+        stop_price_nanos=order.stop_price_nanos,
+        decided_at_ns=attestation.decided_at_ns,
+        expires_at_ns=attestation.expires_at_ns,
+        aegis_state_seq=attestation.aegis_state_seq,
+        limits_config_sha256=attestation.limits_config_sha256,
+        key_id=attestation.key_id,
     )
-    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _select_signed_text(order: Any, attestation: Any, *, allow_short: bool) -> tuple[bytes, str]:
+    """The candidate text whose SHA-256 equals ``payload_sha256`` (SELL first, then SELL_SHORT).
+
+    No match -> the first candidate is returned so ``evaluate_attestation`` denies on the
+    digest mismatch (fail closed). The signature is verified later, over what this returns.
+    """
+    claimed = bytes(attestation.payload_sha256)
+    first: tuple[bytes, str] | None = None
+    for name in candidate_side_names(int(order.side), allow_short=allow_short):
+        text = canonical_attestation_text(order, attestation, side_name=name)
+        if hmac.compare_digest(hashlib.sha256(text).digest(), claimed):
+            return text, name
+        first = first or (text, name)
+    if first is None:  # candidate_side_names never returns an empty tuple; defensive
+        raise OrderValidationError("no candidate side")
+    return first
 
 
 def _check_consistency(order: Any, attestation: Any) -> None:
@@ -92,6 +113,10 @@ def _check_consistency(order: Any, attestation: Any) -> None:
         raise OrderValidationError("OrderRequest.status must be ORDER_PENDING on ingress")
     if attestation.canonical_version != CANONICAL_VERSION:
         raise OrderValidationError("unsupported attestation canonical_version")
+    # The text binds signal_id, not order_id: Aegis sets them equal, so the broker's
+    # idempotency key is covered by the signature. Anything else is unauthenticated.
+    if order.order_id != order.signal_id:
+        raise OrderValidationError("order_id must equal signal_id")
     # AegisDecision.order mirrors the attestation; any disagreement means the pair is not
     # what Aegis produced.
     if (
@@ -126,18 +151,27 @@ def _build_order(msg: Any) -> Order:
         ) from exc
 
 
-def attested_order_from_proto(order: Any, attestation: Any) -> AttestedOrder:
-    """Validate and convert. Raises OrderValidationError on anything ambiguous."""
+def attested_order_from_proto(
+    order: Any, attestation: Any, *, allow_short: bool = False
+) -> AttestedOrder:
+    """Validate and convert. Raises OrderValidationError on anything ambiguous.
+
+    Side mapping: ORDER_BUY <-> BUY; ORDER_SELL <-> SELL, or SELL_SHORT when ``allow_short``
+    (the signed digest decides which one Aegis signed). With shorts disabled a SELL_SHORT
+    attestation never matches and the order is denied as ATTESTATION_INVALID (fail closed).
+    """
     _check_consistency(order, attestation)
     domain_order = _build_order(order)
+    text, side_name = _select_signed_text(order, attestation, allow_short=allow_short)
     return AttestedOrder(
         order=domain_order,
         attestation=Attestation(
             signature=bytes(attestation.signature),
             key_id=attestation.key_id,
-            signed_payload=canonical_attestation_text(order, attestation),
+            signed_payload=text,
             payload_sha256=bytes(attestation.payload_sha256),
             decided_at_ns=int(attestation.decided_at_ns),
             expires_at_ns=int(attestation.expires_at_ns),
+            attested_side=side_name,
         ),
     )

@@ -28,7 +28,7 @@ def build(
 ) -> tuple[Any, Any]:
     order = pb2["order"].OrderRequest(
         order_id="0b9c7f3e-6d0e-4a3a-9c53-0d9d5b8e1a11",
-        signal_id="sig-1",
+        signal_id="0b9c7f3e-6d0e-4a3a-9c53-0d9d5b8e1a11",
         symbol="AAPL",
         created_at_ns=NOW_NS,
         side=pb2["order"].ORDER_BUY,
@@ -89,7 +89,7 @@ def test_canonical_text_matches_the_assumed_v1_layout(pb2: dict[str, ModuleType]
     text = canonical_attestation_text(*build(pb2)).decode()
     assert text == (
         "afe-attest-v1\n"
-        "signal_id=sig-1\n"
+        "signal_id=0b9c7f3e-6d0e-4a3a-9c53-0d9d5b8e1a11\n"
         "symbol=AAPL\n"
         "side=BUY\n"
         "order_type=LIMIT\n"

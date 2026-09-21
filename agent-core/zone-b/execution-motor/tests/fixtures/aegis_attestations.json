@@ -1,0 +1,96 @@
+{
+  "algorithm": "ED25519_OVER_PAYLOAD_SHA256",
+  "cases": {
+    "buy": {
+      "attestation": {
+        "aegis_state_seq": 7,
+        "canonical_version": "afe-attest-v1",
+        "decided_at_ns": 1790000000000000000,
+        "expires_at_ns": 1790000005000000000,
+        "key_id": "dev-ed25519-fe812c12f3ab4ce6",
+        "limits_config_sha256": "abababababababababababababababababababababababababababababababab",
+        "payload_sha256_hex": "9d05225784413da8b3337f2a38bb8000626424abf1500327525f196662553785",
+        "signature_hex": "9f83476617da57425f5d0b873ede7de011fc0af5342ec4096c03cd2882c382c43ba3cbdd6900788209714f646b268166dfc1af0e5c455d04b9366b56661dfc0d"
+      },
+      "order": {
+        "algo": 1,
+        "attestation_expires_at_ns": 1790000005000000000,
+        "created_at_ns": 1790000000000000000,
+        "hsm_key_id": "dev-ed25519-fe812c12f3ab4ce6",
+        "hsm_signature_hex": "9f83476617da57425f5d0b873ede7de011fc0af5342ec4096c03cd2882c382c43ba3cbdd6900788209714f646b268166dfc1af0e5c455d04b9366b56661dfc0d",
+        "limit_price_nanos": 150000000000,
+        "order_id": "0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11",
+        "order_type": 2,
+        "quantity_nanos": 10000000000,
+        "side": 1,
+        "signal_id": "0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11",
+        "status": 0,
+        "stop_price_nanos": 0,
+        "symbol": "AAPL"
+      },
+      "text": "afe-attest-v1\nsignal_id=0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11\nsymbol=AAPL\nside=BUY\norder_type=LIMIT\nqty_nanos=10000000000\nlimit_price_nanos=150000000000\nstop_price_nanos=0\ndecided_at_ns=1790000000000000000\nexpires_at_ns=1790000005000000000\naegis_state_seq=7\nlimits_config_sha256=abababababababababababababababababababababababababababababababab\nkey_id=dev-ed25519-fe812c12f3ab4ce6\n"
+    },
+    "sell": {
+      "attestation": {
+        "aegis_state_seq": 7,
+        "canonical_version": "afe-attest-v1",
+        "decided_at_ns": 1790000000000000000,
+        "expires_at_ns": 1790000005000000000,
+        "key_id": "dev-ed25519-fe812c12f3ab4ce6",
+        "limits_config_sha256": "abababababababababababababababababababababababababababababababab",
+        "payload_sha256_hex": "23dc5fca5660818e2e3235c0be02905b69143767aa6d0aff59a803507212a6f4",
+        "signature_hex": "6da243e310559d7932102307cf653eb7102c245dd745a3afcd2076c8fa00f6d8f2d08eb11482bb95340ccf165df214a8136abbaadba2b528adda7c454f6cee08"
+      },
+      "order": {
+        "algo": 1,
+        "attestation_expires_at_ns": 1790000005000000000,
+        "created_at_ns": 1790000000000000000,
+        "hsm_key_id": "dev-ed25519-fe812c12f3ab4ce6",
+        "hsm_signature_hex": "6da243e310559d7932102307cf653eb7102c245dd745a3afcd2076c8fa00f6d8f2d08eb11482bb95340ccf165df214a8136abbaadba2b528adda7c454f6cee08",
+        "limit_price_nanos": 150000000000,
+        "order_id": "1c5f8dae-7b72-4c1f-8b65-1f2f6e4fa022",
+        "order_type": 2,
+        "quantity_nanos": 10000000000,
+        "side": 2,
+        "signal_id": "1c5f8dae-7b72-4c1f-8b65-1f2f6e4fa022",
+        "status": 0,
+        "stop_price_nanos": 0,
+        "symbol": "AAPL"
+      },
+      "text": "afe-attest-v1\nsignal_id=1c5f8dae-7b72-4c1f-8b65-1f2f6e4fa022\nsymbol=AAPL\nside=SELL\norder_type=LIMIT\nqty_nanos=10000000000\nlimit_price_nanos=150000000000\nstop_price_nanos=0\ndecided_at_ns=1790000000000000000\nexpires_at_ns=1790000005000000000\naegis_state_seq=7\nlimits_config_sha256=abababababababababababababababababababababababababababababababab\nkey_id=dev-ed25519-fe812c12f3ab4ce6\n"
+    },
+    "sell_short": {
+      "attestation": {
+        "aegis_state_seq": 7,
+        "canonical_version": "afe-attest-v1",
+        "decided_at_ns": 1790000000000000000,
+        "expires_at_ns": 1790000005000000000,
+        "key_id": "dev-ed25519-fe812c12f3ab4ce6",
+        "limits_config_sha256": "abababababababababababababababababababababababababababababababab",
+        "payload_sha256_hex": "3265aad4453bb83d7188b2ad79a5dc2f1dccaff80262e203fd640b2f51ac7295",
+        "signature_hex": "658e44a8319bf3403b2c343e8a24f5c9f6048b97de5dca8f9db75643c1c5abc64b276eff28322edcf4d673acf965c56a108c354015cafaade7083e7d70968e0d"
+      },
+      "order": {
+        "algo": 1,
+        "attestation_expires_at_ns": 1790000005000000000,
+        "created_at_ns": 1790000000000000000,
+        "hsm_key_id": "dev-ed25519-fe812c12f3ab4ce6",
+        "hsm_signature_hex": "658e44a8319bf3403b2c343e8a24f5c9f6048b97de5dca8f9db75643c1c5abc64b276eff28322edcf4d673acf965c56a108c354015cafaade7083e7d70968e0d",
+        "limit_price_nanos": 150000000000,
+        "order_id": "2d6a9ebf-8c83-4d20-9c76-2a3a7f5ab033",
+        "order_type": 2,
+        "quantity_nanos": 10000000000,
+        "side": 2,
+        "signal_id": "2d6a9ebf-8c83-4d20-9c76-2a3a7f5ab033",
+        "status": 0,
+        "stop_price_nanos": 0,
+        "symbol": "AAPL"
+      },
+      "text": "afe-attest-v1\nsignal_id=2d6a9ebf-8c83-4d20-9c76-2a3a7f5ab033\nsymbol=AAPL\nside=SELL_SHORT\norder_type=LIMIT\nqty_nanos=10000000000\nlimit_price_nanos=150000000000\nstop_price_nanos=0\ndecided_at_ns=1790000000000000000\nexpires_at_ns=1790000005000000000\naegis_state_seq=7\nlimits_config_sha256=abababababababababababababababababababababababababababababababab\nkey_id=dev-ed25519-fe812c12f3ab4ce6\n"
+    }
+  },
+  "generator": "aegis attest_order + DevEd25519Signer::from_seed(Test, [7;32])",
+  "key_id": "dev-ed25519-fe812c12f3ab4ce6",
+  "now_ns": 1790000000000000000,
+  "public_key_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+}

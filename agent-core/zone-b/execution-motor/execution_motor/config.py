@@ -41,14 +41,38 @@ def _positive_ms(env: Mapping[str, str], name: str, default_ms: int) -> int:
     return value * _NS_PER_MS
 
 
+_ENVIRONMENTS: Final = frozenset({"production", "staging", "development", "test"})
+
+
+def _flag(env: Mapping[str, str], name: str) -> bool:
+    """Explicit boolean, default False. Anything but true/false is a startup error."""
+    raw = env.get(name)
+    if raw is None or not raw.strip():
+        return False
+    value = raw.strip().lower()
+    if value not in ("true", "false"):
+        raise ConfigError(f"{name} must be 'true' or 'false'")
+    return value == "true"
+
+
 @dataclass(frozen=True)
 class MotorConfig:
     max_order_notional: Decimal
     max_session_notional: Decimal
     max_order_age_ns: int = _DEFAULT_MAX_AGE_MS * _NS_PER_MS
     max_clock_skew_ns: int = _DEFAULT_SKEW_MS * _NS_PER_MS
+    # Fail closed: an unset environment is production (dev signing keys are then refused).
+    environment: str = "production"
+    # Aegis may sign SELL_SHORT; the motor only accepts it when this is explicitly enabled.
+    allow_short_selling: bool = False
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
 
     def __post_init__(self) -> None:
+        if self.environment not in _ENVIRONMENTS:
+            raise ConfigError(f"environment must be one of {sorted(_ENVIRONMENTS)}")
         if self.max_order_notional <= 0 or self.max_session_notional <= 0:
             raise ConfigError("notional caps must be > 0")
         if self.max_session_notional < self.max_order_notional:
@@ -63,4 +87,6 @@ class MotorConfig:
             max_session_notional=_positive_decimal(env, "MOTOR_MAX_SESSION_NOTIONAL_USD"),
             max_order_age_ns=_positive_ms(env, "MOTOR_MAX_ORDER_AGE_MS", _DEFAULT_MAX_AGE_MS),
             max_clock_skew_ns=_positive_ms(env, "MOTOR_MAX_CLOCK_SKEW_MS", _DEFAULT_SKEW_MS),
+            environment=env.get("MOTOR_ENV", "production").strip().lower() or "production",
+            allow_short_selling=_flag(env, "MOTOR_SHORT_SELLING_ENABLED"),
         )
