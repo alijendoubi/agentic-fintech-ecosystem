@@ -202,3 +202,36 @@ describe("logout revokes the session token", () => {
     }
   });
 });
+
+describe("backend URL transport", () => {
+  const base = {
+    HITL_JWT_SECRET: TEST_SECRET,
+    HITL_JWT_ISSUER: ISSUER,
+    HITL_JWT_AUDIENCE: AUDIENCE,
+    NODE_ENV: "production",
+  };
+
+  it("refuses a plaintext http: backend URL in production", () => {
+    expect(() => loadConfig({ ...base, HITL_API_BASE_URL: "http://backend.internal:4000" })).toThrow(
+      /HITL_API_BASE_URL must use https/,
+    );
+    expect(() => loadConfig({ ...base, HITL_API_BASE_URL: "http://10.0.0.5:4000" })).toThrow(ConfigError);
+    // a look-alike host that merely starts with a loopback name is not loopback
+    expect(() => loadConfig({ ...base, HITL_API_BASE_URL: "http://localhost.evil.test:4000" })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...base, HITL_API_BASE_URL: "http://127.0.0.1.evil.test" })).toThrow(ConfigError);
+  });
+
+  it("accepts https, and http only for loopback hosts", () => {
+    expect(loadConfig({ ...base, HITL_API_BASE_URL: "https://backend.internal:4000" }).apiBaseUrl).toBe(
+      "https://backend.internal:4000",
+    );
+    for (const url of ["http://localhost:4000", "http://127.0.0.1:4000", "http://127.9.8.7", "http://[::1]:4000"]) {
+      expect(loadConfig({ ...base, HITL_API_BASE_URL: url }).apiBaseUrl).not.toBeNull();
+    }
+  });
+
+  it("still allows http backends outside production", () => {
+    const cfg = loadConfig({ ...base, NODE_ENV: "development", HITL_API_BASE_URL: "http://backend.internal:4000" });
+    expect(cfg.apiBaseUrl).toBe("http://backend.internal:4000");
+  });
+});

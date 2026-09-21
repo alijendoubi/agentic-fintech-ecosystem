@@ -102,7 +102,23 @@ function parseNumber(
   return value;
 }
 
-function parseHttpUrl(name: string, raw: string | undefined, problems: string[]): string | null {
+const LOOPBACK_IPV4 = /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+
+/** True only for literal loopback hosts; look-alike names such as localhost.evil.test are not. */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || LOOPBACK_IPV4.test(hostname);
+}
+
+/**
+ * Parses an http(s) URL. In production a plaintext http: URL is refused unless it targets loopback,
+ * because the operator Bearer token and the service token travel on this connection.
+ */
+function parseHttpUrl(
+  name: string,
+  raw: string | undefined,
+  isProduction: boolean,
+  problems: string[],
+): string | null {
   if (raw === undefined || raw.trim() === "") {
     return null;
   }
@@ -110,6 +126,10 @@ function parseHttpUrl(name: string, raw: string | undefined, problems: string[])
     const url = new URL(raw.trim());
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error("unsupported protocol");
+    }
+    if (isProduction && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+      problems.push(`${name} must use https in production (plain http is only accepted for loopback hosts)`);
+      return null;
     }
     return url.toString().replace(/\/+$/, "");
   } catch {
@@ -149,7 +169,7 @@ export function loadConfig(env: EnvSource): AppConfig {
     problems.push("HITL_JWT_AUDIENCE is required in production (tokens must be pinned to this audience)");
   }
 
-  const apiBaseUrl = parseHttpUrl("HITL_API_BASE_URL", env.HITL_API_BASE_URL, problems);
+  const apiBaseUrl = parseHttpUrl("HITL_API_BASE_URL", env.HITL_API_BASE_URL, isProduction, problems);
   if (!demoMode && apiBaseUrl === null && !problems.some((p) => p.startsWith("HITL_API_BASE_URL"))) {
     problems.push("HITL_API_BASE_URL is required (server-side env; never NEXT_PUBLIC)");
   }
