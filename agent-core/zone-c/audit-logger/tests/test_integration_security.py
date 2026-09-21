@@ -173,7 +173,8 @@ def test_chain_validation_cannot_be_bypassed_via_replication_role(
     seeded: AuditLogger, fresh_pg: PgInstance
 ) -> None:
     now = datetime(2026, 9, 19, tzinfo=UTC)
-    fake_prev = "f" * 64  # unique, so only the chain trigger (not a UNIQUE constraint) can refuse it
+    # Unique value, so only the chain trigger (not a UNIQUE constraint) can refuse the row.
+    fake_prev = "f" * 64
     forged = build_canonical(9, now, "forged", "mallory", {}, fake_prev)
     params = (9, now, forged, fake_prev, hash_canonical(forged))
     with pytest.raises(psycopg2.Error, match="audit chain"):
