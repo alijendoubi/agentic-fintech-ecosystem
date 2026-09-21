@@ -25,7 +25,13 @@ from .canonical import SIDE_SELL_SHORT
 from .config import MotorConfig
 from .errors import BrokerRejectedError, ConfigError, SubmitOutcomeUnknown
 from .halt import KillSwitch
-from .limits import IdempotencyStore, InMemoryIdempotencyStore, NotionalLedger, compute_notional
+from .limits import (
+    IdempotencyStore,
+    InMemoryIdempotencyStore,
+    NotionalLedger,
+    compute_notional,
+    open_persistent_idempotency_store,
+)
 from .models import (
     AttestedOrder,
     ExecAlgo,
@@ -69,10 +75,29 @@ class ExecutionMotor:
         self._verifier: AttestationVerifier = verifier or DenyAllVerifier()
         if config.is_production and getattr(self._verifier, "accepts_dev_keys", False) is True:
             raise ConfigError("a verifier that accepts dev signing keys is forbidden in production")
-        self._idem: IdempotencyStore = idempotency or InMemoryIdempotencyStore()
+        self._idem: IdempotencyStore = self._resolve_idempotency(config, idempotency)
         self._stats = venue_stats
         self._clock = clock_ns
         self._ledger = NotionalLedger(config.max_session_notional)
+
+    @staticmethod
+    def _resolve_idempotency(
+        config: MotorConfig, injected: IdempotencyStore | None
+    ) -> IdempotencyStore:
+        """Production needs a durable store: a restart must not let a captured decision replay."""
+        if config.is_production:
+            if isinstance(injected, InMemoryIdempotencyStore):
+                raise ConfigError("an in-memory idempotency store is forbidden in production")
+            if injected is not None:
+                return injected
+            if config.state_dir is None:
+                raise ConfigError("MOTOR_STATE_DIR is required in production (persistent claims)")
+            return open_persistent_idempotency_store(config.state_dir)
+        if injected is not None:
+            return injected
+        if config.state_dir is not None:
+            return open_persistent_idempotency_store(config.state_dir)
+        return InMemoryIdempotencyStore()
 
     # ------------------------------------------------------------------ public
 

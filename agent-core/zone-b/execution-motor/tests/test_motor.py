@@ -108,7 +108,7 @@ def make_motor(
     if stats is not None:
         kwargs["venue_stats"] = stats
     return ExecutionMotor(
-        config=MotorConfig(D(order_cap), D(session_cap)),
+        config=MotorConfig(D(order_cap), D(session_cap), environment="test"),
         brokers=brokers or {"alpaca-paper": fake},
         router=router,
         kill_switch=kill,
@@ -328,7 +328,7 @@ def test_halt_takes_effect_between_orders() -> None:
     broker = FakeBroker()
     kill = KillSwitch(start_halted=False)
     motor = ExecutionMotor(
-        config=MotorConfig(D("25000"), D("100000")),
+        config=MotorConfig(D("25000"), D("100000"), environment="test"),
         brokers={"alpaca-paper": broker},
         router=SmartOrderRouter(RouterConfig(unscored_policy=UnscoredPolicy.ALLOW)),
         kill_switch=kill,
@@ -351,7 +351,7 @@ def test_halt_flipped_by_router_stats_callback_is_caught_before_submit() -> None
         return {}
 
     motor = ExecutionMotor(
-        config=MotorConfig(D("25000"), D("100000")),
+        config=MotorConfig(D("25000"), D("100000"), environment="test"),
         brokers={"alpaca-paper": broker},
         router=SmartOrderRouter(RouterConfig(unscored_policy=UnscoredPolicy.ALLOW)),
         kill_switch=kill,

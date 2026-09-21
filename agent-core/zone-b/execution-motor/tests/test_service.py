@@ -32,7 +32,7 @@ def motor_over(script: Script, kill: KillSwitch | None = None) -> ExecutionMotor
         read_retries=1,
     )
     return ExecutionMotor(
-        config=MotorConfig(D("25000"), D("100000")),
+        config=MotorConfig(D("25000"), D("100000"), environment="test"),
         brokers={broker.venue: broker},
         router=SmartOrderRouter(RouterConfig(unscored_policy=UnscoredPolicy.ALLOW)),
         kill_switch=kill or KillSwitch(start_halted=False),
@@ -93,7 +93,7 @@ def test_definite_broker_reject_is_reported(pb2: dict[str, ModuleType]) -> None:
 def test_default_motor_denies_decision(pb2: dict[str, ModuleType]) -> None:
     script = Script()
     motor = ExecutionMotor(
-        config=MotorConfig(D("25000"), D("100000")),
+        config=MotorConfig(D("25000"), D("100000"), environment="test"),
         brokers={"v": AlpacaPaperBroker(CREDS, transport=httpx.MockTransport(script))},
         router=SmartOrderRouter(RouterConfig(unscored_policy=UnscoredPolicy.ALLOW)),
         kill_switch=KillSwitch(start_halted=False),

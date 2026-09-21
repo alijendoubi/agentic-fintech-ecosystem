@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Final
 
 from .errors import ConfigError
@@ -55,6 +56,11 @@ def _flag(env: Mapping[str, str], name: str) -> bool:
     return value == "true"
 
 
+def _optional_path(env: Mapping[str, str], name: str) -> Path | None:
+    raw = env.get(name)
+    return Path(raw.strip()) if raw is not None and raw.strip() else None
+
+
 @dataclass(frozen=True)
 class MotorConfig:
     max_order_notional: Decimal
@@ -65,6 +71,8 @@ class MotorConfig:
     environment: str = "production"
     # Aegis may sign SELL_SHORT; the motor only accepts it when this is explicitly enabled.
     allow_short_selling: bool = False
+    # Directory for durable motor state (idempotency claims). Required in production.
+    state_dir: Path | None = None
 
     @property
     def is_production(self) -> bool:
@@ -89,4 +97,5 @@ class MotorConfig:
             max_clock_skew_ns=_positive_ms(env, "MOTOR_MAX_CLOCK_SKEW_MS", _DEFAULT_SKEW_MS),
             environment=env.get("MOTOR_ENV", "production").strip().lower() or "production",
             allow_short_selling=_flag(env, "MOTOR_SHORT_SELLING_ENABLED"),
+            state_dir=_optional_path(env, "MOTOR_STATE_DIR"),
         )
