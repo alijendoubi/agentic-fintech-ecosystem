@@ -95,6 +95,16 @@ impl Engine {
         self.deps.clock.now_ns().ok()
     }
 
+    /// True iff some symbol has non-stale reference data within `max_ref_age_ms`
+    /// (a clock failure reads as not fresh).
+    fn reference_data_fresh(&self) -> bool {
+        let max_age_ns = i64::try_from(self.deps.limits.config.timings.max_ref_age_ms)
+            .unwrap_or(i64::MAX / 1_000_000)
+            .saturating_mul(1_000_000);
+        self.now()
+            .is_some_and(|now| self.deps.refdata.has_fresh_data(now, max_age_ns))
+    }
+
     /// Assemble the read-only view the controls evaluate. Consumes a rate
     /// token when `take_rate` (only for a real evaluation).
     pub(crate) fn snapshot<'a>(
@@ -167,7 +177,7 @@ impl Engine {
             limits_config_sha256: self.deps.limits.sha256_hex.clone(),
             hsm_ok: self.deps.signer.is_healthy(),
             audit_sink_ok: self.deps.audit.is_healthy(),
-            reference_data_fresh: self.deps.refdata.has_fresh_data(),
+            reference_data_fresh: self.reference_data_fresh(),
             open_holds,
             build_version: crate::VERSION.to_owned(),
         }

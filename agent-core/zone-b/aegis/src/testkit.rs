@@ -70,6 +70,8 @@ pub struct RigOptions {
     pub cold_start: bool,
     /// Skip the day-start equity baseline (C15 fails closed).
     pub no_equity: bool,
+    /// Skip seeding reference data (C08 fails until something is pushed).
+    pub no_market: bool,
 }
 
 pub struct Rig {
@@ -163,7 +165,9 @@ impl Rig {
             signer,
             limits,
         };
-        rig.refresh_market();
+        if !o.no_market {
+            rig.refresh_market();
+        }
         rig
     }
 

@@ -3,9 +3,9 @@
 //! fed by Zone B subscriptions, NEVER by the signal.
 //!
 //! `MarketSnapshot` still carries `double` prices; conversion to nanos happens
-//! here, at the boundary, and rejects NaN/Inf/<=0. The Redis subscriber that
-//! calls `update_snapshot` / `update_regime` is NOT part of this crate yet (see
-//! README "Not implemented"): until something feeds this store every signal
+//! here, at the boundary, and rejects NaN/Inf/<=0. The feed is the
+//! `PushReferenceData` RPC (`state::ingest`), which writes through the
+//! monotonic setters below. Until something feeds this store every signal
 //! fails C08 (`REASON_STALE_REFERENCE_PRICE`) and is rejected, which is the
 //! safe default.
 
@@ -25,13 +25,16 @@ const MAX_SYMBOLS: usize = 4_096;
 pub enum RefDataError {
     #[error("invalid reference data: {0}")]
     Invalid(&'static str),
+    /// The update is not strictly newer than what is stored.
+    #[error("reference data is not newer than the stored value")]
+    OutOfOrder,
 }
 
 pub trait ReferenceData: Send + Sync {
     fn price(&self, symbol: &str) -> Option<RefPrice>;
     fn regime(&self) -> Option<RegimeView>;
-    /// True if at least one symbol has a non-stale price.
-    fn has_fresh_data(&self) -> bool;
+    /// True if at least one symbol has a non-stale price no older than `max_age_ns`.
+    fn has_fresh_data(&self, now_ns: i64, max_age_ns: i64) -> bool;
 }
 
 #[derive(Debug, Default)]
@@ -50,6 +53,39 @@ impl MemoryReferenceData {
             return Err(RefDataError::Invalid("too many symbols"));
         }
         m.insert(symbol.to_owned(), price);
+        Ok(())
+    }
+
+    /// Store a price only if it is strictly newer than the stored one for the
+    /// symbol (compare-and-set under the lock). Older or equal => `OutOfOrder`.
+    pub fn set_price_monotonic(&self, symbol: &str, price: RefPrice) -> Result<(), RefDataError> {
+        let mut m = self
+            .prices
+            .lock()
+            .map_err(|_| RefDataError::Invalid("lock poisoned"))?;
+        match m.get(symbol) {
+            Some(old) if old.ingested_at_ns >= price.ingested_at_ns => {
+                return Err(RefDataError::OutOfOrder)
+            }
+            None if m.len() >= MAX_SYMBOLS => {
+                return Err(RefDataError::Invalid("too many symbols"))
+            }
+            _ => {}
+        }
+        m.insert(symbol.to_owned(), price);
+        Ok(())
+    }
+
+    /// Store the regime only if strictly newer than the stored one.
+    pub fn set_regime_monotonic(&self, regime: RegimeView) -> Result<(), RefDataError> {
+        let mut r = self
+            .regime
+            .lock()
+            .map_err(|_| RefDataError::Invalid("lock poisoned"))?;
+        if r.is_some_and(|old| old.at_ns >= regime.at_ns) {
+            return Err(RefDataError::OutOfOrder);
+        }
+        *r = Some(regime);
         Ok(())
     }
 
@@ -105,10 +141,13 @@ impl ReferenceData for MemoryReferenceData {
         *self.regime.lock().ok()?
     }
 
-    fn has_fresh_data(&self) -> bool {
+    fn has_fresh_data(&self, now_ns: i64, max_age_ns: i64) -> bool {
         self.prices
             .lock()
-            .map(|m| m.values().any(|p| !p.is_stale))
+            .map(|m| {
+                m.values()
+                    .any(|p| !p.is_stale && now_ns.saturating_sub(p.ingested_at_ns) <= max_age_ns)
+            })
             .unwrap_or(false)
     }
 }
@@ -144,7 +183,7 @@ mod tests {
             assert!(d.update_snapshot(&snap(m, a)).is_err(), "{m} {a}");
         }
         assert!(d.price("MSFT").is_none());
-        assert!(d.has_fresh_data());
+        assert!(d.has_fresh_data(5, 1));
     }
 
     #[test]

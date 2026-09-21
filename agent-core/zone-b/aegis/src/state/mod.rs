@@ -9,6 +9,7 @@
 //! ([`portfolio::FilePortfolioStore`]).
 
 pub mod holds;
+pub mod ingest;
 pub mod portfolio;
 pub mod rate;
 pub mod refdata;

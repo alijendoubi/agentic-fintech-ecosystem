@@ -34,10 +34,12 @@ pub enum PeerRole {
     Operator,
     StateReader,
     ExecutionReporter,
+    /// May push reference data (`PushReferenceData`); nothing else.
+    MarketDataWriter,
 }
 
 impl PeerRole {
-    pub const ALL: [PeerRole; 7] = [
+    pub const ALL: [PeerRole; 8] = [
         PeerRole::SignalSubmitter,
         PeerRole::HoldResolver,
         PeerRole::KillTrigger,
@@ -45,6 +47,7 @@ impl PeerRole {
         PeerRole::Operator,
         PeerRole::StateReader,
         PeerRole::ExecutionReporter,
+        PeerRole::MarketDataWriter,
     ];
 
     fn parse(s: &str) -> Option<PeerRole> {
@@ -56,6 +59,7 @@ impl PeerRole {
             "operator" => PeerRole::Operator,
             "state-reader" => PeerRole::StateReader,
             "execution-reporter" => PeerRole::ExecutionReporter,
+            "market-data-writer" => PeerRole::MarketDataWriter,
             _ => return None,
         })
     }
