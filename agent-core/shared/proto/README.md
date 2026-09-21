@@ -108,6 +108,7 @@ rule.
 | `Aegis.WatchKillSwitchState` | `Empty` -> stream `KillSwitchState` | `zone-b/aegis` | `zone-b/execution-motor` (cancel on L2+) |
 | `Aegis.GetAegisState` | `Empty` -> `AegisState` | `zone-b/aegis` | operator, monitoring |
 | `Aegis.ReportExecution` | `ExecutionReport` -> `Ack` | `zone-b/aegis` | `zone-b/execution-motor` |
+| `Aegis.PushReferenceData` | `PushReferenceDataRequest` -> `PushReferenceDataResponse` (additive, PKG-E2) | `zone-b/aegis` | market-data feed (cert role `market-data-writer`) |
 
 ## Messages and enums
 
