@@ -3,9 +3,11 @@ store."""
 
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,7 @@ from afe_sharp import (
     Stage,
     StageSkipError,
     StoreError,
+    TransitionEvent,
     UnknownProposalError,
 )
 from afe_sharp.ports import ProposalStore
@@ -315,3 +318,23 @@ def test_history_is_immutable_and_records_are_frozen(
     with pytest.raises(AttributeError):
         rec.approvals[0].approver_id = "x"  # type: ignore[misc]
     assert store.load(pid) == before
+
+
+def test_get_never_reports_promotion_for_a_forged_history(audit: FakeAudit) -> None:
+    """A history written around the gate (one identity signing all six stages) is not PROMOTED."""
+    store = InMemoryProposalStore()
+    when = datetime(2026, 9, 19, tzinfo=UTC)
+    detail = json.dumps(make_proposal("forged").to_detail())
+    forged = [TransitionEvent("forged", 1, "submitted", None, Stage.DRAFT, PROPOSER, when, detail)]
+    for version, stage in enumerate(GATES, start=2):
+        prev = PIPELINE[PIPELINE.index(stage) - 1]
+        forged.append(
+            TransitionEvent("forged", version, "approved", prev, stage, "mallory", when, "{}")
+        )
+    for event in forged:
+        store.append(event, event.version - 1)
+    gate = make_gate(store, audit)
+    with pytest.raises(StoreError):
+        gate.get("forged")
+    with pytest.raises(StoreError):
+        gate.approve("forged", "release-1", Stage.PROMOTED)

@@ -165,19 +165,46 @@ class ProposalRecord:
         return self.state in TERMINAL
 
 
-def fold(events: Sequence[TransitionEvent]) -> ProposalRecord:
-    """Rebuild the current record from history, validating every step. Inconsistent history =>
-    StoreError."""
-    if not events or events[0].kind != "submitted":
-        raise StoreError("history must start with a 'submitted' event")
-    first = events[0]
+def _stored_detail(event: TransitionEvent) -> dict[str, Any]:
+    """The event's detail as an object; anything else means the stored row is corrupt."""
     try:
-        proposal = RubricChangeProposal(
-            **{**first.detail, "evidence_refs": tuple(first.detail["evidence_refs"])}
-        )
+        detail = json.loads(event.detail_json)
+    except (TypeError, ValueError) as exc:
+        raise StoreError(f"stored detail is not valid JSON at version {event.version}") from exc
+    if not isinstance(detail, dict):
+        raise StoreError(f"stored detail is not an object at version {event.version}")
+    return detail
+
+
+def _stored_identity(event: TransitionEvent) -> str:
+    try:
+        return normalise_identity(event.actor)
+    except ProposalValidationError as exc:
+        raise StoreError(f"invalid actor at version {event.version}: {exc}") from exc
+
+
+def _stored_proposal(first: TransitionEvent) -> RubricChangeProposal:
+    detail = _stored_detail(first)
+    try:
+        refs = tuple(detail["evidence_refs"])
+        proposal = RubricChangeProposal(**{**detail, "evidence_refs": refs})
     except (TypeError, KeyError, ProposalValidationError) as exc:
         raise StoreError(f"stored proposal is invalid: {exc}") from exc
-    state, approvals = Stage.DRAFT, []
+    if first.actor != proposal.proposer_id:
+        raise StoreError("submitted event actor is not the proposer named in the proposal")
+    return proposal
+
+
+def fold(events: Sequence[TransitionEvent]) -> ProposalRecord:
+    """Rebuild the current record from history, re-verifying every invariant the database trigger
+    enforces at insert time (sequential versions, legal transitions, no stage skips, submitter
+    never approves, one stage per approver, a rejection needs a reason). Any inconsistency raises
+    StoreError: a history that is not fully valid is never reported as advanced or PROMOTED."""
+    if not events or events[0].kind != "submitted":
+        raise StoreError("history must start with a 'submitted' event")
+    proposal = _stored_proposal(events[0])
+    submitter = normalise_identity(proposal.proposer_id)
+    state, approvals, signers = Stage.DRAFT, [], set[str]()
     rejected_by = reason = None
     for index, event in enumerate(events, start=1):
         if event.version != index or event.proposal_id != proposal.proposal_id:
@@ -191,9 +218,19 @@ def fold(events: Sequence[TransitionEvent]) -> ProposalRecord:
         if event.kind == "approved":
             if PIPELINE[PIPELINE.index(state) + 1] is not event.to_state:
                 raise StoreError(f"stored stage skip at version {index}")
+            who = _stored_identity(event)
+            if who == submitter:
+                raise StoreError(f"stored self-approval at version {index}")
+            if who in signers:
+                raise StoreError(f"stored repeated approver at version {index}")
+            signers.add(who)
             approvals.append(_approval(event))
         elif event.kind == "rejected" and event.to_state is Stage.REJECTED:
-            rejected_by, reason = event.actor, str(event.detail.get("reason", ""))
+            _stored_identity(event)
+            reason = _stored_detail(event).get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                raise StoreError(f"stored rejection without a reason at version {index}")
+            rejected_by = event.actor
         else:
             raise StoreError(f"unknown event kind at version {index}")
         state = event.to_state
@@ -201,7 +238,7 @@ def fold(events: Sequence[TransitionEvent]) -> ProposalRecord:
 
 
 def _approval(event: TransitionEvent) -> Approval:
-    detail = event.detail
+    detail = _stored_detail(event)
     return Approval(
         stage=event.to_state,
         approver_id=event.actor,
