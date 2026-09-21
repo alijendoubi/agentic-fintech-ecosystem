@@ -134,6 +134,15 @@ impl Portfolio {
         Ok(())
     }
 
+    /// Drop a reservation whose order was never reported as submitted (its
+    /// attestation was abandoned). Returns whether one was removed.
+    pub fn release_unsubmitted(&mut self, order_id: &str) -> bool {
+        match self.open_orders.get(order_id) {
+            Some(o) if !o.submitted => self.open_orders.remove(order_id).is_some(),
+            _ => false,
+        }
+    }
+
     /// Apply an execution report (cumulative fill quantity). Idempotent for
     /// duplicates; refuses a decreasing cumulative quantity or a report that
     /// contradicts the order's recorded symbol/side.
@@ -421,9 +430,28 @@ impl PortfolioStore for FilePortfolioStore {
 pub struct MemoryPortfolioStore {
     state: std::sync::Mutex<Option<Portfolio>>,
     fail_saves: std::sync::atomic::AtomicBool,
+    after_save: std::sync::Mutex<Option<SaveHook>>,
+}
+
+/// Test hook run after every successful save (e.g. to simulate a caller
+/// deadline expiring during a slow fsync).
+#[derive(Clone)]
+struct SaveHook(std::sync::Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for SaveHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SaveHook")
+    }
 }
 
 impl MemoryPortfolioStore {
+    /// Run `hook` after each successful save.
+    pub fn set_after_save(&self, hook: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut h) = self.after_save.lock() {
+            *h = Some(SaveHook(hook));
+        }
+    }
+
     pub fn set_fail_saves(&self, v: bool) {
         self.fail_saves
             .store(v, std::sync::atomic::Ordering::SeqCst);
@@ -452,6 +480,10 @@ impl PortfolioStore for MemoryPortfolioStore {
             .state
             .lock()
             .map_err(|_| StateError::Unavailable("poisoned".into()))? = Some(p.clone());
+        let hook = self.after_save.lock().ok().and_then(|h| h.clone());
+        if let Some(SaveHook(f)) = hook {
+            f();
+        }
         Ok(())
     }
 }

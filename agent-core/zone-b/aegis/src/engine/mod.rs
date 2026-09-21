@@ -16,6 +16,7 @@ mod hold;
 mod report;
 mod submit;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::audit::AuditSink;
@@ -33,6 +34,27 @@ use crate::state::refdata::ReferenceData;
 use crate::state::replay::ReplayStore;
 
 pub use hold::HoldError;
+
+/// Set by the transport when the caller has given up on a request (deadline
+/// exceeded or disconnect). The engine checks it before signing and before
+/// committing a reservation, so an abandoned `SubmitSignal` neither signs nor
+/// leaves exposure reserved. A default token is never cancelled.
+#[derive(Debug, Clone, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> CancelToken {
+        CancelToken::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
 
 /// Dependencies, injected so tests can substitute every side effect.
 #[derive(Clone)]

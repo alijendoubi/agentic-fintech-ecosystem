@@ -253,6 +253,50 @@ fn a_reducing_order_is_held_at_logic_and_approved_only_after_human_release() {
     assert!(released.attestation.is_some());
 }
 
+// ---- abandoned requests (caller deadline) ----
+fn open_orders(rig: &Rig) -> usize {
+    rig.portfolio_store.saved().unwrap().open_orders.len()
+}
+
+#[test]
+fn a_request_cancelled_before_evaluation_signs_reserves_and_records_nothing() {
+    let rig = Rig::default();
+    let cancel = crate::engine::CancelToken::new();
+    cancel.cancel();
+    let s = rig.signal(1, 10);
+    let d = rig.engine.submit_signal_cancellable(&s, &cancel);
+    assert_eq!(status(&d), D::DecisionRejected);
+    assert!(d.attestation.is_none() && d.order.is_none());
+    assert_eq!(open_orders(&rig), 0);
+    // not burned: the same id is evaluated afresh and approved
+    assert_eq!(status(&rig.engine.submit_signal(&s)), D::DecisionApproved);
+}
+
+#[test]
+fn a_caller_that_leaves_during_the_persist_gets_its_reservation_released() {
+    let rig = Rig::default();
+    let cancel = crate::engine::CancelToken::new();
+    let c = cancel.clone();
+    rig.portfolio_store
+        .set_after_save(Arc::new(move || c.cancel()));
+    let s = rig.signal(1, 10);
+    let d = rig.engine.submit_signal_cancellable(&s, &cancel);
+    assert_eq!(status(&d), D::DecisionRejected);
+    assert!(d.attestation.is_none() && d.order.is_none());
+    assert_eq!(
+        open_orders(&rig),
+        0,
+        "the abandoned reservation is released"
+    );
+    rig.portfolio_store.set_after_save(Arc::new(|| {}));
+    assert_eq!(
+        status(&rig.engine.submit_signal(&s)),
+        D::DecisionApproved,
+        "an abandoned attempt leaves no replay record"
+    );
+    assert_eq!(open_orders(&rig), 1);
+}
+
 // ---- fail-closed dependencies ----
 struct DownSigner;
 impl Signer for DownSigner {
