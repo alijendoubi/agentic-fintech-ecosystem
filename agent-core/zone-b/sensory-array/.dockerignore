@@ -1,0 +1,11 @@
+target/
+.git
+.gitignore
+.dockerignore
+Dockerfile
+.env
+.env.*
+*.pem
+*.key
+*.md
+tests/

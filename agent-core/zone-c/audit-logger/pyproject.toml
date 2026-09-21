@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: needs Docker (real PostgreSQL container)"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["afe_audit"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["afe_audit", "tests"]
+mypy_path = ".,tests"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["psycopg2.*"]
+ignore_missing_imports = true

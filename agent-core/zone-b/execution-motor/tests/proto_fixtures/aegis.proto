@@ -1,0 +1,227 @@
+syntax = "proto3";
+
+package afe.shared;
+
+import "trade_signal.proto";
+import "order_request.proto";
+
+// Aegis gRPC contract (ALI-22). Source: Appendix A.1 of
+// agent-core/docs/specs/phase_3_aegis_execution.md, copied verbatim except for
+// this header.
+//
+// Deviations from the spec text: none in messages, fields, numbers or enums.
+// Style notes (kept on purpose, see buf.yaml `lint.except`): the service is
+// named `Aegis`, several RPCs share Empty/KillSwitchState/AegisDecision, and
+// enum values use the short prefixes DECISION_/REASON_/KILL_LEVEL_.
+//
+// KNOWN DESIGN RISKS in the spec'd contract, NOT changed here (need a spec-owner
+// decision before any consumer ships, because the fix renumbers an enum):
+//  1. KillSwitchLevel has KILL_LEVEL_NORMAL = 0, so an unset/absent
+//     effective_level or TriggerKillSwitchRequest.level decodes as NORMAL
+//     (fail-open default). Consumers MUST treat a missing KillSwitchState (or a
+//     failed/timed-out RPC) as HARD, never as NORMAL; do not rely on proto3
+//     default values for kill-switch decisions.
+//  2. Attestation canonical text (spec section 7) writes side=<BUY|SELL|
+//     SELL_SHORT> (SignalSide names) while OrderRequest.side is OrderSide
+//     (ORDER_BUY/ORDER_SELL). The mapping must be defined by the Aegis owner.
+//  3. Attestation.payload_sha256/signature are opaque bytes; the canonical text
+//     is not itself carried, so verifiers must rebuild it from OrderRequest +
+//     Attestation fields (spec section 7).
+
+// Money/price/quantity fields are fixed-point int64 in units of 1e-9 ("nanos").
+// Never use float/double for money. See docs/specs/phase_3_aegis_execution.md section 3.
+
+service Aegis {
+  // Evaluate a signal against all pre-trade controls. Fail closed on any error.
+  rpc SubmitSignal(TradeSignal) returns (AegisDecision);
+  // Human decision on a held signal. All hard controls are re-run at release time.
+  rpc ResolveHold(ResolveHoldRequest) returns (AegisDecision);
+
+  rpc TriggerKillSwitch(TriggerKillSwitchRequest) returns (KillSwitchState);
+  rpc ResetKillSwitch(ResetKillSwitchRequest) returns (ResetKillSwitchResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (KillSwitchState);       // operator heartbeat
+  rpc GetKillSwitchState(Empty) returns (KillSwitchState);
+  rpc WatchKillSwitchState(Empty) returns (stream KillSwitchState);
+
+  rpc GetAegisState(Empty) returns (AegisState);
+  // PROPOSED: source of truth for positions, drawdown and NAV.
+  rpc ReportExecution(ExecutionReport) returns (Ack);
+}
+
+message Empty {}
+
+message Ack {
+  bool ok = 1;
+  string detail = 2;
+}
+
+enum DecisionStatus {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_APPROVED = 1;
+  DECISION_REJECTED = 2;
+  DECISION_HELD_FOR_HUMAN = 3;
+}
+
+enum ReasonCode {
+  REASON_UNSPECIFIED = 0;
+  REASON_KILL_SWITCH_ACTIVE = 1;
+  REASON_INVALID_SIGNAL = 2;
+  REASON_SYMBOL_NOT_ALLOWED = 3;
+  REASON_SHORT_SELLING_DISABLED = 4;
+  REASON_OUTSIDE_TRADING_SESSION = 5;
+  REASON_SIGNAL_EXPIRED = 6;
+  REASON_SIGNAL_FROM_FUTURE = 7;
+  REASON_DUPLICATE_SIGNAL = 8;
+  REASON_REPLAY_PAYLOAD_MISMATCH = 9;
+  REASON_STALE_REFERENCE_PRICE = 10;
+  REASON_PRICE_COLLAR = 11;
+  REASON_MAX_ORDER_QUANTITY = 12;
+  REASON_MAX_ORDER_NOTIONAL = 13;
+  REASON_ORDER_SIZE_ADV = 14;
+  REASON_POSITION_LIMIT_SYMBOL = 15;
+  REASON_GROSS_EXPOSURE_LIMIT = 16;
+  REASON_DAILY_DRAWDOWN = 17;
+  REASON_RATE_LIMIT = 18;
+  REASON_LOW_OMEGA = 19;
+  REASON_REGIME_LOW_CONFIDENCE = 20;
+  REASON_REGIME_MISMATCH = 21;
+  REASON_UNUSUAL_ORDER_SIZE = 22;
+  REASON_STATE_UNAVAILABLE = 23;
+  REASON_HSM_UNAVAILABLE = 24;
+  REASON_AUDIT_UNAVAILABLE = 25;
+  REASON_INTERNAL_ERROR = 26;
+  REASON_HOLD_EXPIRED = 27;
+  REASON_HOLD_REJECTED_BY_OPERATOR = 28;
+}
+
+// One evaluated control. threshold/observed are decimal strings (no doubles for money).
+message ControlResult {
+  string control_id = 1;        // "C01".."C19" per the Phase 3 spec
+  bool is_hard = 2;
+  bool passed = 3;
+  ReasonCode reason = 4;        // REASON_UNSPECIFIED when passed
+  string threshold = 5;
+  string observed = 6;
+  string detail = 7;
+}
+
+// Short-lived, single-use authorisation over the exact order. See spec section 7.
+message Attestation {
+  string canonical_version = 1;   // "afe-attest-v1"
+  bytes payload_sha256 = 2;       // SHA-256 of the canonical text
+  bytes signature = 3;            // HSM signature over payload_sha256
+  string key_id = 4;
+  int64 decided_at_ns = 5;
+  int64 expires_at_ns = 6;        // PROPOSED decided_at_ns + 5 s
+  uint64 aegis_state_seq = 7;
+  string limits_config_sha256 = 8;
+}
+
+message AegisDecision {
+  string signal_id = 1;
+  DecisionStatus decision = 2;
+  SignalStatus signal_status = 3;         // mapping per spec section 4.2
+  repeated ControlResult results = 4;     // every evaluated control, passed or not
+  repeated ReasonCode reasons = 5;        // reasons of failed controls (convenience)
+  Attestation attestation = 6;            // set only when APPROVED
+  OrderRequest order = 7;                 // set only when APPROVED; hsm_signature/hsm_key_id mirror the attestation
+  string hold_id = 8;                     // set only when HELD_FOR_HUMAN
+  int64 hold_expires_at_ns = 9;
+  int64 decided_at_ns = 10;
+  uint64 aegis_state_seq = 11;
+  string aegis_version = 12;
+}
+
+message ResolveHoldRequest {
+  string hold_id = 1;
+  string operator_id = 2;
+  string second_approver_id = 3;          // required or not: TODO(owner)
+  bool approve = 4;
+  string note = 5;
+  double reverse_guardrail_distress_score = 6;   // classifier output, not money
+  bool cooling_period_enforced = 7;
+}
+
+// ---- Kill switch ----
+
+enum KillSwitchLevel {
+  KILL_LEVEL_NORMAL = 0;
+  KILL_LEVEL_SOFT = 1;
+  KILL_LEVEL_LOGIC = 2;
+  KILL_LEVEL_DEAD_MANS = 3;
+  KILL_LEVEL_HARD = 4;
+  KILL_LEVEL_PHYSICAL = 5;
+}
+
+message LatchedTrigger {
+  string trigger_id = 1;
+  KillSwitchLevel level = 2;
+  string reason = 3;
+  string actor_id = 4;            // operator id or automated source, e.g. "audit-logger/kl-monitor"
+  int64 latched_at_ns = 5;
+}
+
+message KillSwitchState {
+  KillSwitchLevel effective_level = 1;     // max over latched triggers
+  repeated LatchedTrigger latches = 2;
+  uint64 state_seq = 3;                    // monotonically increasing
+  int64 updated_at_ns = 4;
+  int64 last_operator_heartbeat_ns = 5;
+  int64 operator_heartbeat_deadline_ns = 6;
+}
+
+message TriggerKillSwitchRequest {
+  KillSwitchLevel level = 1;
+  string reason = 2;
+  string actor_id = 3;
+  string evidence_ref = 4;
+}
+
+message Authorization {
+  string approver_id = 1;
+  string role = 2;                         // e.g. operator, compliance
+  int64 approved_at_ns = 3;
+  string credential_ref = 4;               // authentication evidence; scheme TODO(owner)
+}
+
+message ResetKillSwitchRequest {
+  string trigger_id = 1;
+  repeated Authorization approvals = 2;    // count/roles required per level: spec section 5.2
+  string root_cause_ref = 3;
+  string note = 4;
+}
+
+message ResetKillSwitchResponse {
+  bool accepted = 1;
+  string refusal_reason = 2;
+  KillSwitchState state = 3;
+}
+
+message HeartbeatRequest {
+  string operator_id = 1;
+  int64 client_ts_ns = 2;
+}
+
+// ---- State / execution feedback ----
+
+message AegisState {
+  KillSwitchState kill = 1;
+  string limits_config_sha256 = 2;
+  bool hsm_ok = 3;
+  bool audit_sink_ok = 4;
+  bool reference_data_fresh = 5;
+  int32 open_holds = 6;
+  string build_version = 7;
+}
+
+message ExecutionReport {
+  string order_id = 1;
+  string signal_id = 2;
+  string symbol = 3;
+  OrderSide side = 4;
+  OrderStatus status = 5;
+  int64 filled_qty_nanos = 6;
+  int64 avg_fill_price_nanos = 7;
+  int64 account_equity_nanos = 8;          // for drawdown control C15
+  int64 reported_at_ns = 9;
+}

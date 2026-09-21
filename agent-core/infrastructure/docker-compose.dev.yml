@@ -1,0 +1,57 @@
+# LOCAL DEVELOPMENT OVERRIDE. Never use this file outside a developer machine.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# What it changes (and why it is unsafe for anything else):
+#   * publishes host ports (loopback only) for QuestDB, Redis, Chroma and Aegis,
+#   * attaches those services to a non-internal `dev-host` network (Docker cannot publish ports of
+#     containers that are only on `internal: true` networks) which weakens zone isolation,
+#   * runs Aegis with AEGIS_ENV=development, no TLS (AEGIS_INSECURE_DEV=1) and the software dev signer
+#     instead of the HSM. Aegis refuses these settings when AEGIS_ENV is production or unset.
+#     cognitive-core's gRPC channel to Aegis is plaintext today (sinks.py TODO), so the insecure mode is
+#     currently the only way the two can talk.
+#
+# Aegis still needs owner-supplied limits.json and identities.json in ${AEGIS_CONFIG_DIR}
+# (default ./secrets/aegis-config); no risk limits are invented here.
+
+networks:
+  dev-host: {}
+
+services:
+  questdb:
+    ports:
+      - "127.0.0.1:9000:9000" # REST / web console
+      - "127.0.0.1:9009:9009" # ILP
+    networks:
+      - dev-host
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - dev-host
+
+  vector-db:
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      - dev-host
+
+  aegis:
+    build:
+      args:
+        AEGIS_FEATURES: ""
+    environment:
+      AEGIS_ENV: development
+      AEGIS_INSECURE_DEV: "1"
+      AEGIS_SIGNER: dev
+    ports:
+      - "127.0.0.1:50051:50051" # gRPC, plaintext in dev
+    networks:
+      - dev-host
+
+  aegis-supervisor:
+    environment:
+      AEGIS_ENV: development
+      AEGIS_SUPERVISOR_TARGET: http://aegis:50051
+      AEGIS_SUPERVISOR_INSECURE_DEV: "1" # refused by the binary when AEGIS_ENV is production or unset

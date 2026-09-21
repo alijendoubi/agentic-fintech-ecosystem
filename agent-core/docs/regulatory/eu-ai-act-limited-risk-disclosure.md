@@ -1,10 +1,30 @@
 # EU AI Act — Limited Risk Classification Disclosure
 
+> **Status: DRAFT (initial draft dated 2026-05-14). NOT a reviewed or filed disclosure. Requires qualified legal review.**
+> - **Passed date:** the text below cites "Full Application Date: August 2, 2026" and describes the position "as of May 2026". That date has now passed (today is 2026-09-19). This document has **not** been re-checked since; the current application dates, any amendments or postponements, and what applies now are TODO(owner): requires qualified legal verification.
+> - **Citations unverified:** all article citations (including "Article 83" in §4, "Article 50", "Article 53+", Annex III, and the Art. 10-15 mapping) have not been checked against the regulation text. In particular, whether Article 83 is the provision governing changes to a system that would trigger a new conformity assessment must be verified by qualified counsel; do not rely on it.
+> - **No legal conclusions are asserted here.** The "Limited Risk" classification below is the initial author's working assumption, not a determination. TODO(owner): counsel to confirm classification, provider/deployer role and any obligations.
+> - The GPAI checkboxes in §2 are all **unchecked**: no request has been made (see TODO(owner) markers there). The HITL "AI-generated signal" label does not exist (no HITL interface).
+
+## Claims vs implementation
+
+| Claim | Implemented? | Tracking |
+|---|---|---|
+| HITL displays "AI-generated signal" label (§2) | No (`zone-c/hitl-interface/` does not exist) | `phase_4_backtesting_compliance.md` §10 |
+| Every trade decision produces a Compliance Manifest with full debate trace (Art. 13 row) | No (`compliance-manifest` is an empty package) | Phase 4 §9 |
+| HITL escalation; Dead Man's Switch; Reverse Guardrail classifier (Art. 14 row) | No. No classifier, data or policy exists | Phase 3 §5; Phase 4 §10 |
+| Regime-aware WFA, Monte Carlo, KL drift monitoring (Art. 15 row) | No | Phase 4 §4-§8 |
+| Point-in-time data, survivorship-bias-free universe, MAD outlier detection (Art. 10 row) | Partly: MAD scoring exists in `zone-b/sensory-array/src/normalizer.rs`; point-in-time/survivorship-free training data does not | Phase 4 §3 |
+| 7-year manifest retention with hash chaining (Art. 12 row) | No | Phase 4 §8-§9 |
+| SHARP legal-assessment gate (§4) | Process document only; no tooling | `docs/processes/sharp-promotion.md` |
+| GPAI documentation requested from Anthropic/Mistral; no training on customer data confirmed (§2) | No: boxes unchecked | TODO(owner) |
+| Annual review schedule (§5) | Nothing scheduled | TODO(owner) |
+
 **Regulation:** EU Artificial Intelligence Act (Regulation 2024/1689)
-**Full Application Date:** August 2, 2026
+**Full Application Date:** Stated in the initial draft as August 2, 2026 (passed; needs verification, see status box)
 **System:** Agentic Fintech Ecosystem (AFE) Autonomous Trading System
-**Prepared by:** [Name, Role]
-**Date:** 2026-05-14
+**Prepared by:** TODO(owner): name, role
+**Date:** 2026-05-14 (initial draft; not reviewed since)
 
 ---
 
@@ -41,21 +61,23 @@ The system interacts with human operators via the Zone C HITL Interface. When pr
 - **Not impersonate humans:** The HITL interface clearly labels all AI-generated content
 - **Deepfake disclosure:** N/A (system does not generate synthetic content for human consumption)
 
-Implementation: HITL Interface displays "AI-generated signal" label on all trade proposals.
+Implementation (target-state, NOT implemented): HITL Interface displays "AI-generated signal" label on all trade proposals.
 
 ### GPAI / Foundation Model Obligations
 
 The system uses foundation models from Anthropic and Mistral AI. Per Article 53+, these providers must comply with GPAI obligations (effective August 2025). Steps taken:
 
-- [ ] Requested GPAI technical documentation from Anthropic (via Bedrock support)
-- [ ] Requested GPAI technical documentation from Mistral AI
-- [ ] Confirmed no training on customer data in contracts (TP-001, TP-003, TP-004)
+- [ ] Requested GPAI technical documentation from Anthropic (via Bedrock support) — TODO(owner): not done as of 2026-09-19; do not tick without evidence (date, reference)
+- [ ] Requested GPAI technical documentation from Mistral AI — TODO(owner): not done as of 2026-09-19
+- [ ] Confirmed no training on customer data in contracts (TP-001, TP-003, TP-004) — TODO(owner): no contracts in repo; register entries are unverified
+
+(Whether the cited Article 53+ obligations, their effective date and the provider-vs-deployer allocation are as stated requires qualified legal verification.)
 
 ---
 
 ## 3. Proactive High-Risk Design Measures
 
-Even though AFE is currently Limited Risk, the following high-risk-standard controls are implemented proactively to hedge against future reclassification:
+Even though AFE is currently assumed to be Limited Risk (working assumption, requires qualified legal review), the following high-risk-standard controls are **planned** (see "Claims vs implementation" above; most are not implemented) to hedge against future reclassification:
 
 | High-Risk Requirement | Article | AFE Implementation |
 |---|---|---|
@@ -69,7 +91,7 @@ Even though AFE is currently Limited Risk, the following high-risk-standard cont
 
 ## 4. SHARP and Article 83 (Significant Change)
 
-The SHARP framework produces rubric change proposals via the Reflector Node. Each proposal is reviewed by Legal to determine if it constitutes a "significant change" under Article 83, which may require a new conformity assessment before redeployment.
+The SHARP framework produces rubric change proposals via the Reflector Node. Each proposal is to be reviewed by Legal to determine if it constitutes a "significant change" under "Article 83" (citation and terminology unverified: TODO(owner): counsel to confirm the correct provision and test), which may require a new conformity assessment before redeployment. No Legal reviewer is named anywhere in the repo.
 
 Mitigation: The SHARP promotion gate includes a mandatory Legal Assessment step (see `docs/processes/sharp-promotion.md`).
 
@@ -79,9 +101,9 @@ Mitigation: The SHARP promotion gate includes a mandatory Legal Assessment step 
 
 | Review | Due Date | Reviewer |
 |---|---|---|
-| EU AI Act classification review | August 2, 2027 | Legal + Compliance |
-| GPAI provider documentation refresh | August 2027 | Technology Lead |
-| ESMA supervisory briefing review | Upon publication (annual) | Compliance Officer |
+| EU AI Act classification review | TODO(owner): date (initial draft said August 2, 2027, derived from the now-passed 2026 date; re-derive after legal verification) | Legal + Compliance (persons TODO(owner)) |
+| GPAI provider documentation refresh | TODO(owner): date (draft said August 2027) | Technology Lead (TODO(owner)) |
+| ESMA supervisory briefing review | Upon publication (annual) (claim unverified) | Compliance Officer (TBD per ADR-001) |
 
 ---
 

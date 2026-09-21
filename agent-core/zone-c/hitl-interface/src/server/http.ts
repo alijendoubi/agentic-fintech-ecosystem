@@ -1,0 +1,47 @@
+import { SESSION_COOKIE, extractToken } from "@/lib/auth/identity";
+import { verifyOperatorToken } from "@/lib/auth/verify";
+import type { AuthResult } from "@/lib/auth/verify";
+import type { AppConfig } from "@/lib/config";
+
+export function jsonResponse(body: unknown, status: number, extraHeaders: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store", ...extraHeaders },
+  });
+}
+
+/** Reads one cookie value from a Cookie header without decoding surprises. */
+export function readCookie(cookieHeader: string | null | undefined, name: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(";")) {
+    const index = part.indexOf("=");
+    if (index === -1) continue;
+    if (part.slice(0, index).trim() === name) return part.slice(index + 1).trim();
+  }
+  return undefined;
+}
+
+export function sessionCookie(token: string, maxAgeSec: number, isProduction: boolean): string {
+  const attrs = ["HttpOnly", "SameSite=Strict", "Path=/", `Max-Age=${Math.max(0, Math.floor(maxAgeSec))}`];
+  if (isProduction) attrs.push("Secure");
+  return `${SESSION_COOKIE}=${token}; ${attrs.join("; ")}`;
+}
+
+export function clearedSessionCookie(isProduction: boolean): string {
+  return sessionCookie("", 0, isProduction);
+}
+
+/** Verifies the operator from Authorization (gateway-injected) or the session cookie. Deny on anything else. */
+export function authenticate(request: Request, config: AppConfig): Promise<AuthResult> {
+  const token = extractToken({
+    authorization: request.headers.get("authorization"),
+    cookie: readCookie(request.headers.get("cookie"), SESSION_COOKIE),
+  });
+  return verifyOperatorToken(token, config);
+}
+
+/** First hop of X-Forwarded-For when present (only meaningful behind a trusted proxy), else "unknown". */
+export function clientKey(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || "unknown";
+}

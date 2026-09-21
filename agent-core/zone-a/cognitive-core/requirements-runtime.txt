@@ -1,0 +1,13 @@
+# Runtime-only dependencies for the container image (requirements.txt is the dev superset
+# and pulls pandas/scipy/scikit-learn/questdb, none of which the runner imports).
+# ADR-002: LLM calls go through Bedrock with IAM-role auth, so no provider API-key SDKs.
+pydantic>=2.9,<3
+structlog>=24.4,<27
+python-dotenv>=1.0,<2
+langgraph>=0.2
+langchain-core>=0.3,<2
+langchain-aws>=0.2,<2
+boto3>=1.35,<2
+grpcio>=1.67,<2
+protobuf>=5.28
+redis>=5.2,<9

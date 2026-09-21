@@ -1,0 +1,22 @@
+# Tooling config only (this directory is not built as a distribution).
+# Lint uses the repo-root ruff.toml (this file deliberately has no [tool.ruff]).
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+asyncio_mode = "strict"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "conftest.py"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+# Run from the parent directory through a package-named link so relative imports resolve:
+#   MYPYPATH=<dir containing a cognitive_core -> cognitive-core link> mypy -p cognitive_core
+
+[[tool.mypy.overrides]]
+module = ["grpc_tools", "grpc_tools.*"]
+ignore_missing_imports = true

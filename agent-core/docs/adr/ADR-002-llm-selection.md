@@ -50,3 +50,9 @@ The VPC endpoint ensures Zone A's "no outbound internet" network policy is respe
 | Red Node challenge | 800ms | Force completion |
 | Judge synthesis | 500ms | Default to abstain |
 | Compression | 200ms | Skip, use raw summaries |
+
+---
+
+## Status note (2026-09-19, appended; the Decision above is unchanged)
+
+This ADR remains Accepted, but its Deployment section conflicts with the repo: `docker-compose.yml` injects `MISTRAL_API_KEY`/`ANTHROPIC_API_KEY` into Zone A, `zone-a/cognitive-core/llm_clients.py` uses the providers' direct SDKs, the third-party register lists Mistral as a direct API customer (TP-004), and the compose networks give `cognitive-core` no external route at all. Model availability on Bedrock (Mistral Large 2, the named Claude versions) is not verified anywhere in the repo (TODO(owner)). See **ADR-003** (Proposed). Also, the per-node budgets above sum to 2,300 ms for the sequential debate, which does not fit the README's 1,500 ms Blue+Red figure.

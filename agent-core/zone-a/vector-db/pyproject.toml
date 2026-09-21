@@ -1,0 +1,11 @@
+# Tooling config only (this directory is not built as a distribution).
+# Lint uses the repo-root ruff.toml (this file deliberately has no [tool.ruff]).
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+asyncio_mode = "strict"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["afe_vector_memory"]

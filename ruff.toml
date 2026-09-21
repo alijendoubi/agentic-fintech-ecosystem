@@ -1,0 +1,10 @@
+# Explicit rule set so results do not drift with the ruff version (ruff is pinned in requirements-dev.txt).
+line-length = 100
+target-version = "py312"
+extend-exclude = ["agent-core/shared/generated"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "BLE"]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["B011"]
