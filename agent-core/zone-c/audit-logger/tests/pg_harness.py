@@ -154,7 +154,9 @@ def run_failing_init(env_overrides: dict[str, str | None]) -> subprocess.Complet
         _docker("rm", "-f", "-v", name)
 
 
-_TRIGGERS_ALWAYS = ("audit_events_no_update", "audit_events_no_delete", "audit_events_no_truncate")
+_TRIGGERS_ALWAYS = (
+    "audit_events_chain_insert",
+    "audit_events_no_update", "audit_events_no_delete", "audit_events_no_truncate")
 
 
 def _super_exec(pg: PgInstance, statements: list[str]) -> None:
@@ -166,8 +168,7 @@ def _super_exec(pg: PgInstance, statements: list[str]) -> None:
 
 
 def restore_triggers(pg: PgInstance) -> None:
-    stmts = ["ALTER TABLE audit.audit_events ENABLE TRIGGER audit_events_chain_insert"]
-    stmts += [f"ALTER TABLE audit.audit_events ENABLE ALWAYS TRIGGER {t}" for t in _TRIGGERS_ALWAYS]
+    stmts = [f"ALTER TABLE audit.audit_events ENABLE ALWAYS TRIGGER {t}" for t in _TRIGGERS_ALWAYS]
     _super_exec(pg, stmts)
 
 

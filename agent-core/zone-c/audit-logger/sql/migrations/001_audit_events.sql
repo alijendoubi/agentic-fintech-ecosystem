@@ -138,7 +138,9 @@ CREATE TRIGGER audit_events_no_truncate
     BEFORE TRUNCATE ON audit.audit_events
     FOR EACH STATEMENT EXECUTE FUNCTION audit.reject_mutation();
 
--- ENABLE ALWAYS: fire even when session_replication_role = replica (a common way to bypass triggers).
+-- ENABLE ALWAYS: fire even when session_replication_role = replica (a common way to bypass triggers). This includes the
+-- insert-time chain validation, otherwise a session that sets replica could insert a row the chain trigger would refuse.
+ALTER TABLE audit.audit_events ENABLE ALWAYS TRIGGER audit_events_chain_insert;
 ALTER TABLE audit.audit_events ENABLE ALWAYS TRIGGER audit_events_no_update;
 ALTER TABLE audit.audit_events ENABLE ALWAYS TRIGGER audit_events_no_delete;
 ALTER TABLE audit.audit_events ENABLE ALWAYS TRIGGER audit_events_no_truncate;

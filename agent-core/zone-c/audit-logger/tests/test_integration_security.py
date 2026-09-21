@@ -157,6 +157,29 @@ def test_ddl_guard_stops_owner_from_weakening_the_table(
     assert "append-only" in _rejected(fresh_pg.owner_dsn, "DELETE FROM audit.audit_events")
 
 
+def test_chain_insert_trigger_is_enable_always(fresh_pg: PgInstance) -> None:
+    sql = (
+        "SELECT tgname, tgenabled FROM pg_trigger "
+        "WHERE tgrelid = 'audit.audit_events'::regclass AND NOT tgisinternal"
+    )
+    with contextlib.closing(psycopg2.connect(fresh_pg.app_dsn)) as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        states = dict(cur.fetchall())
+    assert "audit_events_chain_insert" in states
+    assert set(states.values()) == {"A"}
+
+
+def test_chain_validation_cannot_be_bypassed_via_replication_role(
+    seeded: AuditLogger, fresh_pg: PgInstance
+) -> None:
+    now = datetime(2026, 9, 19, tzinfo=UTC)
+    fake_prev = "f" * 64  # unique, so only the chain trigger (not a UNIQUE constraint) can refuse it
+    forged = build_canonical(9, now, "forged", "mallory", {}, fake_prev)
+    params = (9, now, forged, fake_prev, hash_canonical(forged))
+    with pytest.raises(psycopg2.Error, match="audit chain"):
+        _run(fresh_pg.super_dsn, "SET session_replication_role = replica; " + _INSERT, params)
+
+
 def test_app_role_cannot_insert_forged_rows(seeded: AuditLogger, fresh_pg: PgInstance) -> None:
     now = datetime(2026, 9, 19, tzinfo=UTC)
     good = build_canonical(4, now, "forged", "mallory", {}, GENESIS_HASH)

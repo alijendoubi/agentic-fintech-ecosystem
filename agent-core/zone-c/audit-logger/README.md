@@ -8,7 +8,7 @@ below; nothing here is a verified regulatory-compliance claim (needs qualified l
 | Property | Mechanism |
 |---|---|
 | App role can only append | `afe_audit_app` has `SELECT, INSERT` on `audit.audit_events` only; no DDL, no `TEMP`, no schema/db `CREATE`, not owner, not superuser |
-| No UPDATE / DELETE / TRUNCATE for **anyone** | statement-level `BEFORE` triggers raise (`restrict_violation`); `ENABLE ALWAYS`, so they also fire under `session_replication_role = replica`. Verified for the app role, the table owner and a superuser |
+| No UPDATE / DELETE / TRUNCATE for **anyone** | statement-level `BEFORE` triggers raise (`restrict_violation`); `ENABLE ALWAYS` (as is the insert-time chain trigger), so they also fire under `session_replication_role = replica`. Verified for the app role, the table owner and a superuser |
 | Owner cannot quietly remove the triggers | `900_ddl_guard.sql` event triggers reject `ALTER TABLE/FUNCTION/...`, `DROP` of anything in schema `audit` for non-superusers |
 | Chain cannot fork/gap/forge at insert time | `BEFORE INSERT` trigger takes the chain advisory lock, requires `seq = head+1`, `prev_hash = head.hash`, `hash = sha256(canonical)` and column/canonical consistency; `UNIQUE(prev_hash)` and `UNIQUE(hash)` |
 | Tampering detectable | `ChainVerifier` (Python, independent) and `audit.verify_chain(from, to)` (SQL) return the **first** break: `seq`, defect code, expected/actual |
