@@ -76,8 +76,8 @@ jobs:
             test: python -m pytest -q
             # Relative imports need the package under its importable name; see cognitive-core/pyproject.toml.
             types: >-
-              mkdir -p "${RUNNER_TEMP}/mypy-link"
-              && ln -sfn "${PWD}" "${RUNNER_TEMP}/mypy-link/cognitive_core"
+              mkdir -p "${RUNNER_TEMP}/mypy-link/cognitive_core"
+              && cp -r . "${RUNNER_TEMP}/mypy-link/cognitive_core/"
               && MYPYPATH="${RUNNER_TEMP}/mypy-link" python -m mypy --config-file "${PWD}/pyproject.toml" -p cognitive_core
           - name: regime-detector
             dir: agent-core/zone-a/regime-detector
@@ -100,19 +100,19 @@ jobs:
           # Zone C libraries: integration tests start postgres:16-alpine through Docker (available on ubuntu runners).
           - name: audit-logger
             dir: agent-core/zone-c/audit-logger
-            requirements: -r requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3'
+            requirements: -r requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3' types-psycopg2
             cache-paths: agent-core/zone-c/audit-logger/requirements.txt
             test: python -m pytest -q --cov=afe_audit
             types: python -m mypy
           - name: compliance-manifest
             dir: agent-core/zone-c/compliance-manifest
-            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3'
+            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3' types-psycopg2
             cache-paths: agent-core/zone-c/compliance-manifest/requirements.txt
             test: python -m pytest -q --cov=afe_manifest
             types: python -m mypy
           - name: sharp-gate
             dir: agent-core/zone-c/sharp-gate
-            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3'
+            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3' types-psycopg2
             cache-paths: agent-core/zone-c/sharp-gate/requirements.txt
             test: python -m pytest -q --cov=afe_sharp
             types: python -m mypy
