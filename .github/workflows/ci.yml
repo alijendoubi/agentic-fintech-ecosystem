@@ -1,194 +1,331 @@
 name: CI
 
+# Fail-loud CI: no `|| true`, no `continue-on-error`, no output swallowing, no job-level `if: hashFiles(...)`
+# (hashFiles is not available in job-level conditions). If a package or file is missing the job fails.
+#
+# Jobs mirror the real layout under agent-core/. Commands are the ones documented in each package.
+# NOTE: GitHub Actions is billing-locked on this repository, so this workflow could not be run remotely.
+# Every command was only validated locally (see the PKG-D2 report); the workflow itself is YAML-validated only.
+
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "integration/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "integration/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  # Keep in sync with regime-detector/requirements-dev.txt and vector-db/requirements-dev.txt.
+  RUFF_VERSION: "0.16.8"
+  # Keep in sync with agent-core/zone-b/aegis/Dockerfile (rust:1.98-bookworm) and sensory-array/Dockerfile.
+  RUST_TOOLCHAIN: "1.98.1"
+  BUF_VERSION: "1.73.0"
 
 jobs:
   # ─────────────────────────────────────────────────────────────
-  # Zone A — Python (cognitive-core, regime-detector, vector-db)
+  # Python: lint (repo ruff.toml, run from each package directory as documented in the package READMEs)
   # ─────────────────────────────────────────────────────────────
-  zone-a-lint:
-    name: Zone A — Lint & Type Check
+  python-lint:
+    name: Ruff — ${{ matrix.package }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - agent-core/zone-a/cognitive-core
+          - agent-core/zone-a/regime-detector
+          - agent-core/zone-a/vector-db
+          - agent-core/zone-b/execution-motor
+          - agent-core/zone-c/audit-logger
+          - agent-core/zone-c/compliance-manifest
+          - agent-core/zone-c/sharp-gate
+          - agent-core/backtesting
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install ruff
+        run: python -m pip install "ruff==${RUFF_VERSION}"
+      - name: Ruff check
+        working-directory: ${{ matrix.package }}
+        run: ruff check --config "${GITHUB_WORKSPACE}/ruff.toml" .
 
-      - name: Install deps (cognitive-core)
-        run: |
-          cd agent-core/zone-a/cognitive-core
-          pip install -r requirements.txt -r requirements-dev.txt 2>/dev/null || true
-
-      - name: Ruff lint — cognitive-core
-        run: |
-          pip install ruff
-          ruff check agent-core/zone-a/
-
-      - name: Mypy type check — cognitive-core
-        run: |
-          pip install mypy
-          cd agent-core/zone-a/cognitive-core
-          mypy . --ignore-missing-imports 2>/dev/null || true
-
-  zone-a-test:
-    name: Zone A — Unit Tests
+  # ─────────────────────────────────────────────────────────────
+  # Python: tests (+ mypy where the package ships a mypy config)
+  # ─────────────────────────────────────────────────────────────
+  python-test:
+    name: Test — ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: zone-a-lint
+    needs: python-lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cognitive-core
+            dir: agent-core/zone-a/cognitive-core
+            requirements: -r requirements.txt -r requirements-dev.txt
+            cache-paths: agent-core/zone-a/cognitive-core/requirements*.txt
+            test: python -m pytest -q
+            # Relative imports need the package under its importable name; see cognitive-core/pyproject.toml.
+            types: >-
+              mkdir -p "${RUNNER_TEMP}/mypy-link"
+              && ln -sfn "${PWD}" "${RUNNER_TEMP}/mypy-link/cognitive_core"
+              && MYPYPATH="${RUNNER_TEMP}/mypy-link" python -m mypy --config-file "${PWD}/pyproject.toml" -p cognitive_core
+          - name: regime-detector
+            dir: agent-core/zone-a/regime-detector
+            requirements: -r requirements-dev.txt
+            cache-paths: agent-core/zone-a/regime-detector/requirements*.txt
+            test: python -m pytest -q
+            types: ""
+          - name: vector-db
+            dir: agent-core/zone-a/vector-db
+            requirements: -r requirements-dev.txt
+            cache-paths: agent-core/zone-a/vector-db/requirements*.txt
+            test: python -m pytest -q
+            types: ""
+          - name: execution-motor
+            dir: agent-core/zone-b/execution-motor
+            requirements: -r requirements-dev.txt
+            cache-paths: agent-core/zone-b/execution-motor/requirements*.txt
+            test: python -m pytest -q
+            types: python -m mypy .
+          # Zone C libraries: integration tests start postgres:16-alpine through Docker (available on ubuntu runners).
+          - name: audit-logger
+            dir: agent-core/zone-c/audit-logger
+            requirements: -r requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3'
+            cache-paths: agent-core/zone-c/audit-logger/requirements.txt
+            test: python -m pytest -q --cov=afe_audit
+            types: python -m mypy
+          - name: compliance-manifest
+            dir: agent-core/zone-c/compliance-manifest
+            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3'
+            cache-paths: agent-core/zone-c/compliance-manifest/requirements.txt
+            test: python -m pytest -q --cov=afe_manifest
+            types: python -m mypy
+          - name: sharp-gate
+            dir: agent-core/zone-c/sharp-gate
+            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3'
+            cache-paths: agent-core/zone-c/sharp-gate/requirements.txt
+            test: python -m pytest -q --cov=afe_sharp
+            types: python -m mypy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          cache-dependency-path: ${{ matrix.cache-paths }}
+      - name: Docker must be available (integration tests skip silently without it)
+        if: ${{ startsWith(matrix.dir, 'agent-core/zone-c/') }}
+        run: docker info
+      - name: Install dependencies
+        working-directory: ${{ matrix.dir }}
+        run: python -m pip install ${{ matrix.requirements }}
+      - name: Tests
+        working-directory: ${{ matrix.dir }}
+        run: ${{ matrix.test }}
+      - name: Type check
+        if: ${{ matrix.types != '' }}
+        working-directory: ${{ matrix.dir }}
+        run: ${{ matrix.types }}
 
-      - name: Install deps + pytest
-        run: |
-          pip install pytest pytest-asyncio pytest-cov
-          cd agent-core/zone-a/cognitive-core
-          pip install -r requirements.txt 2>/dev/null || true
-
-      - name: Run tests — Zone A
-        run: |
-          cd agent-core/zone-a
-          python -m pytest --tb=short -q 2>/dev/null || echo "No tests yet"
-
-  # ─────────────────────────────────────────────────────────────
-  # Zone B — Rust (sensory-array, aegis) + Python (execution-motor)
-  # ─────────────────────────────────────────────────────────────
-  zone-b-rust:
-    name: Zone B — Rust Build & Test
+  backtesting:
+    name: Test — backtesting
     runs-on: ubuntu-latest
+    needs: python-lint
+    defaults:
+      run:
+        working-directory: agent-core
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
         with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: agent-core/backtesting/requirements*.txt
+      - name: Install dependencies
+        run: python -m pip install -r backtesting/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest backtesting -c backtesting/pytest.ini --cov=backtesting --cov-config=backtesting/.coveragerc
+      - name: Type check
+        run: python -m mypy --config-file backtesting/mypy.ini backtesting
+
+  # ─────────────────────────────────────────────────────────────
+  # Rust: fmt, clippy -D warnings, tests. Cargo.lock is committed and enforced with --locked.
+  # ─────────────────────────────────────────────────────────────
+  rust:
+    name: Rust — ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [sensory-array, aegis]
+    defaults:
+      run:
+        working-directory: agent-core/zone-b/${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
-
-      - name: Rust fmt check — sensory-array
-        run: |
-          cd agent-core/zone-b/sensory-array
-          cargo fmt --check 2>/dev/null || echo "No Cargo.toml yet"
-
-      - name: Clippy — sensory-array
-        run: |
-          cd agent-core/zone-b/sensory-array
-          cargo clippy -- -D warnings 2>/dev/null || echo "No Cargo.toml yet"
-
-      - name: Cargo test — sensory-array
-        run: |
-          cd agent-core/zone-b/sensory-array
-          cargo test 2>/dev/null || echo "No Cargo.toml yet"
-
-      - name: Cargo test — aegis
-        run: |
-          cd agent-core/zone-b/aegis
-          cargo test 2>/dev/null || echo "No Cargo.toml yet"
-
-  zone-b-python:
-    name: Zone B — Python (execution-motor)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Install protoc (aegis build.rs generates gRPC code; sensory-array needs none)
+        if: ${{ matrix.crate == 'aegis' }}
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
         with:
-          python-version: "3.12"
-
-      - name: Ruff lint — execution-motor
-        run: |
-          pip install ruff
-          ruff check agent-core/zone-b/execution-motor/ 2>/dev/null || echo "No Python yet"
-
-      - name: Run tests — execution-motor
-        run: |
-          pip install pytest
-          cd agent-core/zone-b/execution-motor
-          python -m pytest --tb=short -q 2>/dev/null || echo "No tests yet"
+          workspaces: agent-core/zone-b/${{ matrix.crate }}
+          # Cache key includes Cargo.lock (Swatinem hashes lockfiles); fail the job if it is missing.
+          cache-on-failure: false
+      - name: Cargo.lock must be committed
+        run: test -f Cargo.lock
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy (default features)
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: clippy (optional feature)
+        run: cargo clippy --locked --all-targets --features "${{ matrix.crate == 'aegis' && 'pkcs11' || 'ilp-secure' }}" -- -D warnings
+      - name: test
+        run: cargo test --locked
 
   # ─────────────────────────────────────────────────────────────
-  # Zone C — Python (audit-logger, compliance-manifest) + Next.js (hitl)
+  # HITL (Next.js)
   # ─────────────────────────────────────────────────────────────
-  zone-c-python:
-    name: Zone C — Python Services
+  hitl:
+    name: HITL interface
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Ruff lint — zone-c
-        run: |
-          pip install ruff
-          ruff check agent-core/zone-c/ 2>/dev/null || echo "No Python yet"
-
-      - name: Run tests — zone-c
-        run: |
-          pip install pytest
-          python -m pytest agent-core/zone-c/ --tb=short -q 2>/dev/null || echo "No tests yet"
-
-  zone-c-hitl:
-    name: Zone C — HITL Interface (Next.js)
-    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-core/zone-c/hitl-interface
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: yarn
-
-      - name: Install deps
-        run: |
-          cd agent-core/zone-c/hitl-interface
-          yarn install --frozen-lockfile 2>/dev/null || echo "No package.json yet"
-
-      - name: Typecheck
-        run: |
-          cd agent-core/zone-c/hitl-interface
-          yarn tsc --noEmit 2>/dev/null || echo "No tsconfig yet"
-
-      - name: Run tests
-        run: |
-          cd agent-core/zone-c/hitl-interface
-          yarn test 2>/dev/null || echo "No tests yet"
+          cache: npm
+          cache-dependency-path: agent-core/zone-c/hitl-interface/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
 
   # ─────────────────────────────────────────────────────────────
-  # Backtesting
+  # Protobuf: lint + breaking-change check (against the base of the PR / previous commit of the push)
   # ─────────────────────────────────────────────────────────────
-  backtesting:
-    name: Backtesting — Lint & Test
+  proto:
+    name: Protobuf lint and breaking
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-core/shared/proto
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Ruff lint — backtesting
+          fetch-depth: 0 # check-breaking.sh exports the protos from a git ref
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ env.BUF_VERSION }}
+          github_token: ${{ github.token }}
+      - name: buf lint
+        run: buf lint
+      - name: buf breaking
+        env:
+          PR_BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          pip install ruff
-          ruff check agent-core/backtesting/ 2>/dev/null || echo "No Python yet"
-
-      - name: Run tests — backtesting
-        run: |
-          pip install pytest
-          python -m pytest agent-core/backtesting/ --tb=short -q 2>/dev/null || echo "No tests yet"
+          set -euo pipefail
+          if [ -n "${PR_BASE_REF}" ]; then
+            base="origin/${PR_BASE_REF}"
+          elif [ -n "${PUSH_BEFORE}" ] && ! echo "${PUSH_BEFORE}" | grep -Eq '^0+$' \
+               && git cat-file -e "${PUSH_BEFORE}^{commit}"; then
+            base="${PUSH_BEFORE}"
+          else
+            base="origin/main"
+          fi
+          echo "Comparing against ${base}"
+          BASE_REF="${base}" bash ./check-breaking.sh
 
   # ─────────────────────────────────────────────────────────────
-  # Proto validation
+  # Docker: build smoke test for every Dockerfile (no push) + compose validation
   # ─────────────────────────────────────────────────────────────
-  proto-lint:
-    name: Protobuf Lint
+  docker-build:
+    name: Docker build — ${{ matrix.image }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: regime-detector
+            context: agent-core/zone-a/regime-detector
+            file: agent-core/zone-a/regime-detector/Dockerfile
+          - image: sensory-array
+            context: agent-core/zone-b/sensory-array
+            file: agent-core/zone-b/sensory-array/Dockerfile
+          - image: hitl-interface
+            context: agent-core/zone-c/hitl-interface
+            file: agent-core/zone-c/hitl-interface/Dockerfile
+          # These two build from agent-core/ (they need shared/proto and zone-a/vector-db).
+          - image: cognitive-core
+            context: agent-core
+            file: agent-core/zone-a/cognitive-core/Dockerfile
+          - image: aegis
+            context: agent-core
+            file: agent-core/zone-b/aegis/Dockerfile
     steps:
       - uses: actions/checkout@v4
-      - uses: bufbuild/buf-setup-action@v1
-      - name: Buf lint
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: false
+          tags: afe/${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  compose-config:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-core/infrastructure
+    steps:
+      - uses: actions/checkout@v4
+      - name: .env.example must not contain real values (secrets are blank)
         run: |
-          cd agent-core/shared/proto
-          buf lint 2>/dev/null || echo "No buf.yaml yet (add later)"
+          set -euo pipefail
+          # Any *_KEY / *_SECRET / *_PASSWORD / *_PIN / *_TOKEN assignment that is not blank is a leak.
+          if grep -E '^[A-Z0-9_]*(KEY|SECRET|PASSWORD|PIN|TOKEN|HMAC)[A-Z0-9_]*=.+' .env.example \
+               | grep -vE '^(AEGIS_PKCS11_(TOKEN|KEY)_LABEL|ALPACA_BASE_URL)='; then
+            echo "::error::.env.example contains a non-blank secret-looking value"; exit 1
+          fi
+      - name: Validate compose (base and dev override) with placeholder values for every blank variable
+        run: |
+          set -euo pipefail
+          sed -E 's/^([A-Z0-9_]+)=$/\1=ci-placeholder-\1-not-a-secret/' .env.example | grep -E '^[A-Z0-9_]+=' > "${RUNNER_TEMP}/ci.env"
+          docker compose --env-file "${RUNNER_TEMP}/ci.env" -f docker-compose.yml config > "${RUNNER_TEMP}/base.yml"
+          docker compose --env-file "${RUNNER_TEMP}/ci.env" -f docker-compose.yml -f docker-compose.dev.yml config > /dev/null
+      - name: Compose must fail loudly when a required secret is missing
+        run: |
+          set -euo pipefail
+          if docker compose --env-file .env.example -f docker-compose.yml config > /dev/null 2>&1; then
+            echo "::error::compose accepted a blank .env.example; secrets must use \${VAR:?}"; exit 1
+          fi
+      - name: Base file publishes no host ports except hitl-interface, and pins every image
+        run: |
+          set -euo pipefail
+          docker compose --env-file "${RUNNER_TEMP}/ci.env" -f docker-compose.yml config --format json > "${RUNNER_TEMP}/base.json"
+          published=$(jq -r '.services | to_entries[] | select(.value.ports != null) | .key' "${RUNNER_TEMP}/base.json")
+          test "${published}" = "hitl-interface"
+          if jq -r '.services[] | select(.build == null) | .image // empty' "${RUNNER_TEMP}/base.json" | grep -E ':latest$|^[^:]+$'; then
+            echo "::error::unpinned image"; exit 1
+          fi
