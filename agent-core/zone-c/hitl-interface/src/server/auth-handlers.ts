@@ -44,7 +44,7 @@ async function formField(request: Request, name: string): Promise<string | null>
 export async function handleLogin(request: Request, deps: AuthHandlerDeps): Promise<Response> {
   const { config } = deps;
   if (!originOk(request, config)) return new Response("Cross-origin request refused", { status: 403 });
-  if (!deps.limiter.check(`login:${clientKey(request)}`).allowed) {
+  if (!deps.limiter.check(`login:${clientKey(request, config.trustedProxyCount)}`).allowed) {
     return new Response("Too many attempts", { status: 429, headers: { "retry-after": "60" } });
   }
   const token = (await formField(request, "token"))?.trim();
@@ -62,7 +62,7 @@ export async function handleDemoLogin(request: Request, deps: AuthHandlerDeps): 
   const { config } = deps;
   if (!config.demoMode || config.isProduction) return new Response("Not found", { status: 404 });
   if (!originOk(request, config)) return new Response("Cross-origin request refused", { status: 403 });
-  if (!deps.limiter.check(`login:${clientKey(request)}`).allowed) {
+  if (!deps.limiter.check(`login:${clientKey(request, config.trustedProxyCount)}`).allowed) {
     return new Response("Too many attempts", { status: 429, headers: { "retry-after": "60" } });
   }
   const persona = await formField(request, "persona");

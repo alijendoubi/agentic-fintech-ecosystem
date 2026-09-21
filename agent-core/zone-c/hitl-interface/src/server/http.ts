@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { SESSION_COOKIE, extractToken } from "@/lib/auth/identity";
 import { verifyOperatorToken } from "@/lib/auth/verify";
 import type { AuthResult } from "@/lib/auth/verify";
@@ -49,8 +50,17 @@ export function requestToken(request: Request): string | null {
   });
 }
 
-/** First hop of X-Forwarded-For when present (only meaningful behind a trusted proxy), else "unknown". */
-export function clientKey(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || "unknown";
+const UNKNOWN_CLIENT = "unknown";
+
+/**
+ * Rate-limit key for the caller. X-Forwarded-For is client-controlled on its left side, so it is only
+ * read when `trustedProxyCount` proxies are known to append to it; the client is then the entry the
+ * outermost trusted proxy appended, i.e. the Nth from the RIGHT. With 0 trusted proxies (the default)
+ * the header is ignored and every caller shares one bucket ("unknown"), which cannot be spoofed around.
+ */
+export function clientKey(request: Request, trustedProxyCount: number): string {
+  if (trustedProxyCount < 1) return UNKNOWN_CLIENT;
+  const hops = (request.headers.get("x-forwarded-for") ?? "").split(",").map((hop) => hop.trim());
+  const candidate = hops[hops.length - trustedProxyCount];
+  return candidate !== undefined && isIP(candidate) !== 0 ? candidate : UNKNOWN_CLIENT;
 }

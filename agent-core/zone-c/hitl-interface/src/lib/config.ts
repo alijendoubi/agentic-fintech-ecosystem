@@ -29,6 +29,7 @@ const DEFAULT_FOUR_EYES_QUANTITY_THRESHOLD = 1000;
 const DEFAULT_MUTATIONS_PER_MINUTE = 10;
 const DEFAULT_LOGINS_PER_MINUTE = 10;
 const DEFAULT_JWT_MAX_LIFETIME_SEC = 900;
+const DEFAULT_TRUSTED_PROXY_COUNT = 0;
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
@@ -52,6 +53,11 @@ export interface AppConfig {
   readonly allowedOrigins: readonly string[];
   readonly mutationsPerMinute: number;
   readonly loginsPerMinute: number;
+  /**
+   * Number of reverse proxies in front of the app that append to X-Forwarded-For.
+   * 0 (default) means the header is ignored and the login limiter uses one shared bucket.
+   */
+  readonly trustedProxyCount: number;
 }
 
 export class ConfigError extends Error {
@@ -193,6 +199,10 @@ export function loadConfig(env: EnvSource): AppConfig {
     "HITL_JWT_MAX_LIFETIME_SEC", env.HITL_JWT_MAX_LIFETIME_SEC,
     DEFAULT_JWT_MAX_LIFETIME_SEC, { min: 1, integer: true }, problems);
 
+  const trustedProxyCount = parseNumber(
+    "HITL_TRUSTED_PROXY_COUNT", env.HITL_TRUSTED_PROXY_COUNT,
+    DEFAULT_TRUSTED_PROXY_COUNT, { min: 0, integer: true }, problems);
+
   if (problems.length > 0) {
     throw new ConfigError(problems);
   }
@@ -214,6 +224,7 @@ export function loadConfig(env: EnvSource): AppConfig {
     allowedOrigins: parseOrigins(env.HITL_ALLOWED_ORIGINS),
     mutationsPerMinute: mutationsPerMinute ?? DEFAULT_MUTATIONS_PER_MINUTE,
     loginsPerMinute: loginsPerMinute ?? DEFAULT_LOGINS_PER_MINUTE,
+    trustedProxyCount: trustedProxyCount ?? DEFAULT_TRUSTED_PROXY_COUNT,
   };
 }
 

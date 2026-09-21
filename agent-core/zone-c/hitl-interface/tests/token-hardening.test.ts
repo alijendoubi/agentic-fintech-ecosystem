@@ -4,7 +4,7 @@ import { RevocationList } from "@/lib/auth/revocation";
 import { verifyOperatorToken } from "@/lib/auth/verify";
 import { SlidingWindowRateLimiter } from "@/lib/security/rate-limit";
 import { handleLogin, handleLogout } from "@/server/auth-handlers";
-import { authenticate } from "@/server/http";
+import { authenticate, clientKey } from "@/server/http";
 import { TEST_SECRET, mintToken, testConfig } from "./helpers/tokens";
 
 const ISSUER = "https://idp.example.test";
@@ -233,5 +233,55 @@ describe("backend URL transport", () => {
   it("still allows http backends outside production", () => {
     const cfg = loadConfig({ ...base, NODE_ENV: "development", HITL_API_BASE_URL: "http://backend.internal:4000" });
     expect(cfg.apiBaseUrl).toBe("http://backend.internal:4000");
+  });
+});
+
+describe("login rate limit keys on the trusted-proxy client IP only", () => {
+  const req = (xff?: string) =>
+    new Request(`https://${HOST}/api/auth/login`, { headers: xff ? { "x-forwarded-for": xff } : {} });
+
+  it("defaults HITL_TRUSTED_PROXY_COUNT to 0 and validates it", () => {
+    expect(prod.trustedProxyCount).toBe(0);
+    expect(testConfig({ HITL_TRUSTED_PROXY_COUNT: "2" }).trustedProxyCount).toBe(2);
+    expect(() => testConfig({ HITL_TRUSTED_PROXY_COUNT: "-1" })).toThrow(ConfigError);
+    expect(() => testConfig({ HITL_TRUSTED_PROXY_COUNT: "1.5" })).toThrow(ConfigError);
+  });
+
+  it("ignores X-Forwarded-For entirely when no proxy is trusted", () => {
+    expect(clientKey(req("203.0.113.9"), 0)).toBe("unknown");
+    expect(clientKey(req("1.1.1.1, 2.2.2.2"), 0)).toBe("unknown");
+    expect(clientKey(req(), 0)).toBe("unknown");
+  });
+
+  it("takes the entry the last trusted proxy appended, never the client-controlled left side", () => {
+    expect(clientKey(req("198.51.100.7"), 1)).toBe("198.51.100.7");
+    expect(clientKey(req("6.6.6.6, 198.51.100.7"), 1)).toBe("198.51.100.7");
+    expect(clientKey(req("6.6.6.6, 198.51.100.7, 10.0.0.2"), 2)).toBe("198.51.100.7");
+  });
+
+  it("falls back to a shared bucket when the header is short or not an IP", () => {
+    expect(clientKey(req(), 1)).toBe("unknown");
+    expect(clientKey(req("198.51.100.7"), 2)).toBe("unknown");
+    expect(clientKey(req("not-an-ip"), 1)).toBe("unknown");
+    expect(clientKey(req("<script>"), 1)).toBe("unknown");
+  });
+
+  it("cannot be bypassed by rotating a spoofed X-Forwarded-For when no proxy is trusted", async () => {
+    const deps = { config: prod, limiter: new SlidingWindowRateLimiter(2, 60_000), revocations: new RevocationList() };
+    const attempt = (xff: string) =>
+      handleLogin(form("/api/auth/login", { token: "x" }, { "x-forwarded-for": xff }), deps);
+    expect((await attempt("9.9.9.1")).status).toBe(303);
+    expect((await attempt("9.9.9.2")).status).toBe(303);
+    expect((await attempt("9.9.9.3")).status).toBe(429);
+  });
+
+  it("separates real clients behind a trusted proxy", async () => {
+    const proxied = { ...prod, trustedProxyCount: 1 };
+    const deps = { config: proxied, limiter: new SlidingWindowRateLimiter(1, 60_000), revocations: new RevocationList() };
+    const attempt = (xff: string) =>
+      handleLogin(form("/api/auth/login", { token: "x" }, { "x-forwarded-for": xff }), deps);
+    expect((await attempt("6.6.6.6, 9.9.9.1")).status).toBe(303);
+    expect((await attempt("7.7.7.7, 9.9.9.1")).status).toBe(429);
+    expect((await attempt("7.7.7.7, 9.9.9.2")).status).toBe(303);
   });
 });
