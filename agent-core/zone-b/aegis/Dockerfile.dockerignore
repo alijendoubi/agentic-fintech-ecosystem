@@ -1,0 +1,10 @@
+# BuildKit reads this (Dockerfile.dockerignore) for builds with
+# `-f agent-core/zone-b/aegis/Dockerfile agent-core`; the context is agent-core/.
+# Allow-list only what the build needs.
+*
+!shared/proto/*.proto
+!zone-b/aegis/Cargo.toml
+!zone-b/aegis/Cargo.lock
+!zone-b/aegis/build.rs
+!zone-b/aegis/src
+!zone-b/aegis/src/**
