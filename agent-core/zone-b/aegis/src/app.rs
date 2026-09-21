@@ -52,6 +52,9 @@ pub enum StartupError {
 /// A fully assembled Aegis, ready to serve.
 pub struct App {
     pub engine: Arc<Engine>,
+    /// Aegis-owned reference data. Nothing feeds it yet (README "Not
+    /// implemented"): whoever adds the Redis subscriber writes here.
+    pub refdata: Arc<MemoryReferenceData>,
     pub service_options: ServiceOptions,
     pub identities: Arc<Identities>,
 }
@@ -136,6 +139,7 @@ pub fn build_app(cfg: &RuntimeConfig) -> Result<App, StartupError> {
             Arc::new(UnavailableReplayStore)
         }
     };
+    let refdata = Arc::new(MemoryReferenceData::default());
     let engine = Arc::new(Engine::new(EngineDeps {
         limits: limits.clone(),
         clock,
@@ -144,10 +148,11 @@ pub fn build_app(cfg: &RuntimeConfig) -> Result<App, StartupError> {
         audit: deferred,
         replay,
         portfolio_store: Arc::new(FilePortfolioStore::new(&cfg.state_dir)),
-        refdata: Arc::new(MemoryReferenceData::default()),
+        refdata: refdata.clone(),
     }));
     Ok(App {
         engine,
+        refdata,
         service_options: ServiceOptions {
             insecure_dev: matches!(cfg.tls, TlsMode::InsecureDev),
             max_concurrency: cfg.max_concurrency,

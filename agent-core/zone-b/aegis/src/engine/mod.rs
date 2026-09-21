@@ -82,6 +82,11 @@ impl Engine {
         }
     }
 
+    /// The kill-switch controller this engine consults.
+    pub fn kill(&self) -> &Arc<KillController> {
+        &self.deps.kill
+    }
+
     pub(crate) fn lock(&self) -> Option<MutexGuard<'_, Core>> {
         self.core.lock().ok()
     }
