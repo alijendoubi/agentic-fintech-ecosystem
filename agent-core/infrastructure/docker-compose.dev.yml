@@ -11,6 +11,10 @@
 #     cognitive-core's gRPC channel to Aegis is plaintext today (sinks.py TODO), so the insecure mode is
 #     currently the only way the two can talk.
 #
+# KNOWN BROKEN (plaintext Aegis): Aegis now refuses AEGIS_INSECURE_DEV unless it listens on loopback, and
+# loopback inside a container is unreachable from the host and from other containers. Until dev mTLS certs
+# are wired (cognitive-core now supports AEGIS_CLIENT_TLS_CA/CERT/KEY), this override cannot run Aegis.
+#
 # Aegis still needs owner-supplied limits.json and identities.json in ${AEGIS_CONFIG_DIR}
 # (default ./secrets/aegis-config); no risk limits are invented here.
 
