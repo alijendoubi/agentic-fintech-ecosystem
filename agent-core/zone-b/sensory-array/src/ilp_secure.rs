@@ -24,7 +24,7 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio_native_tls::native_tls;
 
 use crate::error::{Result, SensoryError};
@@ -119,7 +119,10 @@ where
     let mut challenge = Vec::with_capacity(128);
     {
         let mut reader = BufReader::new(&mut *stream);
-        let n = tokio::time::timeout(AUTH_STEP_TIMEOUT, reader.read_until(b'\n', &mut challenge))
+        // Bound the read itself: a peer that never sends a newline must not
+        // be able to make us buffer more than one byte past the limit.
+        let mut bounded = (&mut reader).take(MAX_CHALLENGE_BYTES as u64 + 1);
+        let n = tokio::time::timeout(AUTH_STEP_TIMEOUT, bounded.read_until(b'\n', &mut challenge))
             .await
             .map_err(|_| step("challenge"))??;
         if n == 0 || challenge.len() > MAX_CHALLENGE_BYTES || challenge.last() != Some(&b'\n') {
@@ -205,6 +208,46 @@ mod tests {
         let (mut client, server) = tokio::io::duplex(1024);
         drop(server); // server closes immediately
         assert!(authenticate(&mut client, "k", &token).await.is_err());
+    }
+
+    /// A hostile server streaming a never-ending challenge line must be cut
+    /// off after a bounded read, not buffered until the step timeout.
+    #[tokio::test]
+    async fn oversized_challenge_read_is_bounded() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let (_, token) = test_key();
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        let sent = Arc::new(AtomicUsize::new(0));
+        let sent_srv = Arc::clone(&sent);
+        let srv = tokio::spawn(async move {
+            let mut kid = String::new();
+            BufReader::new(&mut server)
+                .read_line(&mut kid)
+                .await
+                .expect("kid");
+            let chunk = [b'A'; 1024];
+            // Up to 1 MiB, never a newline; then hold the socket open.
+            for _ in 0..1024 {
+                if server.write_all(&chunk).await.is_err() {
+                    return;
+                }
+                sent_srv.fetch_add(chunk.len(), Ordering::SeqCst);
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let started = std::time::Instant::now();
+        assert!(authenticate(&mut client, "k", &token).await.is_err());
+        drop(client);
+        srv.abort();
+        let _ = srv.await;
+        let sent = sent.load(Ordering::SeqCst);
+        assert!(
+            sent < 64 * 1024,
+            "server pushed {sent} bytes before the client gave up"
+        );
+        assert!(started.elapsed() < Duration::from_secs(4), "must fail fast");
     }
 
     #[tokio::test]
