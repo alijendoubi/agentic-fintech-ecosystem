@@ -55,13 +55,14 @@ The context filter is `Dockerfile.dockerignore` (BuildKit).
 | `AEGIS_IDENTITIES_FILE` | yes | Peer roles and approver public keys JSON (below). |
 | `AEGIS_STATE_DIR` | yes | Durable state: `kill_state.json`, `replay.log`, `portfolio.json`, `audit.wal`. Mount a persistent volume; do not delete files individually (see kill switch). |
 | `AEGIS_TLS_CERT`, `AEGIS_TLS_KEY`, `AEGIS_TLS_CLIENT_CA` | yes (TLS) | PEM server certificate, key, and the CA that client certificates must chain to. Client certificates are REQUIRED. |
-| `AEGIS_INSECURE_DEV` | no | Only the literal `1`: plaintext, no authentication. Refused when `AEGIS_ENV` is production or unset. |
+| `AEGIS_ALLOW_FRESH_STATE` | no | Only the literal `1`. In production (or unset `AEGIS_ENV`) an EMPTY state dir is refused at start (it may be a wiped or wrongly mounted volume, which would silently reset every latch, the replay history and the portfolio); set this for the very first start only, then remove it. Outside production an empty dir bootstraps freely. A state dir that already holds files but lacks `kill_state.json`, `portfolio.json` or `replay.log` is never a first boot: Aegis starts at persisted HARD instead. |
+| `AEGIS_INSECURE_DEV` | no | Only the literal `1`: plaintext, no authentication. Refused when `AEGIS_ENV` is production or unset, and requires an explicit loopback `AEGIS_LISTEN_ADDR` (`127.0.0.1:port` / `[::1]:port`); the `0.0.0.0` default does not qualify. The server also refuses to serve plaintext on any non-loopback listener. |
 | `AEGIS_SIGNER` | yes | `dev` (software Ed25519, DEV ONLY, refused in production) or `pkcs11`. |
 | `AEGIS_DEV_SIGNING_SEED_FILE` | no | 64 hex chars; else an ephemeral key per start. |
 | `AEGIS_PKCS11_MODULE`, `AEGIS_PKCS11_TOKEN_LABEL`, `AEGIS_PKCS11_KEY_LABEL`, `AEGIS_PKCS11_PIN_FILE` | yes for `pkcs11` | Module path, token and key labels (EC P-256 private key), file holding the user PIN. The PIN is never logged and not in `Debug` output. Requires a build with `--features pkcs11`. |
-| `AEGIS_LISTEN_ADDR` | no | Default `0.0.0.0:50051`. |
+| `AEGIS_LISTEN_ADDR` | no | Default `0.0.0.0:50051` (mTLS only; see `AEGIS_INSECURE_DEV`). |
 | `AEGIS_MAX_CONCURRENCY` | no | Default 64; excess unary calls fail fast with RESOURCE_EXHAUSTED. |
-| `AEGIS_SUBMIT_TIMEOUT_MS` / `AEGIS_RPC_TIMEOUT_MS` | no | Deadline caps, default 100 / 2000 ms. DEADLINE_EXCEEDED is a reject for the caller. |
+| `AEGIS_SUBMIT_TIMEOUT_MS` / `AEGIS_RPC_TIMEOUT_MS` | no | Deadline caps, default 100 / 2000 ms. DEADLINE_EXCEEDED is a reject for the caller. A `SubmitSignal` whose caller has timed out or disconnected is cancelled: it does not sign, and a reservation it already committed is released (see Known limitations for the residual window). |
 | `RUST_LOG` | no | tracing filter, default `info` (JSON lines). |
 
 The service refuses to start (exit code 2) on any missing/invalid required
@@ -331,9 +332,17 @@ signal; a hold release re-runs the rate limit control.
 
 * Replay / idempotency (C07): `replay.log`, fsynced append-only JSON lines,
   loaded into memory, never evicted for capacity (retention 24 h PROPOSED). A
-  corrupt log starts the service but rejects every signal.
+  corrupt log starts the service but rejects every signal. A MISSING log next
+  to other state files is treated the same way (and latches HARD): dropping the
+  history would let every previously seen signal id be approved again.
 * Portfolio (positions, pending orders, day equity, order-size history):
-  `portfolio.json`, atomic replace. Unreadable => all approvals fail closed.
+  `portfolio.json`, atomic replace. Unreadable => all approvals fail closed. A
+  missing snapshot next to other state files is loss or tampering, not a flat
+  portfolio: start-up latches a persisted HARD. Only an entirely empty state dir
+  bootstraps (in production only with `AEGIS_ALLOW_FRESH_STATE=1`); the empty
+  snapshot and log are written immediately so the next start finds them.
+* Atomic replaces (`kill_state.json`, `portfolio.json`, `replay.log`) fsync the
+  state directory after the rename (on Unix; a no-op on Windows hosts).
 * Holds are in memory (a restart loses them, which is a reject).
 * Audit (`AuditSink`): `TracingSink` + fsynced `audit.wal` JSON lines. Records
   hold identifiers, enum names, thresholds and observed values only; no LLM
@@ -393,6 +402,7 @@ AEGIS_SOFTHSM_KEY=attest-test AEGIS_SOFTHSM_PIN_FILE=/tmp/pin \
   not implemented.
 * Second approver on `ResolveHold` is self-asserted in the request (the message
   has no credential field); only `operator_id` is bound to the certificate.
+  (See Known limitations below.)
 * Unusual-size history (C19) is fed only by approved orders; cold start holds
   every order for a symbol until 30 orders exist.
 * The dev signer key is in process memory; production needs the `pkcs11`
@@ -400,3 +410,34 @@ AEGIS_SOFTHSM_KEY=attest-test AEGIS_SOFTHSM_PIN_FILE=/tmp/pin \
 * `Cargo.lock` is committed (binary crate). `redis`, `dotenvy`, `anyhow`,
   `chrono`, `mockall`, `tokio-signal` were removed from `Cargo.toml` (unused;
   `tokio-signal` was abandoned).
+
+## Known limitations (owner decisions left open)
+
+These are deliberate gaps found in review, NOT fixed in this crate because each
+needs an owner decision or a change outside it:
+
+1. **Second approver on `ResolveHold` is caller-asserted.** The request has no
+   credential field for the second approver, so only `operator_id` is bound to
+   the mTLS identity. Closing this needs a proto change (signed approval) or a
+   second credential path. TODO(owner).
+2. **C11 values notional at the order's bounded limit price, sells included.**
+   For a sell the limit is a floor, so the executed notional can exceed what C11
+   checked. Whether sells should be valued at a worst-case (higher) price, and
+   by how much, is an owner risk decision. TODO(owner).
+3. **No plausibility check on pushed reference data.** `PushReferenceData`
+   validates shape (positive nanos, timestamp) and the producer's role, not
+   that a price is sensible versus the previous value; a wrong but well-formed
+   price moves the C09 collar and the exposure marks. Any bound (max jump per
+   push, cross-check against a second source) is an owner decision. TODO(owner).
+4. **Reservations are released only at attestation expiry (or on an execution
+   report).** There is no explicit cancel path: an approved order that is never
+   sent holds its exposure until `attestation_ttl_ms` elapses. The one case
+   released early is a request abandoned by its caller before the reservation is
+   returned; a caller that leaves in the microseconds after the release check
+   still leaves a reservation until expiry.
+5. **`AEGIS_ALLOW_FRESH_STATE=1` is a standing bypass if left set.** With it
+   set, wiping the whole state dir re-bootstraps without HARD. Remove it after
+   the first start; the compose files under `agent-core/infrastructure` are
+   outside this crate and do not set it (a production first start needs it once;
+   the dev compose needs an explicit loopback `AEGIS_LISTEN_ADDR` and therefore
+   a different way to publish the port).
