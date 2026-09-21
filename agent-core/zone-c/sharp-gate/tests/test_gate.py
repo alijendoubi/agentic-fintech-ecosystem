@@ -34,21 +34,28 @@ from afe_sharp import (
 )
 from afe_sharp.ports import ProposalStore
 
-SQL = Path(__file__).resolve().parents[1] / "sql" / "001_sharp_transitions.sql"
+SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
 GATES = [s for s in PIPELINE if s is not Stage.DRAFT]
+
+
+def _psql(container: str, user: str, sql: str) -> None:
+    cmd = ["docker", "exec", "-i", container, "psql", "-v", "ON_ERROR_STOP=1", "--no-psqlrc"]
+    cmd += ["-U", user, "-d", DB_NAME]
+    done = subprocess.run(cmd, input=sql, capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise RuntimeError(f"sharp migration failed: {done.stderr}")
 
 
 @pytest.fixture(scope="module")
 def pg() -> Iterator[PgInstance]:
+    """Real container initialised by audit-logger's init, then every sharp migration in order:
+    NNN_*.sql as afe_audit_owner, the 9NN_* DDL-guard scripts as the superuser."""
     if not docker_available():
         pytest.skip("Docker not available")
     with postgres_container() as instance:
-        sql = SQL.read_text(encoding="utf-8")
-        cmd = ["docker", "exec", "-i", instance.container, "psql", "-v", "ON_ERROR_STOP=1"]
-        cmd += ["--no-psqlrc", "-U", "afe_audit_owner", "-d", DB_NAME]
-        done = subprocess.run(cmd, input=sql, capture_output=True, text=True, check=False)
-        if done.returncode != 0:
-            raise RuntimeError(f"sharp migration failed: {done.stderr}")
+        for path in sorted(SQL_DIR.glob("*.sql")):
+            user = "postgres" if path.name.startswith("9") else "afe_audit_owner"
+            _psql(instance.container, user, path.read_text(encoding="utf-8"))
         yield instance
 
 
