@@ -144,6 +144,8 @@ def test_app_role_cannot_run_ddl(fresh_pg: PgInstance, sql: str) -> None:
         "DROP TRIGGER audit_events_no_delete ON audit.audit_events",
         "DROP TABLE audit.audit_events CASCADE",
         "DROP SCHEMA audit CASCADE",
+        "ALTER SCHEMA audit RENAME TO audit_old",  # reports the NEW name; must not slip through
+        "CREATE RULE audit_bypass AS ON INSERT TO audit.audit_events DO INSTEAD NOTHING",
         _REPLACE_MUTATION_FN,
         _REPLACE_ROW_DEFECT_FN,
     ],
