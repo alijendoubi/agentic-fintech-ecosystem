@@ -5,17 +5,21 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use aegis::app::{build_app, App};
 use aegis::clock::{Clock, SystemClock};
 use aegis::config::RuntimeConfig;
 use aegis::controls::{RefPrice, RegimeView};
+use aegis::identity::Identities;
 use aegis::money::Nanos;
 use aegis::pb::{self, DecisionStatus, KillSwitchLevel};
+use aegis::server::serve_on;
+use aegis::service::{AegisService, ServiceOptions};
 use aegis::state::portfolio::{FilePortfolioStore, Portfolio, PortfolioStore};
 use aegis::state::StateInit;
-use aegis::testkit::{limits_json, uuid_n, SHARE};
+use aegis::testkit::{limits_json, uuid_n, Rig, RigOptions, SHARE};
 
 /// Session open all week so the wall clock cannot flake the test.
 fn all_week_limits() -> String {
@@ -43,6 +47,7 @@ fn env_with(limits: Option<&str>) -> Env {
     let vars: HashMap<&str, String> = HashMap::from([
         ("AEGIS_ENV", "test".to_owned()),
         ("AEGIS_INSECURE_DEV", "1".to_owned()),
+        ("AEGIS_LISTEN_ADDR", "127.0.0.1:0".to_owned()),
         ("AEGIS_SIGNER", "dev".to_owned()),
         (
             "AEGIS_LIMITS_FILE",
@@ -165,6 +170,59 @@ fn clean_restart_of_a_bootstrapped_state_dir_stays_normal() {
     drop(build_app(&e.cfg).unwrap());
     let again = build_app(&e.cfg).unwrap();
     assert_eq!(level(&again), Some(KillSwitchLevel::KillLevelNormal));
+}
+
+fn plaintext_service() -> AegisService {
+    let rig = Rig::build(RigOptions::default());
+    let ids = Identities::from_bytes(IDENTITIES.as_bytes()).unwrap();
+    AegisService::new(
+        rig.engine.clone(),
+        Arc::new(ids),
+        ServiceOptions {
+            insecure_dev: true,
+            max_concurrency: 4,
+            max_watchers: 2,
+            submit_timeout: Duration::from_secs(1),
+            rpc_timeout: Duration::from_secs(1),
+        },
+    )
+}
+
+#[tokio::test]
+async fn plaintext_serving_refuses_a_non_loopback_listener() {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let served = tokio::time::timeout(
+        Duration::from_secs(2),
+        serve_on(
+            listener,
+            None,
+            plaintext_service(),
+            Duration::from_secs(1),
+            std::future::pending::<()>(),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(served, Ok(Err(_))),
+        "a plaintext server bound off-loopback must refuse to serve, got {served:?}"
+    );
+}
+
+#[tokio::test]
+async fn plaintext_serving_on_loopback_still_serves() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let served = tokio::time::timeout(
+        Duration::from_millis(500),
+        serve_on(
+            listener,
+            None,
+            plaintext_service(),
+            Duration::from_secs(1),
+            std::future::pending::<()>(),
+        ),
+    )
+    .await;
+    assert!(served.is_err(), "loopback plaintext keeps serving");
 }
 
 /// Production-shaped config (mTLS + pkcs11 signer paths; nothing is loaded
