@@ -66,6 +66,8 @@ class ExecutionMotor:
         self._router = router
         self._kill = kill_switch
         self._verifier: AttestationVerifier = verifier or DenyAllVerifier()
+        if config.is_production and getattr(self._verifier, "accepts_dev_keys", False) is True:
+            raise ConfigError("a verifier that accepts dev signing keys is forbidden in production")
         self._idem: IdempotencyStore = idempotency or InMemoryIdempotencyStore()
         self._stats = venue_stats
         self._clock = clock_ns
