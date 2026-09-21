@@ -32,7 +32,7 @@ use crate::config::Config;
 use crate::error::{Result, SensoryError};
 use crate::health::Health;
 use crate::metrics::Metrics;
-use crate::normalizer::{MarketSnapshot, Normalizer, QuoteInput, TradeInput};
+use crate::normalizer::{MarketSnapshot, Normalizer, QuoteInput, Reject, TradeInput};
 use crate::polygon::{
     classify_handshake, parse_frame, parse_item, subscription_params, Handshake, PolyMsg,
 };
@@ -342,6 +342,10 @@ impl Ingestor {
             recv_ts_ns: recv_ns,
         };
         if let Err(reason) = self.normalizer.update_quote(ticker, input) {
+            if reason == Reject::OutOfOrder {
+                Metrics::inc(&self.metrics.out_of_order_quotes);
+                debug!(ticker, exchange_ts_ns, "out-of-order quote dropped");
+            }
             return self.reject(&reason.to_string());
         }
         Metrics::inc(&self.metrics.quotes);

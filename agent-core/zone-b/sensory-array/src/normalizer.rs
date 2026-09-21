@@ -53,6 +53,8 @@ pub enum Reject {
     InvalidTimestamp,
     #[error("symbol table full")]
     SymbolLimit,
+    #[error("out-of-order quote (exchange timestamp older than the last accepted)")]
+    OutOfOrder,
 }
 
 /// A quote update. `recv_ts_ns` is the local wall-clock receive time.
@@ -176,6 +178,12 @@ impl Normalizer {
         validate_quote(&q)?;
         let window = self.window;
         let state = self.state_mut(symbol)?;
+        // Monotonic guard on event time: an older quote must neither overwrite
+        // newer state nor earn a fresh `recv_ts_ns` (which would pass the L2
+        // TTL). Equal timestamps are accepted (multiple updates per tick).
+        if state.has_quote && q.exchange_ts_ns < state.exchange_ts_ns {
+            return Err(Reject::OutOfOrder);
+        }
         let mid = (q.bid_price + q.ask_price) / 2.0;
 
         state.scored = state.mid_prices.len() >= MIN_WARMUP_QUOTES;
@@ -570,6 +578,41 @@ mod tests {
             n.update_quote("A", quote(10.0, 10.0, T0)).is_ok(),
             "locked is allowed"
         );
+    }
+
+    /// An older, out-of-order quote must not overwrite newer state, and its
+    /// (fresh) receive time must not make it look fresh.
+    #[test]
+    fn out_of_order_quote_is_rejected_and_leaves_state_untouched() {
+        let mut n = Normalizer::new(20, 30);
+        let newer = quote(150.0, 150.05, T0 + 10 * NS_PER_SEC);
+        n.update_quote("AAPL", newer).expect("newer");
+        let before = n.snapshot("AAPL", T0, "U".into(), 0.0).expect("snap");
+
+        let mut older = quote(90.0, 90.05, T0 + 5 * NS_PER_SEC);
+        older.recv_ts_ns = T0 + 60 * NS_PER_SEC; // late arrival, fresh recv time
+        assert_eq!(n.update_quote("AAPL", older), Err(Reject::OutOfOrder));
+
+        let after = n.snapshot("AAPL", T0, "U".into(), 0.0).expect("snap");
+        assert_eq!(after.exchange_ts_ns, before.exchange_ts_ns);
+        assert_eq!(after.l2_recv_ts_ns, before.l2_recv_ts_ns);
+        assert_eq!(after.bid_price, before.bid_price);
+        assert_eq!(after.ask_price, before.ask_price);
+    }
+
+    #[test]
+    fn equal_timestamp_quote_is_still_accepted() {
+        let mut n = Normalizer::new(20, 30);
+        n.update_quote("AAPL", quote(150.0, 150.05, T0)).expect("a");
+        assert!(n.update_quote("AAPL", quote(150.1, 150.15, T0)).is_ok());
+    }
+
+    #[test]
+    fn out_of_order_guard_is_per_symbol() {
+        let mut n = Normalizer::new(20, 30);
+        n.update_quote("AAPL", quote(150.0, 150.05, T0 + NS_PER_SEC))
+            .expect("aapl");
+        assert!(n.update_quote("MSFT", quote(300.0, 300.05, T0)).is_ok());
     }
 
     #[test]

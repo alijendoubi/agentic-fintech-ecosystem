@@ -12,6 +12,8 @@ pub struct Metrics {
     pub quotes: AtomicU64,
     pub trades: AtomicU64,
     pub rejected_messages: AtomicU64,
+    /// Quotes dropped because their exchange timestamp was older than the last accepted one.
+    pub out_of_order_quotes: AtomicU64,
     pub snapshots: AtomicU64,
     pub stale_snapshots: AtomicU64,
     pub reconnects: AtomicU64,
@@ -22,6 +24,8 @@ pub struct Metrics {
     pub redis_errors: AtomicU64,
     pub regime_updates: AtomicU64,
     pub regime_rejected: AtomicU64,
+    /// Regime labels dropped because they were older than the cached label.
+    pub regime_out_of_order: AtomicU64,
 }
 
 impl Metrics {
@@ -46,6 +50,7 @@ impl Metrics {
             quotes = g(&self.quotes),
             trades = g(&self.trades),
             rejected_messages = g(&self.rejected_messages),
+            out_of_order_quotes = g(&self.out_of_order_quotes),
             snapshots = g(&self.snapshots),
             stale_snapshots = g(&self.stale_snapshots),
             reconnects = g(&self.reconnects),
@@ -58,6 +63,7 @@ impl Metrics {
             redis_dropped,
             regime_updates = g(&self.regime_updates),
             regime_rejected = g(&self.regime_rejected),
+            regime_out_of_order = g(&self.regime_out_of_order),
             "metrics"
         );
     }
