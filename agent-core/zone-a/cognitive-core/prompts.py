@@ -151,6 +151,25 @@ Debate history:
 )
 
 
+def precedent_section(status: str, precedents: tuple[str, ...]) -> str:
+    """Prompt block for retrieved precedents; "" when no memory is configured.
+
+    "unavailable" must never read as "no precedent": the model is told the lookup failed.
+    """
+    if status == "unavailable":
+        return (
+            "\n\nPrecedent memory: UNAVAILABLE (lookup failed). Do NOT assume there is "
+            "no precedent; treat this as missing information and lower confidence accordingly."
+        )
+    if status != "ok":
+        return ""
+    if not precedents:
+        return "\n\nPrecedent memory: lookup succeeded, no similar past debates found."
+    body = wrap_untrusted("memory", "\n".join(f"- {p}" for p in precedents))
+    header = "\n\nSimilar past debates and post-trade reflections (most similar first):\n"
+    return header + body
+
+
 def wrap_untrusted(source: str, text: str) -> str:
     """Wrap model-produced `text` in delimiters, neutralising any embedded delimiter."""
     cleaned = _DELIMITER.sub("[delimiter-removed", text)

@@ -7,14 +7,11 @@ that does not validate against the model raises `ModelOutputError`.
 from __future__ import annotations
 
 import re
-from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 MAX_RAW_CHARS = 100_000
 _FENCE = re.compile(r"\A```(?:json|JSON)?[ \t]*\r?\n(?P<body>.*?)\r?\n?```\Z", re.DOTALL)
-
-ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class ModelOutputError(ValueError):
@@ -28,7 +25,7 @@ def strip_json_fence(raw: str) -> str:
     return match.group("body").strip() if match else text
 
 
-def parse_json_model(raw: str, model: type[ModelT]) -> ModelT:
+def parse_json_model[ModelT: BaseModel](raw: str, model: type[ModelT]) -> ModelT:
     """Validate `raw` as JSON for `model`. Raises `ModelOutputError` on any deviation."""
     if not isinstance(raw, str):
         raise ModelOutputError(f"expected str reply, got {type(raw).__name__}")

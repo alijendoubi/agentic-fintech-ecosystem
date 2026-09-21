@@ -126,6 +126,7 @@ async def _red_step(
         blue_thesis=prompts.wrap_untrusted("blue", state.blue_thesis.model_dump_json()),
         regime=state.regime.value,
     )
+    prompt += prompts.precedent_section(state.precedents_status, state.precedents)
     try:
         raw = await _call(
             client, prompt, max_tokens=settings.blue_red_max_tokens,
@@ -163,6 +164,7 @@ async def _judge_step(
         regime=state.regime.value,
         regime_confidence=state.regime_confidence,
     )
+    prompt += prompts.precedent_section(state.precedents_status, state.precedents)
     try:
         raw = await _call(
             client, prompt, max_tokens=settings.judge_max_tokens,
