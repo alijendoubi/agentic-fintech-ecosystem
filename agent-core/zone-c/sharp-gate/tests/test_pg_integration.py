@@ -135,7 +135,8 @@ def test_every_sharp_trigger_is_enabled_always(pg: PgInstance) -> None:  # noqa:
 def test_owner_cannot_weaken_the_sharp_schema(pg: PgInstance, sql: str) -> None:  # noqa: F811
     """The DDL guard extends to schema 'sharp': the owner role can no longer disable, replace or
     drop the protections (only a superuser, deliberately, can)."""
-    with pytest.raises(psycopg2.Error, match="sharp schema is DDL-locked"):
+    # ALTER SCHEMA is refused by whichever guard fires first (audit's or sharp's): both lock it.
+    with pytest.raises(psycopg2.Error, match=r"(sharp|audit) schema is DDL-locked"):
         _exec(pg.owner_dsn, sql)
 
 
