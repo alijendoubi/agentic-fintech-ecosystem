@@ -6,6 +6,7 @@ import json
 
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
+
 from regime_detector.labels import RegimeLabel
 from regime_detector.publisher import RegimeMessage, RegimePublisher
 

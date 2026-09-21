@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+
 from regime_detector import healthcheck, main
 from regime_detector.config import Settings
 

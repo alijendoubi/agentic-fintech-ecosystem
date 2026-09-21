@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from synthetic import make_columns
+
 from regime_detector.features import extract_features
 from regime_detector.labels import STATE_REGIMES, RegimeLabel
 from regime_detector.model import (
@@ -17,7 +19,6 @@ from regime_detector.model import (
     unknown,
     validate_params,
 )
-from synthetic import make_columns
 
 
 @pytest.fixture(scope="module")

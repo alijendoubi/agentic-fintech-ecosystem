@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+
 from execution_motor.config import MotorConfig
 from execution_motor.errors import ConfigError
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+
 from regime_detector.features import N_FEATURES, Scaler, extract_features
 
 Column = list[float | None]

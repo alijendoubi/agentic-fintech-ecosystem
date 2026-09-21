@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+
 from execution_motor.models import Side
 from execution_motor.sor import RouterConfig, SmartOrderRouter, UnscoredPolicy
 from execution_motor.toxicity import ToxicityParams, VenueObservation

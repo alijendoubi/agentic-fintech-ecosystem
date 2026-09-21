@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 import pytest
+
 from execution_motor.alpaca import AlpacaCredentials, AlpacaPaperBroker
 from execution_motor.broker import BrokerOrderRequest
 from execution_motor.errors import (

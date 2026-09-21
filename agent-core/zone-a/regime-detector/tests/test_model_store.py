@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from synthetic import make_columns
+
 from regime_detector.features import extract_features
 from regime_detector.model import ModelError, TrainedModel, predict_regime, train_model
 from regime_detector.model_store import (
@@ -17,7 +19,6 @@ from regime_detector.model_store import (
     deserialize_model,
     serialize_model,
 )
-from synthetic import make_columns
 
 KEY = b"k" * 32
 

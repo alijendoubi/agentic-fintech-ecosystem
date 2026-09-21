@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from synthetic import make_columns
+
 from regime_detector.config import Settings
 from regime_detector.features import extract_features
 from regime_detector.labels import STATE_REGIMES, RegimeLabel
@@ -18,7 +20,6 @@ from regime_detector.model_store import ModelStore
 from regime_detector.publisher import RegimePublisher
 from regime_detector.questdb_client import BarRows
 from regime_detector.service import RegimeService
-from synthetic import make_columns
 
 KEY = "k" * 32
 NOW = 1_800_000_000.0

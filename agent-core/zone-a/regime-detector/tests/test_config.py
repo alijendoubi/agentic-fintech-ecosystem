@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from regime_detector.config import ConfigError, Settings, is_valid_symbol
 
 

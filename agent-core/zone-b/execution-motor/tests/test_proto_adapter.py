@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
 from execution_motor.attestation import evaluate_attestation
 from execution_motor.errors import OrderValidationError
 from execution_motor.models import ExecAlgo, OrderType, Side
