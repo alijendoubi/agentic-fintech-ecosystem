@@ -11,10 +11,11 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use super::StateError;
+use super::{sync_dir, StateError, StateInit};
 use crate::controls::{ExposureView, SizeHistory};
 use crate::money::{mul_up, Nanos};
 
@@ -350,17 +351,22 @@ struct OnDisk {
 }
 
 /// Atomic JSON snapshot in the state dir. A missing file is an empty portfolio
-/// only if the file never existed; a corrupt file is an ERROR (the engine then
-/// has no exposure data and rejects everything).
+/// only on an explicit one-shot [`StateInit::Bootstrap`] (first boot of an
+/// empty state dir; the empty snapshot is persisted immediately so the next
+/// start finds it). Otherwise a missing file is loss or tampering and a corrupt
+/// file is likewise an ERROR (the engine then has no exposure data and rejects
+/// everything): assuming a flat portfolio would fail open on exposure limits.
 #[derive(Debug)]
 pub struct FilePortfolioStore {
     dir: PathBuf,
+    bootstrap_pending: AtomicBool,
 }
 
 impl FilePortfolioStore {
-    pub fn new(dir: &Path) -> FilePortfolioStore {
+    pub fn new(dir: &Path, init: StateInit) -> FilePortfolioStore {
         FilePortfolioStore {
             dir: dir.to_path_buf(),
+            bootstrap_pending: AtomicBool::new(init == StateInit::Bootstrap),
         }
     }
 }
@@ -377,7 +383,19 @@ impl PortfolioStore for FilePortfolioStore {
                 }
                 Ok(d.portfolio)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Portfolio::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if self.bootstrap_pending.swap(false, Ordering::SeqCst) {
+                    let flat = Portfolio::default();
+                    self.save(&flat)?;
+                    Ok(flat)
+                } else {
+                    Err(StateError::Unavailable(
+                        "portfolio.json is missing from an existing state dir: refusing to \
+                         assume a flat portfolio"
+                            .into(),
+                    ))
+                }
+            }
             Err(e) => Err(StateError::Unavailable(format!("read portfolio: {e}"))),
         }
     }
@@ -393,7 +411,8 @@ impl PortfolioStore for FilePortfolioStore {
         let mut f = fs::File::create(&tmp).map_err(|e| err("create", e))?;
         f.write_all(&body).map_err(|e| err("write", e))?;
         f.sync_all().map_err(|e| err("fsync", e))?;
-        fs::rename(&tmp, self.dir.join(STATE_FILE)).map_err(|e| err("rename", e))
+        fs::rename(&tmp, self.dir.join(STATE_FILE)).map_err(|e| err("rename", e))?;
+        sync_dir(&self.dir).map_err(|e| err("fsync dir", e))
     }
 }
 

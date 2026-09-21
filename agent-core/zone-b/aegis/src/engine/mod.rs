@@ -58,16 +58,18 @@ pub(crate) struct Core {
 pub struct Engine {
     pub(crate) deps: EngineDeps,
     core: Mutex<Core>,
+    /// Why the portfolio could not be loaded at start-up, if it could not.
+    portfolio_error: Option<String>,
 }
 
 impl Engine {
     pub fn new(deps: EngineDeps) -> Engine {
         let now = deps.clock.now_ns().unwrap_or(0);
-        let portfolio = match deps.portfolio_store.load() {
-            Ok(p) => Some(p),
+        let (portfolio, portfolio_error) = match deps.portfolio_store.load() {
+            Ok(p) => (Some(p), None),
             Err(e) => {
                 tracing::error!(error = %e, "portfolio state unreadable; all approvals will fail closed");
-                None
+                (None, Some(e.to_string()))
             }
         };
         let cfg = &deps.limits.config;
@@ -79,7 +81,13 @@ impl Engine {
         Engine {
             deps,
             core: Mutex::new(core),
+            portfolio_error,
         }
+    }
+
+    /// Why the portfolio was unavailable at start-up (`None` = it loaded).
+    pub fn portfolio_load_error(&self) -> Option<String> {
+        self.portfolio_error.clone()
     }
 
     /// The kill-switch controller this engine consults.

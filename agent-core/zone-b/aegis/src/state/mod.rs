@@ -22,3 +22,30 @@ pub enum StateError {
     #[error("state store unavailable: {0}")]
     Unavailable(String),
 }
+
+/// Whether a state file that is absent may be created from scratch.
+///
+/// A missing file next to other state is loss or tampering, never a first
+/// boot: only [`StateInit::Bootstrap`] (decided once at start-up, when the
+/// state dir was entirely empty) allows an absent file to be initialised empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateInit {
+    /// First boot of an empty state dir: create the file.
+    Bootstrap,
+    /// The state dir has existed before: a missing file is an error.
+    Existing,
+}
+
+/// fsync a directory so a rename inside it survives a crash. A no-op where
+/// directories cannot be opened for sync (non-unix).
+pub(crate) fn sync_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}

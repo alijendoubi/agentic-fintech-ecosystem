@@ -175,7 +175,7 @@ fn size_samples_are_bounded() {
 #[test]
 fn file_store_round_trips_and_corruption_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
-    let s = FilePortfolioStore::new(dir.path());
+    let s = FilePortfolioStore::new(dir.path(), StateInit::Bootstrap);
     assert_eq!(s.load().unwrap(), Portfolio::default());
     let mut p = Portfolio::default();
     p.positions.insert("AAPL".into(), 5);
@@ -183,6 +183,30 @@ fn file_store_round_trips_and_corruption_is_an_error() {
     s.save(&p).unwrap();
     assert_eq!(s.load().unwrap(), p);
     std::fs::write(dir.path().join(STATE_FILE), b"nope").unwrap();
+    assert!(s.load().is_err());
+}
+
+#[test]
+fn missing_snapshot_in_an_existing_state_dir_is_an_error_not_a_flat_portfolio() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("kill_state.json"), b"{}").unwrap();
+    let s = FilePortfolioStore::new(dir.path(), StateInit::Existing);
+    assert!(s.load().is_err());
+    assert!(s.load().is_err(), "stays an error on every load");
+    assert!(!dir.path().join(STATE_FILE).exists(), "nothing is created");
+}
+
+#[test]
+fn bootstrap_is_one_shot_and_persists_the_empty_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = FilePortfolioStore::new(dir.path(), StateInit::Bootstrap);
+    assert_eq!(s.load().unwrap(), Portfolio::default());
+    assert!(dir.path().join(STATE_FILE).exists());
+    // the next start finds the file
+    let next = FilePortfolioStore::new(dir.path(), StateInit::Existing);
+    assert_eq!(next.load().unwrap(), Portfolio::default());
+    // deleting it under a running process does not re-arm the bootstrap
+    std::fs::remove_file(dir.path().join(STATE_FILE)).unwrap();
     assert!(s.load().is_err());
 }
 

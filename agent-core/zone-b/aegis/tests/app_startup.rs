@@ -14,6 +14,7 @@ use aegis::controls::{RefPrice, RegimeView};
 use aegis::money::Nanos;
 use aegis::pb::{self, DecisionStatus, KillSwitchLevel};
 use aegis::state::portfolio::{FilePortfolioStore, Portfolio, PortfolioStore};
+use aegis::state::StateInit;
 use aegis::testkit::{limits_json, uuid_n, SHARE};
 
 /// Session open all week so the wall clock cannot flake the test.
@@ -132,6 +133,40 @@ fn deleted_or_corrupt_kill_state_starts_at_hard() {
     );
 }
 
+#[test]
+fn a_lost_portfolio_or_replay_log_next_to_other_state_latches_hard() {
+    for lost in ["portfolio.json", "replay.log"] {
+        let e = env_with(Some(&all_week_limits()));
+        drop(build_app(&e.cfg).unwrap());
+        for f in ["kill_state.json", "portfolio.json", "replay.log"] {
+            assert!(e.state.join(f).exists(), "first boot must create {f}");
+        }
+        std::fs::remove_file(e.state.join(lost)).unwrap();
+        let app = build_app(&e.cfg).unwrap();
+        assert_eq!(
+            level(&app),
+            Some(KillSwitchLevel::KillLevelHard),
+            "{lost} missing"
+        );
+        let why = app.engine.kill().state().latches[0].reason.clone();
+        assert!(why.contains("start-up") && why.contains("missing"), "{why}");
+        drop(app);
+        // the HARD latch was persisted: a restart with the file restored stays HARD
+        assert_eq!(
+            level(&build_app(&e.cfg).unwrap()),
+            Some(KillSwitchLevel::KillLevelHard)
+        );
+    }
+}
+
+#[test]
+fn clean_restart_of_a_bootstrapped_state_dir_stays_normal() {
+    let e = env_with(Some(&all_week_limits()));
+    drop(build_app(&e.cfg).unwrap());
+    let again = build_app(&e.cfg).unwrap();
+    assert_eq!(level(&again), Some(KillSwitchLevel::KillLevelNormal));
+}
+
 fn seed_portfolio(dir: &Path) {
     let now = SystemClock.now_ns().unwrap();
     let mut p = Portfolio::default();
@@ -139,7 +174,9 @@ fn seed_portfolio(dir: &Path) {
         p.record_size("AAPL", Nanos::new(100 * SHARE), now - 3_600_000_000_000 + i);
     }
     p.record_equity(1_000_000 * SHARE, now);
-    FilePortfolioStore::new(dir).save(&p).unwrap();
+    FilePortfolioStore::new(dir, StateInit::Existing)
+        .save(&p)
+        .unwrap();
 }
 
 fn signal(n: u64, now: i64) -> pb::TradeSignal {
