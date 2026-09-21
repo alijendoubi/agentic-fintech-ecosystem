@@ -144,6 +144,20 @@ def apply_recall(state: DebateState, recall: RecallResult) -> DebateState:
     )
 
 
+def is_recordable(state: DebateState | None) -> bool:
+    """True only for a debate that really happened: degraded runs must not become precedents.
+
+    A forced Blue/Red or a defaulted Judge is an infrastructure failure, not a market
+    judgement; recording its placeholder summary would poison later recalls.
+    """
+    if state is None or state.blue_thesis is None or state.red_challenge is None:
+        return False
+    verdict = state.judge_verdict
+    if verdict is None or verdict.defaulted_abstain:
+        return False
+    return not (state.blue_thesis.forced_completion or state.red_challenge.forced_completion)
+
+
 def debate_record_args(signal: TradeSignal) -> dict[str, str | int]:
     """Keyword arguments for `ReflectionWriter.write_debate` from a finished signal."""
     outcome = "abstain" if signal.status.value == "SIGNAL_ABSTAIN" else "pending"

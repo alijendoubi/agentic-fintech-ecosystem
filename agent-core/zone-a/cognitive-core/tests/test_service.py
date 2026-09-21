@@ -64,9 +64,22 @@ async def test_emit_abstain_sends_the_abstain_signal_too() -> None:
 
 @pytest.mark.asyncio
 async def test_bad_judge_reply_degrades_to_abstain_not_a_signal() -> None:
-    h = make_harness(judge_reply="not json")
+    writer = FakeWriter()
+    h = make_harness(judge_reply="not json", reflections=writer)
     assert await _handle(h) is CycleOutcome.ABSTAINED
     assert h.sink.sent == []
+    assert writer.debates == []  # a degraded debate is an outage, not a precedent
+
+
+@pytest.mark.asyncio
+async def test_forced_blue_debate_is_not_recorded() -> None:
+    writer = FakeWriter()
+    h = make_harness(
+        reflections=writer,
+        client_overrides={"blue": ScriptedClient(RuntimeError("provider down"), "blue")},
+    )
+    assert await _handle(h) is CycleOutcome.ABSTAINED
+    assert writer.debates == []
 
 
 # -- halt ---------------------------------------------------------------------------

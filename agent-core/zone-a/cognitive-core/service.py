@@ -9,7 +9,7 @@ Per message (`CognitiveRunner.handle_message`), every step fails closed and none
 5. debate graph under its deadline  -> any failure is already an ABSTAIN signal
 6. halted again                     -> a halt raised mid-debate discards the result
 7. sink.send (at-most-once)         -> failure is counted, never retried
-8. debate outcome written to memory (best effort, after the decision)
+8. real (non-degraded) debate outcomes written to memory (best effort, after the decision)
 
 Only actionable signals reach the sink unless `emit_abstain` is set. `run` consumes a
 `ContextSource` through a bounded drop-oldest queue, so a slow debate can never build up a
@@ -29,13 +29,14 @@ import structlog
 
 from .config import CognitiveSettings
 from .context import ContextError, DebateInput, parse_snapshot
-from .graph import run_debate
+from .graph import run_debate_with_state
 from .halt import HaltGate
 from .health import HealthState
 from .memory import (
     PrecedentProvider,
     ReflectionWriter,
     apply_recall,
+    is_recordable,
     recall_precedents,
     write_debate_record,
 )
@@ -134,7 +135,7 @@ class CognitiveRunner:
         state = await self._initial_state(debate_input)
         if state is None:
             return CycleOutcome.SKIPPED_MEMORY
-        signal = await run_debate(
+        signal, final_state = await run_debate_with_state(
             self._graph,
             state,
             settings=self._cognitive,
@@ -143,7 +144,7 @@ class CognitiveRunner:
         if self._halted():
             log.warning("signal_discarded_halted", signal_id=signal.signal_id, symbol=symbol)
             return CycleOutcome.HALTED
-        return await self._deliver(signal)
+        return await self._deliver(signal, recordable=is_recordable(final_state))
 
     # -- steps -----------------------------------------------------------------------
 
@@ -183,7 +184,7 @@ class CognitiveRunner:
             return None
         return apply_recall(state, recall)
 
-    async def _deliver(self, signal: TradeSignal) -> CycleOutcome:
+    async def _deliver(self, signal: TradeSignal, *, recordable: bool) -> CycleOutcome:
         actionable = signal.status != SignalStatus.SIGNAL_ABSTAIN
         if actionable or self._settings.emit_abstain:
             try:
@@ -202,7 +203,8 @@ class CognitiveRunner:
                 status=signal.status.value,
                 downstream=receipt.detail,
             )
-        await write_debate_record(self._reflections, signal)
+        if recordable:
+            await write_debate_record(self._reflections, signal)
         return CycleOutcome.EMITTED if actionable else CycleOutcome.ABSTAINED
 
     # -- the loop --------------------------------------------------------------------

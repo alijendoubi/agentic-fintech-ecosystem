@@ -264,6 +264,20 @@ async def run_debate(
     quantity: float = 0.0,
 ) -> TradeSignal:
     """Run the graph under a hard overall deadline; any failure yields an ABSTAIN signal."""
+    signal, _ = await run_debate_with_state(
+        graph, initial_state, settings=settings, quantity=quantity
+    )
+    return signal
+
+
+async def run_debate_with_state(
+    graph: Any,
+    initial_state: DebateState,
+    *,
+    settings: CognitiveSettings,
+    quantity: float = 0.0,
+) -> tuple[TradeSignal, DebateState | None]:
+    """Like `run_debate`, also returning the final state (None if the graph itself failed)."""
     try:
         result = await asyncio.wait_for(
             graph.ainvoke(initial_state), timeout=settings.overall_deadline_s
@@ -273,11 +287,12 @@ async def run_debate(
         raise
     except Exception as exc:  # noqa: BLE001 - fail closed on every graph failure
         _log_failure("graph", exc, initial_state)
-        return abstain_signal(
+        aborted = abstain_signal(
             initial_state, settings=settings,
             summary=f"debate aborted ({type(exc).__name__}) - abstain",
         )
-    return to_trade_signal(final, settings=settings, quantity=quantity)
+        return aborted, None
+    return to_trade_signal(final, settings=settings, quantity=quantity), final
 
 
-__all__ = ["build_debate_graph", "run_debate", "to_trade_signal"]
+__all__ = ["build_debate_graph", "run_debate", "run_debate_with_state", "to_trade_signal"]
