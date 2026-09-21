@@ -238,23 +238,21 @@ def test_replayed_order_is_duplicate_and_broker_called_once() -> None:
     assert len(broker.submitted) == 1
 
 
-def test_relabelled_order_id_with_same_signed_signal_is_duplicate() -> None:
+def test_relabelled_order_id_is_refused_order_id_must_equal_signal_id() -> None:
     broker = FakeBroker()
     motor = make_motor(broker)
     run(motor)
-    relabelled = attest(make_order(order_id="another-order-id"))  # same signal_id => same signature
-    assert run(motor, relabelled).reject_reason is RejectReason.DUPLICATE_ORDER
+    relabelled = attest(make_order(order_id="another-order-id", signal_id=make_order().signal_id))
+    assert run(motor, relabelled).reject_reason is RejectReason.ORDER_ID_MISMATCH
     assert len(broker.submitted) == 1
 
 
-def test_same_order_id_with_new_signal_is_duplicate() -> None:
+def test_order_id_mismatch_is_refused_even_for_a_fresh_signal() -> None:
     broker = FakeBroker()
-    motor = make_motor(broker)
-    run(motor)
-    assert (
-        run(motor, attest(make_order(signal_id="sig-2"))).reject_reason
-        is RejectReason.DUPLICATE_ORDER
-    )
+    order = make_order(order_id="order-x", signal_id="signal-y")
+    report = run(make_motor(broker), attest(order))
+    assert report.reject_reason is RejectReason.ORDER_ID_MISMATCH
+    assert broker.submitted == []
 
 
 def test_invalid_attestation_does_not_burn_idempotency_keys() -> None:
@@ -293,15 +291,15 @@ def test_market_order_capped_using_reference_price() -> None:
 
 def test_session_cap_accumulates_and_broker_reject_releases_capacity() -> None:
     motor = make_motor(order_cap="20000", session_cap="30000")
-    a = attest(make_order(order_id="a", signal_id="s-a", quantity=D("100"), limit_price=D("190")))
-    b = attest(make_order(order_id="b", signal_id="s-b", quantity=D("100"), limit_price=D("190")))
+    a = attest(make_order(order_id="a", quantity=D("100"), limit_price=D("190")))
+    b = attest(make_order(order_id="b", quantity=D("100"), limit_price=D("190")))
     assert run(motor, a).status is ExecutionStatus.FILLED  # 19,000 reserved
     assert run(motor, b).reject_reason is RejectReason.SESSION_NOTIONAL_CAP_EXCEEDED
 
     rejecting = FakeBroker(outcome=BrokerRejectedError("nope", http_status=403))
     motor2 = make_motor(rejecting, order_cap="20000", session_cap="20000")
-    c = attest(make_order(order_id="c", signal_id="s-c", quantity=D("100"), limit_price=D("190")))
-    d = attest(make_order(order_id="d", signal_id="s-d", quantity=D("100"), limit_price=D("190")))
+    c = attest(make_order(order_id="c", quantity=D("100"), limit_price=D("190")))
+    d = attest(make_order(order_id="d", quantity=D("100"), limit_price=D("190")))
     assert run(motor2, c).reject_reason is RejectReason.BROKER_REJECTED
     rejecting.outcome = None
     assert run(motor2, d).status is ExecutionStatus.FILLED  # capacity was released
@@ -339,7 +337,7 @@ def test_halt_takes_effect_between_orders() -> None:
     )
     assert run(motor).status is ExecutionStatus.FILLED
     kill.halt("operator stop")
-    other = attest(make_order(order_id="o2", signal_id="s2"))
+    other = attest(make_order(order_id="o2"))
     assert run(motor, other).reject_reason is RejectReason.HALTED
     assert len(broker.submitted) == 1
 
@@ -384,10 +382,7 @@ def test_unexpected_broker_exception_is_unknown_and_halts() -> None:
     motor = make_motor(broker)
     report = run(motor)
     assert report.status is ExecutionStatus.UNKNOWN
-    assert (
-        run(motor, attest(make_order(order_id="o2", signal_id="s2"))).reject_reason
-        is RejectReason.HALTED
-    )
+    assert run(motor, attest(make_order(order_id="o2"))).reject_reason is RejectReason.HALTED
 
 
 def test_unmapped_broker_status_is_unknown_and_halts() -> None:
@@ -407,7 +402,7 @@ def test_broker_rejected_status_maps_to_rejected() -> None:
 def test_definite_broker_reject_does_not_halt() -> None:
     motor = make_motor(FakeBroker(outcome=BrokerRejectedError("insufficient", http_status=403)))
     assert run(motor).reject_reason is RejectReason.BROKER_REJECTED
-    other = attest(make_order(order_id="o2", signal_id="s2"))
+    other = attest(make_order(order_id="o2"))
     assert (
         run(motor, other).reject_reason is RejectReason.BROKER_REJECTED
     )  # still trading, not halted
@@ -422,10 +417,7 @@ def test_internal_error_before_submit_halts_and_rejects() -> None:
     report = run(motor)
     assert report.reject_reason is RejectReason.INTERNAL_ERROR
     assert broker.submitted == []
-    assert (
-        run(motor, attest(make_order(order_id="o2", signal_id="s2"))).reject_reason
-        is RejectReason.HALTED
-    )
+    assert run(motor, attest(make_order(order_id="o2"))).reject_reason is RejectReason.HALTED
 
 
 # ------------------------------------------------------------------ algo / SOR

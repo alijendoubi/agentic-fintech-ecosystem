@@ -127,6 +127,8 @@ class ExecutionMotor:
         order = attested.order
         if self._kill.is_halted():
             return self._rejected(order, RejectReason.HALTED, self._kill.reason, received, ref)
+        if order.order_id != order.signal_id:  # only signal_id is signed: fail closed
+            return self._rejected(order, RejectReason.ORDER_ID_MISMATCH, "", received, ref)
         denial = evaluate_attestation(self._verifier, attested)
         if denial is not None:
             return self._rejected(order, denial, "", received, ref)

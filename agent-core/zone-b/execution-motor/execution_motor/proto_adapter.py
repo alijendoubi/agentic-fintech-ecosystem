@@ -113,6 +113,10 @@ def _check_consistency(order: Any, attestation: Any) -> None:
         raise OrderValidationError("OrderRequest.status must be ORDER_PENDING on ingress")
     if attestation.canonical_version != CANONICAL_VERSION:
         raise OrderValidationError("unsupported attestation canonical_version")
+    # The text binds signal_id, not order_id: Aegis sets them equal, so the broker's
+    # idempotency key is covered by the signature. Anything else is unauthenticated.
+    if order.order_id != order.signal_id:
+        raise OrderValidationError("order_id must equal signal_id")
     # AegisDecision.order mirrors the attestation; any disagreement means the pair is not
     # what Aegis produced.
     if (
