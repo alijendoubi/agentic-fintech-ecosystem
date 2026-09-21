@@ -50,7 +50,7 @@ def test_notional_limit_order_uses_limit_price() -> None:
     assert compute_notional(order, None) == Decimal("1905.00")
 
 
-def test_notional_market_order_needs_reference_price() -> None:
+def test_notional_market_order_needs_a_trusted_price() -> None:
     order = make_order(order_type=OrderType.MARKET, limit_price=Decimal("0"))
     assert compute_notional(order, None) is None
     assert compute_notional(order, Decimal("200")) == Decimal("2000")
@@ -69,7 +69,7 @@ def test_notional_takes_worst_case_of_available_prices() -> None:
 
 
 @pytest.mark.parametrize("ref", [Decimal("0"), Decimal("-5"), Decimal("NaN")])
-def test_notional_bad_reference_price_is_undeterminable(ref: Decimal) -> None:
+def test_notional_bad_trusted_price_is_undeterminable(ref: Decimal) -> None:
     order = make_order(order_type=OrderType.MARKET, limit_price=Decimal("0"))
     assert compute_notional(order, ref) is None
 

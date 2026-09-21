@@ -108,7 +108,7 @@ def make_motor(
     if stats is not None:
         kwargs["venue_stats"] = stats
     return ExecutionMotor(
-        config=MotorConfig(D(order_cap), D(session_cap)),
+        config=MotorConfig(D(order_cap), D(session_cap), environment="test"),
         brokers=brokers or {"alpaca-paper": fake},
         router=router,
         kill_switch=kill,
@@ -281,14 +281,6 @@ def test_market_order_without_reference_price_is_rejected() -> None:
     assert run(make_motor(), market).reject_reason is RejectReason.NOTIONAL_UNDETERMINABLE
 
 
-def test_market_order_capped_using_reference_price() -> None:
-    market = attest(make_order(order_type=OrderType.MARKET, limit_price=D("0"), quantity=D("200")))
-    over = run(make_motor(), market, reference_price=D("190"))
-    assert over.reject_reason is RejectReason.NOTIONAL_CAP_EXCEEDED
-    ok_order = attest(make_order(order_type=OrderType.MARKET, limit_price=D("0"), quantity=D("10")))
-    assert run(make_motor(), ok_order, reference_price=D("190")).status is ExecutionStatus.FILLED
-
-
 def test_session_cap_accumulates_and_broker_reject_releases_capacity() -> None:
     motor = make_motor(order_cap="20000", session_cap="30000")
     a = attest(make_order(order_id="a", quantity=D("100"), limit_price=D("190")))
@@ -328,7 +320,7 @@ def test_halt_takes_effect_between_orders() -> None:
     broker = FakeBroker()
     kill = KillSwitch(start_halted=False)
     motor = ExecutionMotor(
-        config=MotorConfig(D("25000"), D("100000")),
+        config=MotorConfig(D("25000"), D("100000"), environment="test"),
         brokers={"alpaca-paper": broker},
         router=SmartOrderRouter(RouterConfig(unscored_policy=UnscoredPolicy.ALLOW)),
         kill_switch=kill,
@@ -351,7 +343,7 @@ def test_halt_flipped_by_router_stats_callback_is_caught_before_submit() -> None
         return {}
 
     motor = ExecutionMotor(
-        config=MotorConfig(D("25000"), D("100000")),
+        config=MotorConfig(D("25000"), D("100000"), environment="test"),
         brokers={"alpaca-paper": broker},
         router=SmartOrderRouter(RouterConfig(unscored_policy=UnscoredPolicy.ALLOW)),
         kill_switch=kill,

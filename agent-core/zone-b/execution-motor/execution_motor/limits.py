@@ -13,6 +13,7 @@ from .errors import ConfigError, IdempotencyStoreError
 from .models import Order
 
 _ZERO = Decimal(0)
+IDEMPOTENCY_FILENAME = "idempotency.jsonl"
 
 
 class IdempotencyStore(Protocol):
@@ -26,8 +27,8 @@ class IdempotencyStore(Protocol):
 
 
 class InMemoryIdempotencyStore:
-    """Process-local store. Forgets on restart: a persistent (Redis) store is a follow-up;
-    meanwhile the broker's own client_order_id uniqueness is the second line of defence."""
+    """Process-local store. Forgets on restart, so the motor refuses it in production (use
+    ``FileIdempotencyStore``); the broker's client_order_id uniqueness is only a second line."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -93,24 +94,44 @@ class FileIdempotencyStore:
             self._fh.close()
 
 
+def open_persistent_idempotency_store(state_dir: Path) -> FileIdempotencyStore:
+    """File-backed store under ``state_dir`` (created if absent), failing closed.
+
+    A brand-new (absent or empty) directory starts a fresh store. A directory that already
+    holds anything but has no store file means the store was deleted or the wrong directory is
+    mounted: refuse rather than silently forget every earlier claim. A corrupt store file is
+    refused by ``FileIdempotencyStore`` itself.
+    """
+    path = state_dir / IDEMPOTENCY_FILENAME
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        populated = any(state_dir.iterdir())
+    except OSError as exc:
+        raise ConfigError(f"state dir unusable: {state_dir}") from exc
+    if populated and not path.is_file():
+        raise ConfigError(f"idempotency store missing in a non-empty state dir: {state_dir}")
+    return FileIdempotencyStore(path)
+
+
 def _usable_price(value: Decimal | None) -> Decimal | None:
     if value is None or not value.is_finite() or value <= _ZERO:
         return None
     return value
 
 
-def compute_notional(order: Order, reference_price: Decimal | None) -> Decimal | None:
-    """Worst-case notional: quantity x the highest usable price among limit, stop, reference.
+def compute_notional(order: Order, trusted_price: Decimal | None) -> Decimal | None:
+    """Worst-case notional: quantity x the highest usable price among the signed limit, the
+    signed stop and ``trusted_price`` (the motor's own fresh quote, NEVER a caller-supplied one).
 
-    Returns None when no usable price exists (e.g. a market order without a reference
-    price), which the motor treats as a rejection: an unknown exposure cannot be capped.
+    Returns None when no usable price exists (e.g. a market order with no trusted quote),
+    which the motor treats as a rejection: an unknown exposure cannot be capped.
     """
     prices = [
         p
         for p in (
             _usable_price(order.limit_price),
             _usable_price(order.stop_price),
-            _usable_price(reference_price),
+            _usable_price(trusted_price),
         )
         if p is not None
     ]
