@@ -4,6 +4,7 @@ package afe.shared;
 
 import "trade_signal.proto";
 import "order_request.proto";
+import "market_snapshot.proto";
 
 // Aegis gRPC contract (ALI-22). Source: Appendix A.1 of
 // agent-core/docs/specs/phase_3_aegis_execution.md, copied verbatim except for
@@ -46,6 +47,12 @@ service Aegis {
   rpc GetAegisState(Empty) returns (AegisState);
   // PROPOSED: source of truth for positions, drawdown and NAV.
   rpc ReportExecution(ExecutionReport) returns (Ack);
+  // Additive (PKG-E2, NOT part of spec Appendix A.1): Aegis-owned reference
+  // data ingestion (market snapshots for C08/C09/C12, regime label for C18).
+  // Only a trusted market-data writer may call it. Fail closed: invalid,
+  // stale, future-dated or out-of-order items are refused item by item and
+  // never stored, so C08/C18 keep failing until fresh data arrives.
+  rpc PushReferenceData(PushReferenceDataRequest) returns (PushReferenceDataResponse);
 }
 
 message Empty {}
@@ -224,4 +231,37 @@ message ExecutionReport {
   int64 avg_fill_price_nanos = 7;
   int64 account_equity_nanos = 8;          // for drawdown control C15
   int64 reported_at_ns = 9;
+}
+
+// ---- Reference data ingestion (additive, PKG-E2) ----
+
+// One symbol's reference market data. Prices are fixed-point int64 nanos.
+message ReferenceSnapshot {
+  string symbol = 1;
+  int64 mid_price_nanos = 2;               // > 0
+  int64 adv_30d_nanos = 3;                 // 30-day ADV in share-nanos, > 0
+  int64 as_of_ns = 4;                      // source timestamp (ns since epoch); freshness is judged on this
+  bool is_stale = 5;                       // the producer's own staleness flag; true makes C08 fail
+}
+
+// A batch of reference data. Either part may be absent, but not both.
+message PushReferenceDataRequest {
+  repeated ReferenceSnapshot snapshots = 1;
+  // Latest regime label (label, confidence in [0,1], timestamp_ns as-of time).
+  // Omit when the batch carries no regime update.
+  RegimeLabelPacket regime = 2;
+}
+
+// Why one item of a push was not applied.
+message ReferenceRejection {
+  string key = 1;                          // symbol, or "regime"
+  string reason = 2;                       // invalid, stale, future, out_of_order, unknown_symbol, capacity
+}
+
+// A push is not atomic: applied items are stored, `rejected` lists the rest.
+// A caller MUST treat any rejection as a failed feed for that item.
+message PushReferenceDataResponse {
+  uint32 applied_snapshots = 1;
+  bool regime_applied = 2;
+  repeated ReferenceRejection rejected = 3;
 }

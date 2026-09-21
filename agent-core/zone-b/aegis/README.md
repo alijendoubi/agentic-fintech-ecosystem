@@ -102,7 +102,9 @@ PROPOSED option (mTLS client certificate per identity) plus signed approvals.
 ```json
 {"peers": {"cognitive-core": ["signal-submitter"],
            "operator-console": ["operator", "kill-trigger", "kill-reset", "hold-resolver", "state-reader"],
-           "execution-motor": ["state-reader", "execution-reporter"]},
+           "execution-motor": ["state-reader", "execution-reporter"],
+           "market-data": ["market-data-writer"],
+           "supervisor": ["state-reader", "kill-trigger"]},
  "approvers": {"alice": {"roles": ["operator"], "ed25519_pubkey_hex": "<64 hex>"}}}
 ```
 
@@ -118,6 +120,71 @@ roles. A verified certificate that is not listed has no roles (PERMISSION_DENIED
 | Heartbeat | `operator`; `operator_id` must equal the certificate identity |
 | GetKillSwitchState, WatchKillSwitchState, GetAegisState | `state-reader` |
 | ReportExecution | `execution-reporter` |
+| PushReferenceData | `market-data-writer` (nothing else; default deny) |
+
+## Reference data feed (`PushReferenceData`)
+
+Aegis trusts nothing from Zone A, so market data and the regime label reach
+`MemoryReferenceData` (`App.refdata`) only through the additive RPC
+`PushReferenceData` (not in spec Appendix A.1; `buf breaking` against
+`integration/wave1` passes). Caller role: `market-data-writer`.
+
+A request carries `ReferenceSnapshot`s (`symbol`, `mid_price_nanos`,
+`adv_30d_nanos`, `as_of_ns`, `is_stale`, all int64 nanos) and/or one
+`RegimeLabelPacket` (label, confidence in [0,1], `timestamp_ns`). The push is
+NOT atomic: each item is checked and refused individually (`rejected` lists
+`key` + `reason`); refused items are never stored. An item is applied only if:
+
+* the symbol is on the C03 allowlist (`unknown_symbol`), at most 512 per push;
+* mid, ADV and `as_of_ns` are strictly positive (`invalid`);
+* `as_of_ns` is not older than `timings.max_ref_age_ms` (regime:
+  `max_regime_age_ms`) against Aegis's own clock (`stale`) and not more than
+  `clock_skew_ms` ahead (`future`): the same bounds C08 / C18 enforce, so there
+  is no default that accepts stale data (the limits file sets them; default
+  1000 ms for prices);
+* it is strictly newer than the stored value for that symbol / the regime
+  (`out_of_order`, duplicates included).
+
+`is_stale = true` from the producer is stored, so C08 fails until a fresh
+snapshot replaces it. Data also ages out by itself: a feed that stops makes C08
+fail after `max_ref_age_ms`, and `GetAegisState.reference_data_fresh` is
+age-aware. A service built without a store refuses the RPC
+(`FAILED_PRECONDITION`). Tests: `src/state/ingest/tests.rs`,
+`tests/reference_data_push.rs` (real mTLS, including C08 fail then pass).
+
+## Supervisor (`aegis supervisor`)
+
+The spec's independent liveness watchdog is the same binary started with the
+`supervisor` argument (separate process, no shared state with Aegis). Every
+`AEGIS_SUPERVISOR_PROBE_INTERVAL_MS` it calls `GetAegisState` over mTLS (this
+runs on Aegis's engine worker pool, so a wedged engine fails the probe). When
+probes have failed continuously for MORE than the trip window it calls
+`TriggerKillSwitch(HARD, actor_id "supervisor/liveness")` (Aegis records the
+latch actor as `<cert CN>:supervisor/liveness`) and requires the answer to show
+an effective level of at least HARD. One latch per outage; it re-arms after Aegis
+answers again. The window uses a monotonic clock and starts when the Supervisor
+starts, so an Aegis that never came up is tripped one window later.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `AEGIS_ENV` | no | as for the server (unset = production) |
+| `AEGIS_SUPERVISOR_TARGET` | yes | `https://host:port` (`http://` only with insecure dev) |
+| `AEGIS_SUPERVISOR_TLS_CA`, `AEGIS_SUPERVISOR_TLS_CERT`, `AEGIS_SUPERVISOR_TLS_KEY` | yes (TLS) | server CA and the Supervisor's client identity; its CN needs `state-reader` + `kill-trigger` in the identities file |
+| `AEGIS_SUPERVISOR_TLS_DOMAIN` | no | server name to verify (default: host of the target) |
+| `AEGIS_SUPERVISOR_INSECURE_DEV` | no | literal `1`; refused when `AEGIS_ENV` is production or unset |
+| `AEGIS_SUPERVISOR_TRIP_AFTER_MS` | no | default 60000; MUST be in [10000, 60000] (out of range refuses to start: 60 s is the spec value and a ceiling, the floor stops a hair trigger) |
+| `AEGIS_SUPERVISOR_PROBE_INTERVAL_MS`, `AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS` | no | defaults 1000 / 2000; each in [100, trip/4] |
+
+Fails closed on its own errors (the process ends non-zero, it never idles
+unprotected): exit 2 for missing/invalid config, unreadable TLS files or a bad
+target; 3 when HARD stays undeliverable for a further full window after
+liveness was lost (a wrong certificate role, or Aegis unreachable); 1 for an
+unreadable clock. A panic aborts (release profile). Run it under a restart
+policy and alert on restarts. The container healthcheck of the image
+(`aegis healthcheck`, a TCP connect to `AEGIS_LISTEN_ADDR`) does not apply to it:
+disable the healthcheck for the Supervisor service. Unknown subcommands now
+exit 2 instead of starting the server. Tests: `src/supervisor/`,
+`tests/supervisor_integration.rs` (fake clock, real in-process Aegis over mTLS).
 
 ## Kill switch (ALI-45)
 
@@ -149,10 +216,8 @@ Fail-closed rules (tests in `src/killswitch/tests.rs`, `src/engine/tests.rs`,
   DEAD_MANS on lapse (PROPOSED reconciliation, spec 5.3). A heartbeat never
   clears a latch. After a restart the persisted last heartbeat is used, so a
   stale one trips DEAD_MANS on the first tick.
-* Liveness watchdog (60 s, HARD): `killswitch::watchdog::LivenessWatchdog` is a
-  pure helper. The spec requires an INDEPENDENT Supervisor process; it is not
-  part of this crate. A Supervisor calls `TriggerKillSwitch(HARD)` as
-  `supervisor/liveness`.
+* Liveness watchdog (60 s, HARD): see "Supervisor" below (`aegis supervisor`,
+  built on the pure `killswitch::watchdog::LivenessWatchdog`).
 * Reset approvals: each `Authorization.credential_ref` must be the hex Ed25519
   signature, by the approver's key in the identities file, over
   `afe-reset-v1\ntrigger_id=..\napprover_id=..\nrole=..\napproved_at_ns=..\n`,
@@ -281,7 +346,7 @@ signal; a hold release re-runs the rate limit control.
 | `aegis.proto` merged, stubs for Rust, `_nanos` fields | Rust server/client stubs generated by `build.rs`. Proto is frozen and owned by another package. |
 | Every control implemented with unit tests, C-IDs in names | Done: `src/controls/tests.rs` (C01-C19), `src/validate.rs` (C02). |
 | Kill-switch machine, invariants 5.4 tested, persistence verified | Done: `src/killswitch/tests.rs`, `src/engine/tests.rs`, `tests/app_startup.rs`. |
-| Supervisor + liveness watchdog trips HARD in a recorded test | NOT done: only the pure `LivenessWatchdog` helper; no Supervisor process. |
+| Supervisor + liveness watchdog trips HARD in a recorded test | Done for the trip: `aegis supervisor` (see above) latches HARD as `supervisor/liveness` after >60 s of failed probes, tested on a fake clock against a real in-process Aegis. NOT done: cutting the broker egress, supervising the Supervisor, a recorded drill on real infrastructure. |
 | Attestation + broker gateway; unattested/tampered order cannot reach the mock broker | Attestation, verification helper and tamper tests done. The broker gateway is not part of this crate. |
 | No `f64` for money on the decision path (grep/CI check) | Holds by construction (`Nanos`). Only the legacy-double boundary and reference-data conversion use `f64`. No CI/grep check added (CI is out of scope). |
 | Measured latency evidence for section 8 | Measured, see below. The 50 ms budget is NOT demonstrated for the tail with fsyncs. |
@@ -315,14 +380,17 @@ AEGIS_SOFTHSM_KEY=attest-test AEGIS_SOFTHSM_PIN_FILE=/tmp/pin \
 
 ## Not implemented / known gaps
 
-* **No reference-data feed.** `MemoryReferenceData` (market snapshot per
-  symbol, regime label) has no Redis/gRPC subscriber, and `aegis.proto` has no
-  RPC to push snapshots. Until something writes to it, C08 fails and every
-  signal is rejected (safe, but Aegis cannot approve anything in a real
-  deployment yet). The conversion helpers (`update_snapshot`, `update_regime`)
-  exist and reject NaN/Inf/<=0.
-* No Supervisor / egress cut; no broker gateway; no HITL UI (spec components
-  owned elsewhere).
+* **The reference-data producer is not part of this crate.** Aegis now accepts
+  `PushReferenceData` (see above), but nothing in the repo calls it yet: the
+  sensory-array / regime-detector must push (int64 nanos, role
+  `market-data-writer`). Until they do, C08 fails and every signal is rejected
+  (safe). The legacy `update_snapshot` / `update_regime` helpers remain for the
+  `double`-based `MarketSnapshot`.
+* Reference data is in memory: a restart clears it, so C08 fails until the next
+  push (safe). Pushes are not written to the audit WAL (only `tracing`).
+* No broker egress cut by the Supervisor; no broker gateway; no HITL UI (spec
+  components owned elsewhere). The `audit.wal` tailing `AuditSink` for Zone C is
+  not implemented.
 * Second approver on `ResolveHold` is self-asserted in the request (the message
   has no credential field); only `operator_id` is bound to the certificate.
 * Unusual-size history (C19) is fed only by approved orders; cold start holds

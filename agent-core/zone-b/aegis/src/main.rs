@@ -30,9 +30,38 @@ fn healthcheck() -> ExitCode {
     }
 }
 
+/// `aegis supervisor`: the independent liveness Supervisor (its own process).
+/// Any failure, including bad configuration, is a non-zero exit.
+fn supervisor() -> ExitCode {
+    init_tracing();
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "supervisor cannot start the async runtime");
+            return ExitCode::from(1);
+        }
+    };
+    match runtime.block_on(aegis::supervisor::run_from_env()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            tracing::error!(error = %e, "supervisor stopped: failing closed");
+            ExitCode::from(e.exit_code())
+        }
+    }
+}
+
 fn main() -> ExitCode {
-    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
-        return healthcheck();
+    match std::env::args().nth(1).as_deref() {
+        Some("healthcheck") => return healthcheck(),
+        Some("supervisor") => return supervisor(),
+        Some(other) => {
+            eprintln!("unknown command {other:?}; use no argument, `supervisor` or `healthcheck`");
+            return ExitCode::from(2);
+        }
+        None => {}
     }
     init_tracing();
     let cfg = match RuntimeConfig::from_env() {

@@ -1,4 +1,5 @@
-//! gRPC `Aegis` service (all 9 RPCs of `aegis.proto`).
+//! gRPC `Aegis` service (all 10 RPCs of `aegis.proto`, incl. the additive
+//! `PushReferenceData`).
 //!
 //! * Authentication: mTLS (see `server`); the verified client certificate's
 //!   identity is mapped to roles (`identity`). Every RPC requires a role;
@@ -32,6 +33,8 @@ use crate::identity::{cert_identity, Identities, PeerRole};
 use crate::killswitch::controller::ControllerError;
 use crate::killswitch::{ResetRefusal, ResetRequest};
 use crate::pb;
+use crate::state::ingest::{ingest, MAX_SNAPSHOTS_PER_PUSH};
+use crate::state::refdata::MemoryReferenceData;
 
 const MAX_TEXT_LEN: usize = 512;
 const MAX_APPROVALS: usize = 16;
@@ -52,6 +55,8 @@ pub struct AegisService {
     opts: ServiceOptions,
     permits: Arc<Semaphore>,
     watch_permits: Arc<Semaphore>,
+    /// Write side of the engine's reference data; `None` => `PushReferenceData` is refused.
+    refdata: Option<Arc<MemoryReferenceData>>,
 }
 
 struct Caller {
@@ -67,10 +72,18 @@ impl AegisService {
         AegisService {
             permits: Arc::new(Semaphore::new(opts.max_concurrency)),
             watch_permits: Arc::new(Semaphore::new(opts.max_watchers)),
+            refdata: None,
             engine,
             identities,
             opts,
         }
+    }
+
+    /// Attach the reference-data store that `PushReferenceData` writes into.
+    /// It must be the same store the engine reads (`App::refdata`).
+    pub fn with_refdata(mut self, refdata: Arc<MemoryReferenceData>) -> AegisService {
+        self.refdata = Some(refdata);
+        self
     }
 
     fn authorize<T>(&self, req: &Request<T>, role: PeerRole) -> Result<Caller, Status> {
@@ -355,5 +368,42 @@ impl pb::Aegis for AegisService {
             })
             .await?;
         Ok(Response::new(ack))
+    }
+
+    async fn push_reference_data(
+        &self,
+        request: Request<pb::PushReferenceDataRequest>,
+    ) -> Result<Response<pb::PushReferenceDataResponse>, Status> {
+        let caller = self.authorize(&request, PeerRole::MarketDataWriter)?;
+        let Some(store) = self.refdata.clone() else {
+            return Err(Status::failed_precondition(
+                "reference data ingestion is not configured",
+            ));
+        };
+        let req = request.into_inner();
+        if req.snapshots.is_empty() && req.regime.is_none() {
+            return Err(Status::invalid_argument("empty reference data push"));
+        }
+        if req.snapshots.len() > MAX_SNAPSHOTS_PER_PUSH {
+            return Err(Status::invalid_argument("too many snapshots in one push"));
+        }
+        let engine = self.engine.clone();
+        let resp = self
+            .run(self.opts.rpc_timeout, move || {
+                let now = engine
+                    .now()
+                    .ok_or_else(|| Status::internal("clock unavailable"))?;
+                Ok::<_, Status>(ingest(&store, &engine.deps.limits.config, now, &req))
+            })
+            .await??;
+        if !resp.rejected.is_empty() {
+            tracing::warn!(
+                peer = %caller.id,
+                applied = resp.applied_snapshots,
+                rejected = resp.rejected.len(),
+                "reference data push had refused items"
+            );
+        }
+        Ok(Response::new(resp))
     }
 }

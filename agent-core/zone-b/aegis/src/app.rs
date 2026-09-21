@@ -52,8 +52,8 @@ pub enum StartupError {
 /// A fully assembled Aegis, ready to serve.
 pub struct App {
     pub engine: Arc<Engine>,
-    /// Aegis-owned reference data. Nothing feeds it yet (README "Not
-    /// implemented"): whoever adds the Redis subscriber writes here.
+    /// Aegis-owned reference data, fed by the `PushReferenceData` RPC (the
+    /// service is given this same store in `run`).
     pub refdata: Arc<MemoryReferenceData>,
     pub service_options: ServiceOptions,
     pub identities: Arc<Identities>,
@@ -182,7 +182,8 @@ pub async fn run(cfg: RuntimeConfig) -> Result<(), StartupError> {
         "aegis serving"
     );
     let _ticker = spawn_ticker(app.engine.clone());
-    let service = AegisService::new(app.engine, app.identities, app.service_options);
+    let service = AegisService::new(app.engine, app.identities, app.service_options)
+        .with_refdata(app.refdata);
     serve_on(
         listener,
         tls,

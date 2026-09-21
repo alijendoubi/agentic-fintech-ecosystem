@@ -23,6 +23,7 @@ pub mod server;
 pub mod service;
 pub mod signing;
 pub mod state;
+pub mod supervisor;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
 pub mod validate;

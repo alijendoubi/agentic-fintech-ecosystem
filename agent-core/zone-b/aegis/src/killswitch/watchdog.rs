@@ -3,9 +3,9 @@
 //!
 //! This is deliberately a tiny pure helper. The spec requires the watchdog to
 //! run in an INDEPENDENT process (a hung Aegis cannot report itself dead), so a
-//! Supervisor built on this type probes `GetKillSwitchState` and, on trip,
-//! calls `TriggerKillSwitch(HARD, actor="supervisor/liveness")` and cuts the
-//! broker egress. The Supervisor itself is not part of this crate (see README,
+//! Supervisor (`crate::supervisor`, `aegis supervisor`) is built on this type: it probes and, on trip,
+//! calls `TriggerKillSwitch(HARD, actor="supervisor/liveness")`. Cutting the
+//! broker egress is not done in this crate (see README,
 //! "Not implemented").
 
 /// Actor id a Supervisor should use when it trips HARD on lost liveness.

@@ -89,7 +89,7 @@ pub struct RuntimeConfig {
     pub rpc_timeout: Duration,
 }
 
-fn required(
+pub(crate) fn required(
     get: &dyn Fn(&str) -> Option<String>,
     key: &'static str,
 ) -> Result<String, ConfigError> {
@@ -99,7 +99,7 @@ fn required(
     }
 }
 
-fn parse_env(get: &dyn Fn(&str) -> Option<String>) -> Result<Environment, ConfigError> {
+pub(crate) fn parse_env(get: &dyn Fn(&str) -> Option<String>) -> Result<Environment, ConfigError> {
     match get("AEGIS_ENV").as_deref().map(str::trim) {
         None | Some("") | Some("production") => Ok(Environment::Production),
         Some("staging") => Ok(Environment::Staging),
