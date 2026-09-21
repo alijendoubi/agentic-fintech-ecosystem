@@ -28,6 +28,8 @@ const DEFAULT_API_TIMEOUT_MS = 5000;
 const DEFAULT_FOUR_EYES_QUANTITY_THRESHOLD = 1000;
 const DEFAULT_MUTATIONS_PER_MINUTE = 10;
 const DEFAULT_LOGINS_PER_MINUTE = 10;
+const DEFAULT_JWT_MAX_LIFETIME_SEC = 900;
+const DEFAULT_TRUSTED_PROXY_COUNT = 0;
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
@@ -35,6 +37,8 @@ export interface AppConfig {
   readonly jwtSecret: string;
   readonly jwtIssuer: string | null;
   readonly jwtAudience: string | null;
+  /** Production only: tokens whose exp - iat exceeds this are refused (default 15 minutes). */
+  readonly jwtMaxLifetimeSec: number;
   readonly apiBaseUrl: string | null;
   readonly apiServiceToken: string | null;
   readonly apiTimeoutMs: number;
@@ -49,6 +53,11 @@ export interface AppConfig {
   readonly allowedOrigins: readonly string[];
   readonly mutationsPerMinute: number;
   readonly loginsPerMinute: number;
+  /**
+   * Number of reverse proxies in front of the app that append to X-Forwarded-For.
+   * 0 (default) means the header is ignored and the login limiter uses one shared bucket.
+   */
+  readonly trustedProxyCount: number;
 }
 
 export class ConfigError extends Error {
@@ -99,7 +108,23 @@ function parseNumber(
   return value;
 }
 
-function parseHttpUrl(name: string, raw: string | undefined, problems: string[]): string | null {
+const LOOPBACK_IPV4 = /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+
+/** True only for literal loopback hosts; look-alike names such as localhost.evil.test are not. */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || LOOPBACK_IPV4.test(hostname);
+}
+
+/**
+ * Parses an http(s) URL. In production a plaintext http: URL is refused unless it targets loopback,
+ * because the operator Bearer token and the service token travel on this connection.
+ */
+function parseHttpUrl(
+  name: string,
+  raw: string | undefined,
+  isProduction: boolean,
+  problems: string[],
+): string | null {
   if (raw === undefined || raw.trim() === "") {
     return null;
   }
@@ -107,6 +132,10 @@ function parseHttpUrl(name: string, raw: string | undefined, problems: string[])
     const url = new URL(raw.trim());
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error("unsupported protocol");
+    }
+    if (isProduction && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+      problems.push(`${name} must use https in production (plain http is only accepted for loopback hosts)`);
+      return null;
     }
     return url.toString().replace(/\/+$/, "");
   } catch {
@@ -139,8 +168,14 @@ export function loadConfig(env: EnvSource): AppConfig {
   if (demoMode && isProduction) {
     problems.push("HITL_DEMO_MODE is not allowed in production (demo mode is disabled in production builds)");
   }
+  if (isProduction && optionalString(env.HITL_JWT_ISSUER) === null) {
+    problems.push("HITL_JWT_ISSUER is required in production (tokens must be pinned to one issuer)");
+  }
+  if (isProduction && optionalString(env.HITL_JWT_AUDIENCE) === null) {
+    problems.push("HITL_JWT_AUDIENCE is required in production (tokens must be pinned to this audience)");
+  }
 
-  const apiBaseUrl = parseHttpUrl("HITL_API_BASE_URL", env.HITL_API_BASE_URL, problems);
+  const apiBaseUrl = parseHttpUrl("HITL_API_BASE_URL", env.HITL_API_BASE_URL, isProduction, problems);
   if (!demoMode && apiBaseUrl === null && !problems.some((p) => p.startsWith("HITL_API_BASE_URL"))) {
     problems.push("HITL_API_BASE_URL is required (server-side env; never NEXT_PUBLIC)");
   }
@@ -160,6 +195,14 @@ export function loadConfig(env: EnvSource): AppConfig {
     "HITL_LOGIN_RATE_LIMIT_PER_MIN", env.HITL_LOGIN_RATE_LIMIT_PER_MIN,
     DEFAULT_LOGINS_PER_MINUTE, { min: 1, integer: true }, problems);
 
+  const jwtMaxLifetimeSec = parseNumber(
+    "HITL_JWT_MAX_LIFETIME_SEC", env.HITL_JWT_MAX_LIFETIME_SEC,
+    DEFAULT_JWT_MAX_LIFETIME_SEC, { min: 1, integer: true }, problems);
+
+  const trustedProxyCount = parseNumber(
+    "HITL_TRUSTED_PROXY_COUNT", env.HITL_TRUSTED_PROXY_COUNT,
+    DEFAULT_TRUSTED_PROXY_COUNT, { min: 0, integer: true }, problems);
+
   if (problems.length > 0) {
     throw new ConfigError(problems);
   }
@@ -168,6 +211,7 @@ export function loadConfig(env: EnvSource): AppConfig {
     jwtSecret: (env.HITL_JWT_SECRET ?? "").trim(),
     jwtIssuer: optionalString(env.HITL_JWT_ISSUER),
     jwtAudience: optionalString(env.HITL_JWT_AUDIENCE),
+    jwtMaxLifetimeSec: jwtMaxLifetimeSec ?? DEFAULT_JWT_MAX_LIFETIME_SEC,
     apiBaseUrl,
     apiServiceToken: optionalString(env.HITL_API_TOKEN),
     apiTimeoutMs: apiTimeoutMs ?? DEFAULT_API_TIMEOUT_MS,
@@ -180,6 +224,7 @@ export function loadConfig(env: EnvSource): AppConfig {
     allowedOrigins: parseOrigins(env.HITL_ALLOWED_ORIGINS),
     mutationsPerMinute: mutationsPerMinute ?? DEFAULT_MUTATIONS_PER_MINUTE,
     loginsPerMinute: loginsPerMinute ?? DEFAULT_LOGINS_PER_MINUTE,
+    trustedProxyCount: trustedProxyCount ?? DEFAULT_TRUSTED_PROXY_COUNT,
   };
 }
 

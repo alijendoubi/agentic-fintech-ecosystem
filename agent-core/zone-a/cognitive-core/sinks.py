@@ -13,7 +13,9 @@ late trade signal is worse than a missed one (TradeSignal has a short `valid_unt
 from __future__ import annotations
 
 import importlib
+import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -21,6 +23,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from .config import ConfigError
 from .models import TradeSignal
 from .proto_mapping import to_proto
 
@@ -125,11 +128,70 @@ def _describe_decision(decision: Any) -> str:
         return "decision unreadable"
 
 
-def open_aegis_channel(host: str, port: int) -> Any:  # pragma: no cover - needs grpc + network
-    """Insecure aio channel on the zone-a<->zone-b internal network.
+ENVIRONMENT_VAR = "ENVIRONMENT"
+TLS_CA_VAR = "AEGIS_CLIENT_TLS_CA"
+TLS_CERT_VAR = "AEGIS_CLIENT_TLS_CERT"
+TLS_KEY_VAR = "AEGIS_CLIENT_TLS_KEY"
 
-    TODO(owner): mutual TLS between cognitive-core and Aegis before any production use.
+
+@dataclass(frozen=True, slots=True)
+class AegisTlsFiles:
+    """PEM file paths for the Aegis channel. `cert` and `key` are both set (mTLS) or both None."""
+
+    ca: Path | None
+    cert: Path | None
+    key: Path | None
+
+
+def aegis_tls_from_env(env: Mapping[str, str]) -> AegisTlsFiles | None:
+    """Read `AEGIS_CLIENT_TLS_CA/CERT/KEY` (PEM file paths). None means "no TLS configured".
+
+    Raises `ConfigError` when the client cert and key are not given together, and, when
+    `ENVIRONMENT=production`, unless a CA is configured: an insecure channel must never
+    carry trade signals in production.
     """
+    values = {name: env.get(name, "").strip() for name in (TLS_CA_VAR, TLS_CERT_VAR, TLS_KEY_VAR)}
+    ca, cert, key = (Path(v) if v else None for v in values.values())
+    if (cert is None) != (key is None):
+        raise ConfigError(f"{TLS_CERT_VAR} and {TLS_KEY_VAR} must be set together")
+    production = env.get(ENVIRONMENT_VAR, "").strip().lower() == "production"
+    if production and ca is None:
+        raise ConfigError(
+            f"ENVIRONMENT=production refuses an insecure Aegis channel: set {TLS_CA_VAR} "
+            f"(and {TLS_CERT_VAR}/{TLS_KEY_VAR} for mutual TLS)"
+        )
+    if ca is None and cert is None:
+        return None
+    return AegisTlsFiles(ca=ca, cert=cert, key=key)
+
+
+def _read_pem(var: str, path: Path | None) -> bytes | None:
+    if path is None:
+        return None
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise ConfigError(f"{var} is not readable: {type(exc).__name__}") from exc
+
+
+def open_aegis_channel(host: str, port: int, env: Mapping[str, str] | None = None) -> Any:
+    """aio channel to Aegis: TLS/mTLS when `AEGIS_CLIENT_TLS_*` is set, else plaintext (dev only).
+
+    Plaintext is refused with `ConfigError` when `ENVIRONMENT=production`. The env is read
+    from `env` (default `os.environ`). TODO(owner): Aegis must be configured to require client
+    certificates (mTLS) on its side; this only makes the client able to present one.
+    """
+    source = os.environ if env is None else env
+    tls = aegis_tls_from_env(source)
     import grpc
 
-    return grpc.aio.insecure_channel(f"{host}:{port}")
+    target = f"{host}:{port}"
+    if tls is None:
+        log.warning("aegis_channel_insecure", target=target)
+        return grpc.aio.insecure_channel(target)
+    credentials = grpc.ssl_channel_credentials(
+        root_certificates=_read_pem(TLS_CA_VAR, tls.ca),
+        certificate_chain=_read_pem(TLS_CERT_VAR, tls.cert),
+        private_key=_read_pem(TLS_KEY_VAR, tls.key),
+    )
+    return grpc.aio.secure_channel(target, credentials)

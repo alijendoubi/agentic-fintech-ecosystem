@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+
 from afe_vector_memory import (
     ChromaStore,
     HashingEmbedder,

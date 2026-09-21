@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from afe_vector_memory import MemoryConfigError, RetentionPolicy, VectorMemorySettings
 
 

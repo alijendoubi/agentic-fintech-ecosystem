@@ -8,7 +8,8 @@ use prost::Message;
 use thiserror::Error;
 
 use super::build::{base, decision_audit, downgrade, rejected};
-use super::{Core, Engine};
+use super::submit::Attempt;
+use super::{CancelToken, Core, Engine};
 use crate::audit::AuditEvent;
 use crate::controls::ReplayVerdict;
 use crate::domain::{Mode, ValidatedSignal};
@@ -202,8 +203,11 @@ impl Engine {
             &held.validated,
             held.payload_sha256,
             now,
-            Mode::Release,
-            ReplayVerdict::New,
+            Attempt {
+                mode: Mode::Release,
+                verdict: ReplayVerdict::New,
+                cancel: &CancelToken::default(),
+            },
         );
         if d.decision == DecisionStatus::DecisionHeldForHuman as i32 {
             // Release mode has no soft controls; anything still soft is a bug.

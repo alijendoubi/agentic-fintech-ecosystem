@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from afe_vector_memory import MemoryKind, MemoryValidationError, Outcome
 from tests.conftest import StoreFactory
 from tests.helpers import DAY_MS, NOW_MS, Clock, make_record

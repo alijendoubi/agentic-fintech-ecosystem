@@ -18,7 +18,7 @@ HITL_DEMO_MODE=true HITL_JWT_SECRET="$(openssl rand -base64 48)" npm run dev
 
 # production image
 docker build -t afe-hitl-interface .
-docker run -p 3000:3000 -e HITL_JWT_SECRET=... -e HITL_API_BASE_URL=http://hitl-backend:4000 afe-hitl-interface
+docker run -p 3000:3000 -e HITL_JWT_SECRET=... -e HITL_API_BASE_URL=https://hitl-backend:4000 -e HITL_JWT_ISSUER=... -e HITL_JWT_AUDIENCE=... afe-hitl-interface
 ```
 
 `.env.example` lists every variable. There are **no `NEXT_PUBLIC_*`** variables; the secret and backend URL never reach
@@ -28,12 +28,12 @@ the browser bundle (checked in the container: not present in `.next/static`).
 
 | Concern | Implementation |
 |---|---|
-| Refuse to start | `HITL_JWT_SECRET` unset, < 32 chars, placeholder, or < 8 distinct chars; missing/invalid `HITL_API_BASE_URL`; demo mode in production => process exits 1 (`src/lib/startup-guard.ts`). A throw in `instrumentation.ts` alone does not stop `next start`, hence the explicit exit |
-| AuthN | HS256 JWT verified server-side (`jose`, algorithm pinned). Required: `sub`, `role` in approver/viewer, `exp`, `amr` containing `mfa`. Optional `iss`/`aud` pinning. Any failure => deny |
+| Refuse to start | `HITL_JWT_SECRET` unset, < 32 chars, placeholder, or < 8 distinct chars; missing/invalid `HITL_API_BASE_URL` (in production it must be `https:`, `http:` only for loopback); missing `HITL_JWT_ISSUER`/`HITL_JWT_AUDIENCE` in production; demo mode in production => process exits 1 (`src/lib/startup-guard.ts`). A throw in `instrumentation.ts` alone does not stop `next start`, hence the explicit exit |
+| AuthN | HS256 JWT verified server-side (`jose`, algorithm pinned). Required: `sub`, `role` in approver/viewer, `exp`, `amr` containing `mfa`. `iss`/`aud` pinning (`HITL_JWT_ISSUER`/`HITL_JWT_AUDIENCE`, both required in production). In production also required: `iat`, a unique `jti`, and `exp - iat` <= `HITL_JWT_MAX_LIFETIME_SEC` (default 900). Any failure => deny |
 | AuthZ | Only `approver` + MFA can act; viewers are read-only. Checked in the page, the route, the decision service and the policy |
 | Identity boundary | `TokenVerifier` / `extractToken` (`src/lib/auth`). **TODO(owner): SSO / IdP (OIDC + JWKS) integration is not implemented and no fake IdP is provided.** Today: paste a token at `/login`, or a fronting gateway injects `Authorization: Bearer` |
 | CSRF | SameSite=Strict HttpOnly cookie + mandatory `Origin` match (or `HITL_ALLOWED_ORIGINS`) + per-session HMAC token in `x-csrf-token` |
-| Rate limiting | In-memory sliding window per operator (mutations) and per client (login). **Per process only**: N replicas allow N x the limit and a restart resets it. Put a shared limiter in front for production |
+| Rate limiting | In-memory sliding window per operator (mutations) and per client IP (login; keyed on the Nth-from-right `X-Forwarded-For` entry where N = `HITL_TRUSTED_PROXY_COUNT`; default 0 ignores the header and shares one bucket, so it cannot be spoofed). **Per process only**: N replicas allow N x the limit and a restart resets it. Put a shared limiter in front for production |
 | Headers | Nonce-based CSP (`strict-dynamic`, no script `unsafe-inline`), `frame-ancestors 'none'`, `Referrer-Policy: no-referrer`, nosniff, X-Frame-Options DENY, COOP/CORP, HSTS in production, `Cache-Control: no-store`. `style-src` keeps `'unsafe-inline'` (React inline styles) |
 | Validation | zod on the request body (strict, unknown keys rejected), path ids, and every backend response (float money on the wire is rejected) |
 | Fail closed | Backend error/timeout/invalid/unconfirmed response => "Not approved"; UI shows success only after an explicit `ok: true` |
@@ -48,7 +48,10 @@ cannot make an expired signal look live; the server re-checks on every action.
 
 * `HITL_FOUR_EYES_QUANTITY_THRESHOLD` default (1000 shares) is a placeholder, not a calibrated value. TODO(owner).
 * `debate.blue/red/judge` are not in `trade_signal.proto`; the terminal shows them only if the backend supplies them.
-* Session cookie has no server-side revocation; it expires with the token. Logout only clears the cookie.
+* Logout revokes the presented token (by `jti`, or a SHA-256 of the token when it has none) in an **in-process** list and clears the cookie.
+  With several replicas a token revoked on replica A stays valid on replica B until it expires (bounded by
+  `HITL_JWT_MAX_LIFETIME_SEC`), and a restart forgets every revocation. Use a shared denylist (Redis or a gateway) before
+  running more than one replica; until then keep the lifetime cap short. The list is bounded (10 000 entries, closest-to-expiry evicted first).
 * No mTLS to the backend, no persistent storage, no metrics. TLS must be terminated in front (cookies are `Secure` in production).
 * Accessibility was designed for (labels, roles, focus styles, contrast) and tested via Testing Library roles, but no
   screen-reader or automated axe audit was run.

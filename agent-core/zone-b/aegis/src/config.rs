@@ -3,7 +3,9 @@
 //!
 //! * `AEGIS_ENV` unset => treated as `production`.
 //! * No TLS material => refuse to start unless `AEGIS_INSECURE_DEV=1` AND the
-//!   environment is not production.
+//!   environment is not production AND `AEGIS_LISTEN_ADDR` is explicitly set to
+//!   a loopback address (plaintext is also refused at bind time off-loopback).
+//! * An empty state dir in production needs `AEGIS_ALLOW_FRESH_STATE=1`.
 //! * The dev software signer is refused in production.
 //!
 //! Parsing takes a lookup closure so tests never touch the process environment.
@@ -80,6 +82,10 @@ pub struct RuntimeConfig {
     pub limits_file: PathBuf,
     pub identities_file: PathBuf,
     pub state_dir: PathBuf,
+    /// `AEGIS_ALLOW_FRESH_STATE=1`: permit the first boot of an EMPTY state dir
+    /// in production (otherwise an empty dir there is refused: it may mean a
+    /// wiped or wrongly mounted volume, not a genuine first start).
+    pub allow_fresh_state: bool,
     pub tls: TlsMode,
     pub signer: SignerKind,
     pub max_concurrency: usize,
@@ -109,15 +115,26 @@ pub(crate) fn parse_env(get: &dyn Fn(&str) -> Option<String>) -> Result<Environm
     }
 }
 
+/// `listen_explicit` is whether `AEGIS_LISTEN_ADDR` was set by the operator
+/// (the `0.0.0.0` default never counts as an explicit loopback choice).
 fn parse_tls(
     get: &dyn Fn(&str) -> Option<String>,
     env: Environment,
+    listen: SocketAddr,
+    listen_explicit: bool,
 ) -> Result<TlsMode, ConfigError> {
     let insecure = get("AEGIS_INSECURE_DEV").as_deref() == Some("1");
     if insecure {
         if env.is_production() {
             return Err(ConfigError::Invalid(
                 "AEGIS_INSECURE_DEV=1 is refused when AEGIS_ENV is production (or unset)".into(),
+            ));
+        }
+        if !listen_explicit || !listen.ip().is_loopback() {
+            return Err(ConfigError::Invalid(
+                "AEGIS_INSECURE_DEV=1 (plaintext, no authentication) requires an explicit \
+                 loopback AEGIS_LISTEN_ADDR such as 127.0.0.1:50051"
+                    .into(),
             ));
         }
         return Ok(TlsMode::InsecureDev);
@@ -180,7 +197,12 @@ fn parse_millis(
 impl RuntimeConfig {
     pub fn from_lookup(get: &dyn Fn(&str) -> Option<String>) -> Result<RuntimeConfig, ConfigError> {
         let env = parse_env(get)?;
-        let listen = get("AEGIS_LISTEN_ADDR").unwrap_or_else(|| "0.0.0.0:50051".to_owned());
+        let listen_raw = get("AEGIS_LISTEN_ADDR").filter(|v| !v.trim().is_empty());
+        let listen_explicit = listen_raw.is_some();
+        let listen = listen_raw.unwrap_or_else(|| "0.0.0.0:50051".to_owned());
+        let listen_addr: SocketAddr = listen.parse().map_err(|_| {
+            ConfigError::Invalid(format!("AEGIS_LISTEN_ADDR {listen:?} is not host:port"))
+        })?;
         let max_concurrency = match get("AEGIS_MAX_CONCURRENCY") {
             None => 64,
             Some(v) => v
@@ -194,13 +216,12 @@ impl RuntimeConfig {
         };
         Ok(RuntimeConfig {
             env,
-            listen: listen.parse().map_err(|_| {
-                ConfigError::Invalid(format!("AEGIS_LISTEN_ADDR {listen:?} is not host:port"))
-            })?,
+            listen: listen_addr,
             limits_file: required(get, "AEGIS_LIMITS_FILE")?.into(),
             identities_file: required(get, "AEGIS_IDENTITIES_FILE")?.into(),
             state_dir: required(get, "AEGIS_STATE_DIR")?.into(),
-            tls: parse_tls(get, env)?,
+            allow_fresh_state: get("AEGIS_ALLOW_FRESH_STATE").as_deref() == Some("1"),
+            tls: parse_tls(get, env, listen_addr, listen_explicit)?,
             signer: parse_signer(get, env)?,
             max_concurrency,
             submit_timeout: parse_millis(get, "AEGIS_SUBMIT_TIMEOUT_MS", 100)?,
@@ -241,6 +262,16 @@ mod tests {
         assert_eq!(c.env, Environment::Development);
         assert!(matches!(c.tls, TlsMode::Mutual(_)));
         assert_eq!(c.max_concurrency, 64);
+    }
+
+    #[test]
+    fn fresh_state_opt_in_is_the_literal_one_only() {
+        let mut m = base();
+        assert!(!parse(&m).unwrap().allow_fresh_state);
+        m.insert("AEGIS_ALLOW_FRESH_STATE", "1");
+        assert!(parse(&m).unwrap().allow_fresh_state);
+        m.insert("AEGIS_ALLOW_FRESH_STATE", "true");
+        assert!(!parse(&m).unwrap().allow_fresh_state);
     }
 
     #[test]
@@ -290,12 +321,41 @@ mod tests {
         m.remove("AEGIS_TLS_CERT");
         assert!(parse(&m).is_err());
         m.insert("AEGIS_INSECURE_DEV", "1");
+        m.insert("AEGIS_LISTEN_ADDR", "127.0.0.1:50051");
         assert_eq!(parse(&m).unwrap().tls, TlsMode::InsecureDev);
         m.insert("AEGIS_INSECURE_DEV", "true");
         assert!(
             parse(&m).is_err(),
             "only the literal 1 enables insecure dev"
         );
+    }
+
+    #[test]
+    fn insecure_dev_requires_an_explicit_loopback_listen_address() {
+        let mut m = base();
+        m.remove("AEGIS_TLS_CERT");
+        m.insert("AEGIS_INSECURE_DEV", "1");
+        assert!(
+            parse(&m).is_err(),
+            "the 0.0.0.0 default must not apply to plaintext"
+        );
+        for bad in [
+            "0.0.0.0:50051",
+            "[::]:50051",
+            "192.168.1.5:50051",
+            "10.0.0.2:50051",
+        ] {
+            m.insert("AEGIS_LISTEN_ADDR", bad);
+            assert!(parse(&m).is_err(), "{bad} must be refused in insecure dev");
+        }
+        for ok in ["127.0.0.1:50051", "[::1]:50051", "127.0.0.2:1"] {
+            m.insert("AEGIS_LISTEN_ADDR", ok);
+            assert_eq!(parse(&m).unwrap().tls, TlsMode::InsecureDev, "{ok}");
+        }
+        // mTLS is unaffected by the listen address
+        let mut secure = base();
+        secure.insert("AEGIS_LISTEN_ADDR", "0.0.0.0:50051");
+        assert!(parse(&secure).is_ok());
     }
 
     #[test]

@@ -24,8 +24,13 @@ BEGIN
         RETURN;
     END IF;
     FOR r IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
-        IF r.schema_name = 'audit'
-           AND r.command_tag IN ('ALTER TABLE', 'ALTER FUNCTION', 'CREATE FUNCTION', 'ALTER TRIGGER', 'ALTER SCHEMA')
+        -- ALTER SCHEMA / CREATE RULE report no schema_name (a schema has none; a rule's identity is 'name on
+        -- audit.audit_events'), and ALTER SCHEMA ... RENAME reports the NEW name, so they are matched separately.
+        -- The only schemas the owner role holds are the locked ones, so every ALTER SCHEMA is refused.
+        IF (r.schema_name = 'audit'
+            AND r.command_tag IN ('ALTER TABLE', 'ALTER FUNCTION', 'CREATE FUNCTION', 'ALTER TRIGGER', 'ALTER SCHEMA'))
+           OR r.command_tag = 'ALTER SCHEMA'
+           OR (r.command_tag IN ('CREATE RULE', 'CREATE TRIGGER') AND r.object_identity ~ '(^|[ ])audit\.')
         THEN
             RAISE EXCEPTION 'audit schema is DDL-locked: % on % is forbidden for non-superusers',
                 r.command_tag, r.object_identity USING ERRCODE = 'insufficient_privilege';

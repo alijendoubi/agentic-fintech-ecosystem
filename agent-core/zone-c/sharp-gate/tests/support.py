@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from afe_sharp import RubricChangeProposal, SharpGate, Stage, StaticRoleAuthorizer
-from afe_sharp.ports import ProposalStore
+from afe_sharp import (
+    AuditEntry,
+    AuditLookup,
+    RubricChangeProposal,
+    SharpGate,
+    Stage,
+    StaticRoleAuthorizer,
+)
+from afe_sharp.ports import AuditSink, ProposalStore
 
 PROPOSER = "reflector-svc"
 ALLOWED = {
@@ -29,15 +39,44 @@ APPROVERS = {
 }
 
 
+@dataclass(frozen=True)
+class Receipt:
+    seq: int
+    hash: str
+
+
+def fake_hash(seq: int, event_type: str, actor: str, payload: Mapping[str, object]) -> str:
+    body = json.dumps([seq, event_type, actor, payload], sort_keys=True, default=str)
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
 @dataclass
 class FakeAudit:
-    fail: bool = False
-    events: list[tuple[str, str, Mapping[str, object]]] = field(default_factory=list)
+    """AuditSink + AuditLookup. With ``backend``/``lookup`` set (Postgres runs) records go to the
+    REAL hash-chained audit table so the insert-time audit-reference trigger can find them."""
 
-    def record(self, event_type: str, actor: str, payload: Mapping[str, object]) -> None:
+    fail: bool = False
+    backend: AuditSink | None = None
+    lookup: AuditLookup | None = None
+    events: list[tuple[str, str, Mapping[str, object]]] = field(default_factory=list)
+    entries: dict[int, AuditEntry] = field(default_factory=dict)
+
+    def record(self, event_type: str, actor: str, payload: Mapping[str, object]) -> Any:
         if self.fail:
             raise RuntimeError("audit unavailable")
         self.events.append((event_type, actor, dict(payload)))
+        if self.backend is not None:
+            return self.backend.record(event_type, actor, payload)
+        seq = len(self.entries) + 1
+        frozen = json.loads(json.dumps(payload))
+        digest = fake_hash(seq, event_type, actor, frozen)
+        self.entries[seq] = AuditEntry(seq, digest, event_type, actor, frozen)
+        return Receipt(seq, digest)
+
+    def find(self, seqs: Sequence[int]) -> Mapping[int, AuditEntry]:
+        if self.lookup is not None:
+            return self.lookup.find(seqs)
+        return {s: self.entries[s] for s in seqs if s in self.entries}
 
 
 class Ticker:
@@ -60,5 +99,7 @@ def make_proposal(pid: str = "p-1", proposer: str = PROPOSER) -> RubricChangePro
     )
 
 
-def make_gate(store: ProposalStore, audit: FakeAudit | object) -> SharpGate:
-    return SharpGate(store, audit, StaticRoleAuthorizer(ALLOWED), clock=Ticker())  # type: ignore[arg-type]
+def make_gate(store: ProposalStore, audit: FakeAudit) -> SharpGate:
+    return SharpGate(
+        store, audit, StaticRoleAuthorizer(ALLOWED), audit_lookup=audit, clock=Ticker()
+    )

@@ -169,6 +169,8 @@ services:
       AEGIS_ENV: production
       AEGIS_LISTEN_ADDR: 0.0.0.0:50051
       AEGIS_STATE_DIR: /var/lib/aegis
+      # Production refuses to boot on an empty state dir. Set to 1 for the FIRST start only, then unset.
+      AEGIS_ALLOW_FRESH_STATE: ${AEGIS_ALLOW_FRESH_STATE:-}
       # Owner-supplied files (no invented risk limits): limits.json, identities.json, hsm_pin in AEGIS_CONFIG_DIR.
       AEGIS_LIMITS_FILE: /cfg/limits.json
       AEGIS_IDENTITIES_FILE: /cfg/identities.json
@@ -343,7 +345,9 @@ services:
       HITL_JWT_SECRET: ${HITL_JWT_SECRET:?set HITL_JWT_SECRET (>= 32 chars, e.g. openssl rand -base64 48)}
       # No HITL backend exists in this repo yet (docs/api-contract.md is PROPOSED). Until one does, every
       # decision fails closed as "not approved".
-      HITL_API_BASE_URL: ${HITL_API_BASE_URL:-http://hitl-backend:4000}
+      HITL_API_BASE_URL: ${HITL_API_BASE_URL:?set HITL_API_BASE_URL to the https:// URL of the HITL backend}
+      HITL_JWT_ISSUER: ${HITL_JWT_ISSUER:?set HITL_JWT_ISSUER (required in production)}
+      HITL_JWT_AUDIENCE: ${HITL_JWT_AUDIENCE:?set HITL_JWT_AUDIENCE (required in production)}
       HITL_API_TOKEN: ${HITL_API_TOKEN:-}
       HITL_ALLOWED_ORIGINS: ${HITL_ALLOWED_ORIGINS:-}
     ports:

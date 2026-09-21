@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+
 from execution_motor.config import MotorConfig
 from execution_motor.errors import ConfigError
 from execution_motor.halt import KillSwitch

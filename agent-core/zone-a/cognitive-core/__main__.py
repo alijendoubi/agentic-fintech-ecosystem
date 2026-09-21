@@ -33,11 +33,11 @@ EXIT_SOURCE = 1
 EXIT_CONFIG = 2
 
 
-def build_sink(settings: RunnerSettings) -> SignalSink:
+def build_sink(settings: RunnerSettings, env: Mapping[str, str] | None = None) -> SignalSink:
     if settings.sink == "log":
         return LogSink()
     protos = load_generated_protos(settings.proto_dir)  # ImportError -> caller exits 2
-    channel = open_aegis_channel(settings.aegis_host, settings.aegis_port)
+    channel = open_aegis_channel(settings.aegis_host, settings.aegis_port, env)
     stub = protos["aegis_pb2_grpc"].AegisStub(channel)
     return AegisGrpcSink(
         stub=stub,
@@ -99,7 +99,7 @@ async def amain(
     try:
         runner_settings = RunnerSettings.from_env(env)
         cognitive = load_settings(env)
-        sink = build_sink(runner_settings)
+        sink = build_sink(runner_settings, env)
         precedents, reflections = build_memory(env, runner_settings)
         graph = graph_factory(cognitive)
     except Exception as exc:  # noqa: BLE001 - any startup failure must exit non-zero, not trade

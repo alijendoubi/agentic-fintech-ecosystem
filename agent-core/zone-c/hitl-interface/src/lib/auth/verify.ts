@@ -1,6 +1,8 @@
 import { errors, jwtVerify } from "jose";
 import { z } from "zod";
 import type { AppConfig } from "@/lib/config";
+import { defaultRevocationList, revocationKey } from "./revocation";
+import type { RevocationList } from "./revocation";
 
 export const ROLES = ["approver", "viewer"] as const;
 export type Role = (typeof ROLES)[number];
@@ -11,6 +13,7 @@ export interface OperatorSession {
   readonly role: Role;
   readonly amr: readonly string[];
   readonly expiresAt: number;
+  readonly jti?: string | null;
   readonly token: string;
 }
 
@@ -21,7 +24,10 @@ export type AuthFailureCode =
   | "bad_signature"
   | "missing_subject"
   | "invalid_role"
-  | "mfa_required";
+  | "mfa_required"
+  | "missing_jti"
+  | "lifetime_too_long"
+  | "revoked";
 
 export type AuthResult =
   | { readonly ok: true; readonly session: OperatorSession }
@@ -48,7 +54,7 @@ const claimsSchema = z.object({
   amr: z.array(z.string()),
 });
 
-type VerifierConfig = Pick<AppConfig, "jwtSecret" | "jwtIssuer" | "jwtAudience">;
+type VerifierConfig = Pick<AppConfig, "jwtSecret" | "jwtIssuer" | "jwtAudience" | "jwtMaxLifetimeSec" | "isProduction">;
 
 function fail(code: AuthFailureCode): AuthResult {
   return { ok: false, code };
@@ -69,6 +75,25 @@ function mapClaimsFailure(payload: Record<string, unknown>): AuthResult {
 }
 
 /**
+ * Production-only claim rules: a `jti` (so a session can be revoked), an `iat`, and a bounded lifetime.
+ * The lifetime is checked twice: exp - iat, and exp - now, so a future-dated `iat` cannot stretch the window.
+ */
+function checkProductionClaims(
+  payload: Record<string, unknown>,
+  exp: number,
+  maxLifetimeSec: number,
+  now: Date,
+): AuthResult | null {
+  if (typeof payload.jti !== "string" || payload.jti.length === 0) return fail("missing_jti");
+  if (typeof payload.iat !== "number") return fail("invalid_token");
+  const nowSec = Math.floor(now.getTime() / 1000);
+  if (exp - payload.iat > maxLifetimeSec || exp - nowSec > maxLifetimeSec + CLOCK_TOLERANCE_SEC) {
+    return fail("lifetime_too_long");
+  }
+  return null;
+}
+
+/**
  * Verifies the operator JWT. Every failure path returns { ok: false } (deny);
  * this function never throws for bad input.
  */
@@ -76,8 +101,11 @@ export async function verifyOperatorToken(
   token: string | null | undefined,
   config: VerifierConfig,
   now: Date = new Date(),
+  revocations: RevocationList = defaultRevocationList(),
 ): Promise<AuthResult> {
   if (!token) return fail("missing_token");
+  // Defence in depth: loadConfig already refuses to start without these in production.
+  if (config.isProduction && (!config.jwtIssuer || !config.jwtAudience)) return fail("invalid_token");
 
   let payload: Record<string, unknown>;
   try {
@@ -100,6 +128,14 @@ export async function verifyOperatorToken(
   }
   if (typeof payload.exp !== "number") return fail("invalid_token");
 
+  if (config.isProduction) {
+    const denied = checkProductionClaims(payload, payload.exp, config.jwtMaxLifetimeSec, now);
+    if (denied) return denied;
+  }
+
+  const jti = typeof payload.jti === "string" && payload.jti.length > 0 ? payload.jti : null;
+  if (revocations.isRevoked(revocationKey({ jti, token }))) return fail("revoked");
+
   return {
     ok: true,
     session: {
@@ -107,6 +143,7 @@ export async function verifyOperatorToken(
       role: claims.data.role,
       amr: claims.data.amr,
       expiresAt: payload.exp,
+      jti,
       token,
     },
   };
@@ -117,6 +154,6 @@ export function canAct(session: Pick<OperatorSession, "role" | "amr">): boolean 
   return session.role === "approver" && session.amr.includes(MFA_METHOD);
 }
 
-export function createHmacVerifier(config: VerifierConfig): TokenVerifier {
-  return { verify: (token) => verifyOperatorToken(token, config) };
+export function createHmacVerifier(config: VerifierConfig, revocations?: RevocationList): TokenVerifier {
+  return { verify: (token) => verifyOperatorToken(token, config, new Date(), revocations) };
 }
