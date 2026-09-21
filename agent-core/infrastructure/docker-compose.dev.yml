@@ -49,3 +49,9 @@ services:
       - "127.0.0.1:50051:50051" # gRPC, plaintext in dev
     networks:
       - dev-host
+
+  aegis-supervisor:
+    environment:
+      AEGIS_ENV: development
+      AEGIS_SUPERVISOR_TARGET: http://aegis:50051
+      AEGIS_SUPERVISOR_INSECURE_DEV: "1" # refused by the binary when AEGIS_ENV is production or unset

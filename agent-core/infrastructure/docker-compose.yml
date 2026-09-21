@@ -163,6 +163,7 @@ services:
       dockerfile: zone-b/aegis/Dockerfile
       args:
         AEGIS_FEATURES: ${AEGIS_FEATURES:-pkcs11}
+    image: afe-aegis:local # also used by aegis-supervisor
     container_name: afe-aegis
     environment:
       AEGIS_ENV: production
@@ -193,6 +194,36 @@ services:
       - ALL
     restart: unless-stopped
     # HEALTHCHECK is defined in the image (TCP connect to the listen port; it does not do the mTLS handshake).
+
+  # Independent liveness Supervisor (`aegis supervisor`): same image, separate process and identity. It probes
+  # Aegis over mTLS and latches the HARD kill switch when Aegis stops answering (see zone-b/aegis/README.md).
+  # Its client certificate CN needs the roles state-reader + kill-trigger in the identities file.
+  aegis-supervisor:
+    image: afe-aegis:local
+    command: ["supervisor"]
+    container_name: afe-aegis-supervisor
+    environment:
+      AEGIS_ENV: production
+      AEGIS_SUPERVISOR_TARGET: https://aegis:50051
+      AEGIS_SUPERVISOR_TLS_CA: /tls/ca.pem
+      AEGIS_SUPERVISOR_TLS_CERT: /tls/client.pem
+      AEGIS_SUPERVISOR_TLS_KEY: /tls/client.key
+      AEGIS_SUPERVISOR_TRIP_AFTER_MS: ${AEGIS_SUPERVISOR_TRIP_AFTER_MS:-60000} # allowed 10000-60000
+      AEGIS_SUPERVISOR_PROBE_INTERVAL_MS: ${AEGIS_SUPERVISOR_PROBE_INTERVAL_MS:-1000}
+      AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS: ${AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS:-2000}
+    volumes:
+      - ${AEGIS_SUPERVISOR_TLS_DIR:-./secrets/supervisor-tls}:/tls:ro
+    depends_on:
+      - aegis # started, not healthy: the Supervisor must keep running (and trip) while Aegis is down
+    healthcheck:
+      disable: true # the image's TCP check targets the Aegis listen port, which does not apply here
+    networks:
+      - zone-ab-grpc
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
 
   # execution-motor is a library today: there is no Dockerfile, no entrypoint and no gRPC server
   # (zone-b/execution-motor has models/limits/alpaca client/proto adapter and tests only). It is kept
