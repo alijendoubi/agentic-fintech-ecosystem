@@ -1,0 +1,13 @@
+# Applies when building with context agent-core/ and -f zone-a/cognitive-core/Dockerfile.
+# Everything is excluded except what the Dockerfile COPYs (keeps rust `target/` dirs etc. out).
+*
+!shared/proto
+!zone-a/cognitive-core
+!zone-a/vector-db
+**/__pycache__
+**/*.pyc
+**/tests
+**/conftest.py
+**/.pytest_cache
+**/.coverage
+zone-a/cognitive-core/Dockerfile*

@@ -189,6 +189,15 @@ class TradeSignal(BaseModel):
         return self
 
 
+PrecedentStatus = Literal["none_configured", "ok", "unavailable"]
+MAX_PRECEDENTS = 5
+MAX_PRECEDENT_CHARS = 400
+PrecedentList = Annotated[
+    tuple[Annotated[str, Field(max_length=MAX_PRECEDENT_CHARS)], ...],
+    Field(max_length=MAX_PRECEDENTS),
+]
+
+
 class DebateState(BaseModel):
     """State threaded through the LangGraph nodes (nodes return updates, never mutate)."""
 
@@ -197,6 +206,10 @@ class DebateState(BaseModel):
     market_context: MarketContext
     regime: RegimeLabel
     regime_confidence: UnitFloat
+    # Optional vector-memory context. "unavailable" (store failed) is deliberately distinct
+    # from "ok" with no precedents (store answered, nothing similar): the prompts say so.
+    precedents: PrecedentList = ()
+    precedents_status: PrecedentStatus = "none_configured"
     # time.monotonic() at debate start; set by the first node, drives the overall deadline.
     debate_started_at: float | None = None
     blue_thesis: BlueThesis | None = None

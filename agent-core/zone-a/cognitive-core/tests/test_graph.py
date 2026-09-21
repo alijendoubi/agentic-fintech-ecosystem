@@ -11,6 +11,7 @@ from cognitive_core.graph import (
     _red_step,
     build_debate_graph,
     run_debate,
+    run_debate_with_state,
 )
 from cognitive_core.models import (
     BlueThesis,
@@ -312,3 +313,22 @@ async def test_low_omega_abstains() -> None:
     signal = await run_debate(graph, initial_state(), settings=settings, quantity=10.0)
     assert signal.status == SignalStatus.SIGNAL_ABSTAIN
     assert signal.side == SignalSide.SIDE_UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_run_debate_with_state_returns_the_final_state_or_none_on_graph_failure() -> None:
+    settings = make_settings()
+    signal, state = await run_debate_with_state(
+        _graph(settings), initial_state(), settings=settings, quantity=10.0
+    )
+    assert state is not None and state.judge_verdict is not None
+    assert signal.status == SignalStatus.SIGNAL_PENDING
+
+    class _Boom:
+        async def ainvoke(self, state: Any) -> Any:
+            raise RuntimeError("graph exploded")
+
+    aborted, no_state = await run_debate_with_state(
+        _Boom(), initial_state(), settings=settings, quantity=10.0
+    )
+    assert no_state is None and aborted.status == SignalStatus.SIGNAL_ABSTAIN
