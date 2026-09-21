@@ -51,7 +51,9 @@ VOLUME ["/var/lib/aegis"]
 EXPOSE 50051
 USER 65532:65532
 # The healthcheck is the binary itself (TCP connect to the listen port), so no
-# shell, procps or curl is needed in the image.
+# shell, procps or curl is needed in the image. The Supervisor runs from this
+# same image (`command: ["supervisor"]`) but listens on nothing: disable this
+# healthcheck for that service and rely on a restart policy (see README).
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
   CMD ["/usr/local/bin/aegis", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/aegis"]
