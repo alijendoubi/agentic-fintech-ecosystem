@@ -52,3 +52,14 @@ class StoreError(SharpError):
 
 class AuditFailureError(SharpError):
     """The audit logger refused the record; the transition was NOT performed."""
+
+
+class AbortNotRecordedError(AuditFailureError):
+    """The transition was audited but could not be stored, AND the compensating
+    ``sharp.transition_aborted`` audit record could not be written. The transition was NOT
+    performed, but the audit log holds an orphaned, unmarked record (``audit_seq``) that an operator
+    must reconcile. ``__cause__`` is the original store failure."""
+
+    def __init__(self, message: str, *, audit_seq: int | None) -> None:
+        super().__init__(message)
+        self.audit_seq = audit_seq

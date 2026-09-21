@@ -2,6 +2,7 @@
 docs/processes/sharp-promotion.md."""
 
 from afe_sharp.errors import (
+    AbortNotRecordedError,
     AuditFailureError,
     ConcurrencyError,
     DistinctApproverError,
@@ -40,6 +41,7 @@ from afe_sharp.ports import (
 
 __all__ = [
     "PIPELINE",
+    "AbortNotRecordedError",
     "Approval",
     "ApproverAuthorizer",
     "AuditEntry",

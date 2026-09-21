@@ -19,6 +19,7 @@ from support import APPROVERS, PROPOSER, FakeAudit, make_gate, make_proposal
 
 from afe_sharp import (
     PIPELINE,
+    AbortNotRecordedError,
     AuditFailureError,
     ConcurrencyError,
     DistinctApproverError,
@@ -284,14 +285,44 @@ def test_concurrent_approvals_yield_exactly_one_winner(
 
 
 class _FailingStore:
-    def __init__(self, inner: ProposalStore) -> None:
+    """Wraps a store whose ``append`` fails with ``error``. ``lands_first`` simulates a commit whose
+    acknowledgement is lost (the row IS stored, then the call raises); ``load_fails`` makes the
+    follow-up read fail too."""
+
+    def __init__(
+        self,
+        inner: ProposalStore,
+        error: Exception | None = None,
+        lands_first: bool = False,
+        load_fails: bool = False,
+    ) -> None:
         self.inner = inner
+        self.error = error or StoreError("disk full")
+        self.lands_first = lands_first
+        self.load_fails = False
+        self._load_fails_after_append = load_fails
 
     def load(self, proposal_id: str) -> Any:
+        if self.load_fails:
+            raise StoreError("read failed too")
         return self.inner.load(proposal_id)
 
     def append(self, event: Any, expected_version: int) -> None:
-        raise StoreError("disk full")
+        if self.lands_first:
+            self.inner.append(event, expected_version)
+        self.load_fails = self._load_fails_after_append
+        raise self.error
+
+
+class _AbortAuditDown(FakeAudit):
+    def record(self, event_type: str, actor: str, payload: Any) -> Any:
+        if event_type == "sharp.transition_aborted":
+            raise RuntimeError("audit down")
+        return super().record(event_type, actor, payload)
+
+
+def _aborts(audit: FakeAudit) -> list[Any]:
+    return [e for e in audit.events if e[0] == "sharp.transition_aborted"]
 
 
 def test_store_failure_after_audit_is_recorded_as_aborted(
@@ -301,22 +332,78 @@ def test_store_failure_after_audit_is_recorded_as_aborted(
     broken = make_gate(_FailingStore(store), audit)
     with pytest.raises(StoreError, match="disk full"):
         broken.approve(pid, "compliance-1", Stage.COMPLIANCE)
-    assert audit.events[-1][0] == "sharp.transition_aborted"
-    assert audit.events[-1][2]["reason"] == "StoreError"
+    abort = _aborts(audit)[-1]
+    assert audit.events[-1] is abort
+    assert abort[2]["reason"] == "StoreError"
+    assert abort[2]["store_outcome"] == "absent"
+    orphan = audit.events[-2]  # the transition record written before the failed append
+    assert orphan[0] == "sharp.approved"
+    assert abort[2]["audit_seq"] is not None
+    assert abort[2]["proposal_id"] == pid
     assert make_gate(store, audit).get(pid).state is Stage.DRAFT
 
-    class _AbortAuditDown(FakeAudit):
-        def record(self, event_type: str, actor: str, payload: Any) -> Any:
-            if event_type == "sharp.transition_aborted":
-                raise RuntimeError("audit down")
-            return super().record(event_type, actor, payload)
 
+def test_any_store_failure_not_only_sharp_errors_gets_a_compensating_record(
+    store: ProposalStore, audit: FakeAudit, request: pytest.FixtureRequest
+) -> None:
+    pid = _submit(make_gate(store, audit), request)
+    for failure in (RuntimeError("boom"), OSError("socket closed"), ValueError("bad")):
+        before = len(_aborts(audit))
+        broken = make_gate(_FailingStore(store, error=failure), audit)
+        with pytest.raises(type(failure)):  # the original error, unchanged
+            broken.approve(pid, "compliance-1", Stage.COMPLIANCE)
+        assert len(_aborts(audit)) == before + 1
+        assert _aborts(audit)[-1][2]["reason"] == type(failure).__name__
+    assert make_gate(store, audit).get(pid).state is Stage.DRAFT
+
+
+def test_a_failed_compensating_record_is_raised_never_swallowed(
+    store: ProposalStore, audit: FakeAudit, request: pytest.FixtureRequest
+) -> None:
+    pid = _submit(make_gate(store, audit), request)
     down = _AbortAuditDown(backend=audit.backend, lookup=audit.lookup, entries=audit.entries)
-    flaky = make_gate(
-        _FailingStore(store), down
-    )  # abort-audit failing must not mask the error
-    with pytest.raises(StoreError, match="disk full"):
+    flaky = make_gate(_FailingStore(store), down)
+    with pytest.raises(AbortNotRecordedError, match="disk full") as info:
         flaky.approve(pid, "compliance-1", Stage.COMPLIANCE)
+    assert isinstance(info.value, AuditFailureError)  # still a fail-closed audit error
+    assert isinstance(info.value.__cause__, StoreError)  # the original failure is preserved
+    assert "audit down" in str(info.value)
+    assert info.value.audit_seq is not None  # operators can find the orphaned record
+    assert make_gate(store, audit).get(pid).state is Stage.DRAFT
+
+
+def test_a_commit_whose_ack_was_lost_is_not_reported_as_aborted(
+    store: ProposalStore, audit: FakeAudit, request: pytest.FixtureRequest
+) -> None:
+    """The row landed but the call raised: claiming 'aborted' would be a lie in the audit log."""
+    pid = _submit(make_gate(store, audit), request)
+    lossy = make_gate(_FailingStore(store, error=OSError("ack lost"), lands_first=True), audit)
+    record = lossy.approve(pid, "compliance-1", Stage.COMPLIANCE)
+    assert record.state is Stage.COMPLIANCE
+    assert _aborts(audit) == []
+
+
+def test_unverifiable_outcome_is_flagged_in_the_compensating_record(
+    store: ProposalStore, audit: FakeAudit, request: pytest.FixtureRequest
+) -> None:
+    pid = _submit(make_gate(store, audit), request)
+    failing = _FailingStore(store, error=OSError("gone"), load_fails=True)
+    with pytest.raises(OSError, match="gone"):
+        make_gate(failing, audit).approve(pid, "compliance-1", Stage.COMPLIANCE)
+    assert _aborts(audit)[-1][2]["store_outcome"] == "unverified"
+
+
+def test_audit_sink_without_a_record_reference_blocks_the_transition(
+    store: ProposalStore, request: pytest.FixtureRequest
+) -> None:
+    class _NoReceipt(FakeAudit):
+        def record(self, event_type: str, actor: str, payload: Any) -> Any:
+            super().record(event_type, actor, payload)  # committed, but says nothing about it
+
+    gate = make_gate(store, _NoReceipt())
+    with pytest.raises(AuditFailureError, match="record reference"):
+        gate.submit(make_proposal(_pid(request)))
+    assert store.load(_pid(request)) == []
 
 
 def test_history_is_immutable_and_records_are_frozen(
