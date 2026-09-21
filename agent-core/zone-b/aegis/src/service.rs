@@ -269,9 +269,6 @@ impl pb::Aegis for AegisService {
             .await?;
         match out {
             Ok(state) => Ok(Response::new(state)),
-            Err(ControllerError::TooManyLatches) => {
-                Err(Status::resource_exhausted("too many active latches"))
-            }
             Err(ControllerError::NotPersisted) => Err(Status::internal(
                 "latched but not persisted; state forced to HARD",
             )),

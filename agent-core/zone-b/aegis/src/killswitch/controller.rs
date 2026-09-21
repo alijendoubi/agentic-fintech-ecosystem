@@ -25,8 +25,6 @@ use crate::pb::{self, KillSwitchLevel};
 pub enum ControllerError {
     #[error("trigger latched in memory but could not be persisted (state forced to HARD)")]
     NotPersisted,
-    #[error("too many active latches")]
-    TooManyLatches,
 }
 
 pub struct KillController {
@@ -88,7 +86,7 @@ impl KillController {
         };
         if let Err(e) = store.save(ks.state()) {
             tracing::error!(error = %e, "initial kill-switch state could not be persisted; forcing HARD");
-            let _ = ks.trigger(
+            ks.trigger(
                 KillSwitchLevel::KillLevelHard as i32,
                 "initial persist failed",
                 STORE_FAILURE_ACTOR,
@@ -169,8 +167,16 @@ impl KillController {
                 trigger_id,
                 reason,
                 actor_id,
+                evicted,
                 ..
-            } => (trigger_id.clone(), actor_id.clone(), reason.clone()),
+            } => {
+                let reason = if evicted.is_empty() {
+                    reason.clone()
+                } else {
+                    format!("{reason} [evicted latches: {}]", evicted.join(","))
+                };
+                (trigger_id.clone(), actor_id.clone(), reason)
+            }
             KillEvent::Reset {
                 trigger_id,
                 approvers,
@@ -203,7 +209,7 @@ impl KillController {
             Ok(()) => true,
             Err(e) => {
                 tracing::error!(error = %e, "kill-switch state not persisted; forcing HARD");
-                let _ = ks.trigger(
+                ks.trigger(
                     KillSwitchLevel::KillLevelHard as i32,
                     "state store write failed",
                     STORE_FAILURE_ACTOR,
@@ -226,9 +232,7 @@ impl KillController {
             return Ok(hard_placeholder());
         };
         let prev = ks.effective_level();
-        let ev = ks
-            .trigger(raw_level, reason, actor, now)
-            .map_err(|_| ControllerError::TooManyLatches)?;
+        let ev = ks.trigger(raw_level, reason, actor, now);
         let persisted = self.persist_or_force_hard(&mut ks, now);
         let audit = self.kill_audit("latch", &ev, prev, &ks);
         let state = to_pb(&ks);
