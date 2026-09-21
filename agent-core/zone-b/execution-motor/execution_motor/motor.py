@@ -21,6 +21,7 @@ import structlog
 
 from .attestation import AttestationVerifier, DenyAllVerifier, evaluate_attestation
 from .broker import Broker, BrokerOrder, BrokerOrderRequest
+from .canonical import SIDE_SELL_SHORT
 from .config import MotorConfig
 from .errors import BrokerRejectedError, ConfigError, SubmitOutcomeUnknown
 from .halt import KillSwitch
@@ -75,6 +76,10 @@ class ExecutionMotor:
 
     # ------------------------------------------------------------------ public
 
+    @property
+    def allow_short_selling(self) -> bool:
+        return self._config.allow_short_selling
+
     def execute(
         self, attested: AttestedOrder, *, reference_price: Decimal | None = None
     ) -> ExecutionReport:
@@ -125,6 +130,8 @@ class ExecutionMotor:
         denial = evaluate_attestation(self._verifier, attested)
         if denial is not None:
             return self._rejected(order, denial, "", received, ref)
+        if attested.attestation.attested_side == SIDE_SELL_SHORT and not self.allow_short_selling:
+            return self._rejected(order, RejectReason.SHORT_NOT_PERMITTED, "", received, ref)
         timing = self._timing_reason(attested, received)
         if timing is not None:
             return self._rejected(order, timing, "", received, ref)

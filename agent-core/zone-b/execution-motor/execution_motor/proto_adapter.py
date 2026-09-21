@@ -147,18 +147,27 @@ def _build_order(msg: Any) -> Order:
         ) from exc
 
 
-def attested_order_from_proto(order: Any, attestation: Any) -> AttestedOrder:
-    """Validate and convert. Raises OrderValidationError on anything ambiguous."""
+def attested_order_from_proto(
+    order: Any, attestation: Any, *, allow_short: bool = False
+) -> AttestedOrder:
+    """Validate and convert. Raises OrderValidationError on anything ambiguous.
+
+    Side mapping: ORDER_BUY <-> BUY; ORDER_SELL <-> SELL, or SELL_SHORT when ``allow_short``
+    (the signed digest decides which one Aegis signed). With shorts disabled a SELL_SHORT
+    attestation never matches and the order is denied as ATTESTATION_INVALID (fail closed).
+    """
     _check_consistency(order, attestation)
     domain_order = _build_order(order)
+    text, side_name = _select_signed_text(order, attestation, allow_short=allow_short)
     return AttestedOrder(
         order=domain_order,
         attestation=Attestation(
             signature=bytes(attestation.signature),
             key_id=attestation.key_id,
-            signed_payload=_select_signed_text(order, attestation, allow_short=False)[0],
+            signed_payload=text,
             payload_sha256=bytes(attestation.payload_sha256),
             decided_at_ns=int(attestation.decided_at_ns),
             expires_at_ns=int(attestation.expires_at_ns),
+            attested_side=side_name,
         ),
     )

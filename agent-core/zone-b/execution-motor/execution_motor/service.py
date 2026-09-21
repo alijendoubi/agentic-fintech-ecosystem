@@ -67,7 +67,9 @@ def handle_decision(
     if not decision.HasField("order") or not decision.HasField("attestation"):
         return _invalid_report(decision, "APPROVED decision lacks order or attestation", now_ns)
     try:
-        attested = attested_order_from_proto(decision.order, decision.attestation)
+        attested = attested_order_from_proto(
+            decision.order, decision.attestation, allow_short=motor.allow_short_selling
+        )
     except OrderValidationError as exc:
         return _invalid_report(decision, str(exc), now_ns)
     return motor.execute(attested, reference_price=reference_price)
