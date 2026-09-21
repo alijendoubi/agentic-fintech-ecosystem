@@ -6,6 +6,7 @@ import hashlib
 from types import ModuleType
 
 import pytest
+
 from execution_motor.models import ExecutionStatus, RejectReason, Side
 from execution_motor.proto_adapter import attested_order_from_proto
 from execution_motor.service import handle_decision

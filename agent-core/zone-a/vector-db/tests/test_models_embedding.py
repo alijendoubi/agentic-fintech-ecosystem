@@ -4,6 +4,7 @@ import math
 from collections.abc import Sequence
 
 import pytest
+
 from afe_vector_memory import (
     EmbeddingError,
     HashingEmbedder,

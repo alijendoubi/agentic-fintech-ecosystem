@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import ModuleType
 
 import pytest
+
 from execution_motor.errors import OrderValidationError
 from execution_motor.models import ExecutionStatus
 from execution_motor.proto_adapter import attested_order_from_proto

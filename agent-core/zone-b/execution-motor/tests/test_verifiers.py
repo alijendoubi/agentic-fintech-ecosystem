@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     Prehashed,
     decode_dss_signature,
 )
+
 from execution_motor.attestation import evaluate_attestation
 from execution_motor.canonical import build_canonical_text
 from execution_motor.config import MotorConfig

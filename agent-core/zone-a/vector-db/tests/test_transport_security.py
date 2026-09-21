@@ -7,6 +7,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
 from afe_vector_memory import MemoryConfigError, VectorMemorySettings, open_chroma_store
 from tests.fake_chroma import FakeClient
 

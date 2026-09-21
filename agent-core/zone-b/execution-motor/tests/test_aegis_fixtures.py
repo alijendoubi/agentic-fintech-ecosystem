@@ -10,6 +10,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
 from execution_motor.canonical import CANONICAL_VERSION, build_canonical_text
 from execution_motor.errors import OrderValidationError
 from execution_motor.proto_adapter import canonical_attestation_text

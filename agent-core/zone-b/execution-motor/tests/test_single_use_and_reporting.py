@@ -8,6 +8,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
 from execution_motor.aegis_reporter import (
     AegisReporter,
     GrpcReportTransport,
