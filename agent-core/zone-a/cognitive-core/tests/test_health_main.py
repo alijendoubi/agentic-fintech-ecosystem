@@ -254,7 +254,7 @@ def test_build_sink_grpc_uses_generated_stubs(
     from cognitive_core.runner_config import RunnerSettings
     from cognitive_core.sinks import AegisGrpcSink
 
-    monkeypatch.setattr(entrypoint, "open_aegis_channel", lambda host, port: object())
+    monkeypatch.setattr(entrypoint, "open_aegis_channel", lambda host, port, env=None: object())
     settings = RunnerSettings.from_env({"AFE_PROTO_DIR": str(generated_dir)})
     monkeypatch.setattr(entrypoint, "load_generated_protos", lambda _d: _stub_protos(generated_dir))
     assert isinstance(entrypoint.build_sink(settings), AegisGrpcSink)
