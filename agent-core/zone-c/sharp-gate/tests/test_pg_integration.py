@@ -89,6 +89,56 @@ def test_app_role_cannot_ddl_the_sharp_schema(pg: PgInstance) -> None:  # noqa: 
             _exec(pg.app_dsn, sql)
 
 
+_SHARP_TRIGGERS = (
+    "sharp_no_update",
+    "sharp_no_delete",
+    "sharp_no_truncate",
+    "sharp_enforce_transition",
+    "sharp_enforce_audit_reference",
+)
+
+
+def test_every_sharp_trigger_is_enabled_always(pg: PgInstance) -> None:  # noqa: F811
+    with psycopg2.connect(pg.app_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT tgname, tgenabled FROM pg_trigger "
+            "WHERE tgrelid = 'sharp.transitions'::regclass AND NOT tgisinternal"
+        )
+        states = dict(cur.fetchall())
+    assert states == dict.fromkeys(_SHARP_TRIGGERS, "A")  # 'A' = fires in every replication role
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "ALTER TABLE sharp.transitions DISABLE TRIGGER sharp_enforce_transition",
+        "ALTER TABLE sharp.transitions DISABLE TRIGGER sharp_enforce_audit_reference",
+        "ALTER TABLE sharp.transitions DISABLE TRIGGER USER",
+        "ALTER TABLE sharp.transitions ENABLE TRIGGER sharp_enforce_transition",
+        "ALTER TABLE sharp.transitions DROP CONSTRAINT sharp_transitions_states_check",
+        "ALTER TABLE sharp.transitions DROP COLUMN audit_seq",
+        "ALTER TABLE sharp.transitions RENAME TO transitions_old",
+        "ALTER FUNCTION sharp.enforce_transition() SET search_path = public",
+        "CREATE OR REPLACE FUNCTION sharp.enforce_transition() RETURNS trigger "
+        "LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+        "DROP TRIGGER sharp_enforce_transition ON sharp.transitions",
+        "DROP FUNCTION sharp.enforce_audit_reference() CASCADE",
+        "DROP TABLE sharp.transitions",
+        "CREATE RULE sharp_bypass AS ON INSERT TO sharp.transitions DO INSTEAD NOTHING",
+        "CREATE TRIGGER sharp_extra BEFORE INSERT ON sharp.transitions "
+        "FOR EACH ROW EXECUTE FUNCTION sharp.enforce_transition()",
+        "CREATE TABLE sharp.evil (x int)",
+        "ALTER SCHEMA sharp RENAME TO sharp_old",
+        "DROP SCHEMA sharp CASCADE",
+    ],
+)
+def test_owner_cannot_weaken_the_sharp_schema(pg: PgInstance, sql: str) -> None:  # noqa: F811
+    """The DDL guard extends to schema 'sharp': the owner role can no longer disable, replace or
+    drop the protections (only a superuser, deliberately, can)."""
+    with pytest.raises(psycopg2.Error, match="sharp schema is DDL-locked"):
+        _exec(pg.owner_dsn, sql)
+
+
 def test_unreachable_database_fails_closed() -> None:
     down = DsnConnectionSource("host=127.0.0.1 port=1 dbname=x user=x connect_timeout=1")
     with pytest.raises(StoreError):
