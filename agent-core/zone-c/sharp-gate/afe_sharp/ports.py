@@ -3,16 +3,39 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, Protocol
+from typing import Protocol
 
-from afe_sharp.models import Stage, TransitionEvent, normalise_identity
+from afe_sharp.models import AuditEntry, AuditLookup, Stage, TransitionEvent, normalise_identity
+
+__all__ = [
+    "ApproverAuthorizer",
+    "AuditEntry",
+    "AuditLookup",
+    "AuditReceipt",
+    "AuditSink",
+    "ProposalStore",
+    "StaticRoleAuthorizer",
+]
+
+
+class AuditReceipt(Protocol):
+    """What a committed audit write returns: the record's position and hash in the chain (both
+    are stored with the transition and verified on every read)."""
+
+    @property
+    def seq(self) -> int: ...
+
+    @property
+    def hash(self) -> str: ...
 
 
 class AuditSink(Protocol):
     """Structurally satisfied by ``afe_audit.AuditLogger``. Raising means the transition must not
-    happen."""
+    happen. The returned receipt must identify the committed record."""
 
-    def record(self, event_type: str, actor: str, payload: Mapping[str, object]) -> Any: ...
+    def record(
+        self, event_type: str, actor: str, payload: Mapping[str, object]
+    ) -> AuditReceipt: ...
 
 
 class ProposalStore(Protocol):

@@ -20,26 +20,39 @@ from afe_sharp.memory_store import InMemoryProposalStore
 from afe_sharp.models import (
     PIPELINE,
     Approval,
+    AuditEntry,
+    AuditLookup,
     ProposalRecord,
     RubricChangeProposal,
     Stage,
     TransitionEvent,
     normalise_identity,
 )
+from afe_sharp.pg_audit import PostgresAuditLookup
 from afe_sharp.pg_store import PostgresProposalStore
-from afe_sharp.ports import ApproverAuthorizer, AuditSink, ProposalStore, StaticRoleAuthorizer
+from afe_sharp.ports import (
+    ApproverAuthorizer,
+    AuditReceipt,
+    AuditSink,
+    ProposalStore,
+    StaticRoleAuthorizer,
+)
 
 __all__ = [
     "PIPELINE",
     "Approval",
     "ApproverAuthorizer",
+    "AuditEntry",
     "AuditFailureError",
+    "AuditLookup",
+    "AuditReceipt",
     "AuditSink",
     "ConcurrencyError",
     "DistinctApproverError",
     "DuplicateProposalError",
     "InMemoryProposalStore",
     "NotAuthorizedError",
+    "PostgresAuditLookup",
     "PostgresProposalStore",
     "ProposalClosedError",
     "ProposalRecord",

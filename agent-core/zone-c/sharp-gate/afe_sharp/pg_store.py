@@ -23,7 +23,14 @@ from psycopg2 import errors as pg_errors
 from afe_sharp.errors import ConcurrencyError, StoreError
 from afe_sharp.models import Stage, TransitionEvent
 
-_COLUMNS = "proposal_id, version, kind, from_state, to_state, actor, occurred_at, detail::text"
+_COLUMNS = (
+    "proposal_id, version, kind, from_state, to_state, actor, occurred_at, detail::text, "
+    "audit_seq, audit_hash"
+)
+_INSERT_COLUMNS = (
+    "proposal_id, version, kind, from_state, to_state, actor, occurred_at, detail, "
+    "audit_seq, audit_hash"
+)
 
 
 class ConnectionSource(Protocol):
@@ -76,8 +83,8 @@ class PostgresProposalStore:
             if row is None or int(row[0]) != expected_version:
                 raise ConcurrencyError(f"expected version {expected_version}, store has {row}")
             cur.execute(
-                "INSERT INTO sharp.transitions (proposal_id, version, kind, from_state, to_state, "
-                "actor, occurred_at, detail) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+                f"INSERT INTO sharp.transitions ({_INSERT_COLUMNS}) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
                 (
                     event.proposal_id,
                     event.version,
@@ -87,12 +94,15 @@ class PostgresProposalStore:
                     event.actor,
                     event.occurred_at,
                     event.detail_json,
+                    event.audit_seq,
+                    event.audit_hash,
                 ),
             )
 
 
 def _event(row: tuple[Any, ...]) -> TransitionEvent:
-    proposal_id, version, kind, from_state, to_state, actor, occurred_at, detail = row
+    proposal_id, version, kind, from_state, to_state, actor, occurred_at, detail = row[:8]
+    audit_seq, audit_hash = row[8:]
     assert isinstance(occurred_at, datetime)
     return TransitionEvent(
         proposal_id=proposal_id,
@@ -103,4 +113,6 @@ def _event(row: tuple[Any, ...]) -> TransitionEvent:
         actor=actor,
         occurred_at=occurred_at,
         detail_json=detail,
+        audit_seq=int(audit_seq),
+        audit_hash=audit_hash,
     )

@@ -13,9 +13,9 @@ import json
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from afe_sharp.errors import ProposalValidationError, StoreError
 
@@ -129,11 +129,47 @@ class TransitionEvent:
     actor: str
     occurred_at: datetime
     detail_json: str = field(default="{}")
+    # Reference to the hash-chained audit record written for this transition (set by the gate
+    # after the audit write; a stored row without it is rejected by the database and by fold()).
+    audit_seq: int | None = None
+    audit_hash: str | None = None
 
     @property
     def detail(self) -> dict[str, Any]:
         detail: dict[str, Any] = json.loads(self.detail_json)
         return detail
+
+
+@dataclass(frozen=True)
+class AuditEntry:
+    """A record read back from the hash-chained audit log."""
+
+    seq: int
+    hash: str
+    event_type: str
+    actor: str
+    payload: Mapping[str, Any]
+
+
+class AuditLookup(Protocol):
+    """Read side of the audit log. Returns the records that exist for the given sequence numbers
+    (absent ones are simply missing from the result); raises StoreError if it cannot answer."""
+
+    def find(self, seqs: Sequence[int]) -> Mapping[int, AuditEntry]: ...
+
+
+def transition_payload(event: TransitionEvent) -> dict[str, Any]:
+    """The payload written to the audit log for a transition. The database trigger rebuilds the
+    same document from the row, so the two must stay identical."""
+    return {
+        "proposal_id": event.proposal_id,
+        "version": event.version,
+        "kind": event.kind,
+        "from_state": event.from_state.value if event.from_state else None,
+        "to_state": event.to_state.value,
+        "occurred_at": event.occurred_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "detail": event.detail,
+    }
 
 
 @dataclass(frozen=True)
@@ -195,11 +231,37 @@ def _stored_proposal(first: TransitionEvent) -> RubricChangeProposal:
     return proposal
 
 
-def fold(events: Sequence[TransitionEvent]) -> ProposalRecord:
+def _verify_audit_records(events: Sequence[TransitionEvent], audit: AuditLookup) -> None:
+    """Every stored transition must reference an existing audit-chain record that says the same
+    thing (hash, event type, actor and the full transition payload); one record backs one row."""
+    seqs: list[int] = []
+    for event in events:
+        seq, digest = event.audit_seq, event.audit_hash
+        if isinstance(seq, bool) or not isinstance(seq, int) or not isinstance(digest, str):
+            raise StoreError(f"transition {event.version} has no audit reference")
+        seqs.append(seq)
+    if len(set(seqs)) != len(seqs):
+        raise StoreError("one audit record is referenced by more than one transition")
+    found = audit.find(seqs)
+    for event, seq in zip(events, seqs, strict=True):
+        entry = found.get(seq)
+        if entry is None:
+            raise StoreError(f"no audit record {seq} for transition {event.version}")
+        if (
+            entry.hash != event.audit_hash
+            or entry.event_type != f"sharp.{event.kind}"
+            or entry.actor != event.actor
+            or dict(entry.payload) != transition_payload(event)
+        ):
+            raise StoreError(f"audit record {seq} does not match transition {event.version}")
+
+
+def fold(events: Sequence[TransitionEvent], audit: AuditLookup) -> ProposalRecord:
     """Rebuild the current record from history, re-verifying every invariant the database trigger
     enforces at insert time (sequential versions, legal transitions, no stage skips, submitter
-    never approves, one stage per approver, a rejection needs a reason). Any inconsistency raises
-    StoreError: a history that is not fully valid is never reported as advanced or PROMOTED."""
+    never approves, one stage per approver, a rejection needs a reason) AND that each transition is
+    backed by a matching audit-chain record. Any inconsistency raises StoreError: a history that is
+    not fully valid is never reported as advanced or PROMOTED."""
     if not events or events[0].kind != "submitted":
         raise StoreError("history must start with a 'submitted' event")
     proposal = _stored_proposal(events[0])
@@ -234,6 +296,7 @@ def fold(events: Sequence[TransitionEvent]) -> ProposalRecord:
         else:
             raise StoreError(f"unknown event kind at version {index}")
         state = event.to_state
+    _verify_audit_records(events, audit)
     return ProposalRecord(proposal, state, len(events), tuple(approvals), rejected_by, reason)
 
 

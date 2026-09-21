@@ -7,12 +7,13 @@ import json
 import subprocess
 import threading
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from afe_audit import DsnConnectionSource
+from afe_audit import AuditLogger, DsnConnectionSource
 from pg_harness import DB_NAME, PgInstance, docker_available, postgres_container
 from support import APPROVERS, PROPOSER, FakeAudit, make_gate, make_proposal
 
@@ -24,6 +25,7 @@ from afe_sharp import (
     DuplicateProposalError,
     InMemoryProposalStore,
     NotAuthorizedError,
+    PostgresAuditLookup,
     PostgresProposalStore,
     ProposalClosedError,
     ProposalValidationError,
@@ -35,6 +37,7 @@ from afe_sharp import (
     TransitionEvent,
     UnknownProposalError,
 )
+from afe_sharp.models import transition_payload
 from afe_sharp.ports import ProposalStore
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
@@ -71,8 +74,14 @@ def store(request: pytest.FixtureRequest) -> ProposalStore:
 
 
 @pytest.fixture
-def audit() -> FakeAudit:
-    return FakeAudit()
+def audit(store: ProposalStore, request: pytest.FixtureRequest) -> FakeAudit:
+    """In-memory audit for the memory store; the REAL hash-chained audit table for Postgres, since
+    the insert trigger requires every transition to reference an existing audit record."""
+    if not isinstance(store, PostgresProposalStore):
+        return FakeAudit()
+    pg: PgInstance = request.getfixturevalue("pg")
+    source = DsnConnectionSource(pg.app_dsn)
+    return FakeAudit(backend=AuditLogger(source), lookup=PostgresAuditLookup(source))
 
 
 @pytest.fixture
@@ -145,7 +154,9 @@ def test_proposer_cannot_approve_even_with_authorization_or_case_tricks(
     from afe_sharp import SharpGate as G
     from afe_sharp import StaticRoleAuthorizer
 
-    gate = G(store, audit, StaticRoleAuthorizer({Stage.COMPLIANCE: [PROPOSER]}))
+    gate = G(
+        store, audit, StaticRoleAuthorizer({Stage.COMPLIANCE: [PROPOSER]}), audit_lookup=audit
+    )
     pid = _pid(request)
     gate.submit(make_proposal(pid))
     for variant in (PROPOSER, PROPOSER.upper(), f"  {PROPOSER} "):
@@ -295,13 +306,14 @@ def test_store_failure_after_audit_is_recorded_as_aborted(
     assert make_gate(store, audit).get(pid).state is Stage.DRAFT
 
     class _AbortAuditDown(FakeAudit):
-        def record(self, event_type: str, actor: str, payload: Any) -> None:
+        def record(self, event_type: str, actor: str, payload: Any) -> Any:
             if event_type == "sharp.transition_aborted":
                 raise RuntimeError("audit down")
-            super().record(event_type, actor, payload)
+            return super().record(event_type, actor, payload)
 
+    down = _AbortAuditDown(backend=audit.backend, lookup=audit.lookup, entries=audit.entries)
     flaky = make_gate(
-        _FailingStore(store), _AbortAuditDown()
+        _FailingStore(store), down
     )  # abort-audit failing must not mask the error
     with pytest.raises(StoreError, match="disk full"):
         flaky.approve(pid, "compliance-1", Stage.COMPLIANCE)
@@ -320,21 +332,40 @@ def test_history_is_immutable_and_records_are_frozen(
     assert store.load(pid) == before
 
 
-def test_get_never_reports_promotion_for_a_forged_history(audit: FakeAudit) -> None:
-    """A history written around the gate (one identity signing all six stages) is not PROMOTED."""
+def _forge(pid: str, actors: list[str], audit: FakeAudit | None) -> InMemoryProposalStore:
+    """A history written around the gate. With ``audit`` each row also gets a real audit record."""
     store = InMemoryProposalStore()
     when = datetime(2026, 9, 19, tzinfo=UTC)
-    detail = json.dumps(make_proposal("forged").to_detail())
-    forged = [TransitionEvent("forged", 1, "submitted", None, Stage.DRAFT, PROPOSER, when, detail)]
-    for version, stage in enumerate(GATES, start=2):
-        prev = PIPELINE[PIPELINE.index(stage) - 1]
-        forged.append(
-            TransitionEvent("forged", version, "approved", prev, stage, "mallory", when, "{}")
-        )
-    for event in forged:
-        store.append(event, event.version - 1)
-    gate = make_gate(store, audit)
+    detail = json.dumps(make_proposal(pid).to_detail())
+    rows: list[tuple[str, Stage | None, Stage, str, str]] = [
+        ("submitted", None, Stage.DRAFT, PROPOSER, detail)
+    ]
+    for stage, actor in zip(GATES, actors, strict=True):
+        rows.append(("approved", PIPELINE[PIPELINE.index(stage) - 1], stage, actor, "{}"))
+    for version, (kind, frm, to, actor, det) in enumerate(rows, start=1):
+        event = TransitionEvent(pid, version, kind, frm, to, actor, when, det)
+        if audit is not None:
+            receipt = audit.record(f"sharp.{kind}", actor, transition_payload(event))
+            event = replace(event, audit_seq=receipt.seq, audit_hash=receipt.hash)
+        store.append(event, version - 1)
+    return store
+
+
+def test_get_never_reports_promotion_for_a_forged_history() -> None:
+    """The finding: rows written around the gate must never read back as PROMOTED."""
+    distinct = ["compliance-1", "legal-1", "backtest-ci", "risk-1", "canary-ci", "release-1"]
+    # (1) no audit references at all: the transition rows have no audit record
+    audit = FakeAudit()
+    gate = make_gate(_forge("forged-1", distinct, None), audit)
+    with pytest.raises(StoreError, match="audit reference"):
+        gate.get("forged-1")
     with pytest.raises(StoreError):
-        gate.get("forged")
-    with pytest.raises(StoreError):
-        gate.approve("forged", "release-1", Stage.PROMOTED)
+        gate.approve("forged-1", "release-1", Stage.PROMOTED)
+    # (2) references, but the audit trail holds no such records
+    referenced = _forge("forged-2", distinct, FakeAudit())
+    with pytest.raises(StoreError, match="no audit record"):
+        make_gate(referenced, FakeAudit()).get("forged-2")
+    # (3) real audit records for every row, but one identity signed every stage
+    backed = FakeAudit()
+    with pytest.raises(StoreError, match="repeated approver"):
+        make_gate(_forge("forged-3", ["mallory"] * 6, backed), backed).get("forged-3")

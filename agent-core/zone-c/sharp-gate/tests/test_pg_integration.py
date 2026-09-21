@@ -11,7 +11,14 @@ from pg_harness import PgInstance
 from support import ALLOWED, APPROVERS, Ticker, make_proposal
 from test_gate import GATES, pg  # noqa: F401  (fixture reuse)
 
-from afe_sharp import PostgresProposalStore, SharpGate, Stage, StaticRoleAuthorizer, StoreError
+from afe_sharp import (
+    PostgresAuditLookup,
+    PostgresProposalStore,
+    SharpGate,
+    Stage,
+    StaticRoleAuthorizer,
+    StoreError,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -26,14 +33,21 @@ def _exec(dsn: str, sql: str) -> None:
 def test_promotion_flow_persists_and_lands_in_the_real_audit_chain(pg: PgInstance) -> None:  # noqa: F811
     source = DsnConnectionSource(pg.app_dsn)
     audit = AuditLogger(source)
+    lookup = PostgresAuditLookup(source)
     gate = SharpGate(
-        PostgresProposalStore(source), audit, StaticRoleAuthorizer(ALLOWED), clock=Ticker()
+        PostgresProposalStore(source),
+        audit,
+        StaticRoleAuthorizer(ALLOWED),
+        audit_lookup=lookup,
+        clock=Ticker(),
     )
     gate.submit(make_proposal("pg-flow"))
     for stage in GATES:
         gate.approve("pg-flow", APPROVERS[stage], stage)
     # a brand-new gate/store (e.g. after a restart) sees the persisted state
-    fresh = SharpGate(PostgresProposalStore(source), audit, StaticRoleAuthorizer(ALLOWED))
+    fresh = SharpGate(
+        PostgresProposalStore(source), audit, StaticRoleAuthorizer(ALLOWED), audit_lookup=lookup
+    )
     assert fresh.get("pg-flow").state is Stage.PROMOTED
     with psycopg2.connect(pg.app_dsn) as conn, conn.cursor() as cur:
         cur.execute(
@@ -76,8 +90,20 @@ def test_app_role_cannot_ddl_the_sharp_schema(pg: PgInstance) -> None:  # noqa: 
 
 
 def test_unreachable_database_fails_closed() -> None:
-    store = PostgresProposalStore(
-        DsnConnectionSource("host=127.0.0.1 port=1 dbname=x user=x connect_timeout=1")
-    )
+    down = DsnConnectionSource("host=127.0.0.1 port=1 dbname=x user=x connect_timeout=1")
     with pytest.raises(StoreError):
-        store.load("anything")
+        PostgresProposalStore(down).load("anything")
+    with pytest.raises(StoreError):
+        PostgresAuditLookup(down).find([1])
+
+
+def test_audit_lookup_returns_the_real_chain_records(pg: PgInstance) -> None:  # noqa: F811
+    source = DsnConnectionSource(pg.app_dsn)
+    record = AuditLogger(source).record("sharp.probe", "actor-x", {"k": [1, "v"]})
+    lookup = PostgresAuditLookup(source)
+    found = lookup.find([record.seq, 2_000_000_000])
+    assert set(found) == {record.seq}
+    entry = found[record.seq]
+    assert (entry.hash, entry.event_type, entry.actor) == (record.hash, "sharp.probe", "actor-x")
+    assert entry.payload == {"k": [1, "v"]}
+    assert lookup.find([]) == {}

@@ -6,9 +6,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 import psycopg2
 import pytest
+from afe_audit import AuditLogger, DsnConnectionSource
 from pg_harness import PgInstance
 from test_gate import pg  # noqa: F401  (fixture reuse)
 
@@ -31,6 +34,34 @@ def _detail(pid: str, proposer: str = PROPOSER) -> str:
     return json.dumps(detail)
 
 
+def audit_payload(
+    pid: str,
+    version: int,
+    kind: str,
+    frm: str | None,
+    to: str,
+    occurred_at: datetime,
+    detail: str,
+) -> dict[str, Any]:
+    """The payload SharpGate writes to the audit chain for a transition."""
+    return {
+        "proposal_id": pid,
+        "version": version,
+        "kind": kind,
+        "from_state": frm,
+        "to_state": to,
+        "occurred_at": occurred_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "detail": json.loads(detail),
+    }
+
+
+def write_audit(dsn: str, event_type: str, actor: str, payload: dict[str, Any]) -> tuple[int, str]:
+    """Append a REAL record to the hash-chained audit table (the app role may, and so may an
+    attacker holding it) and return its (seq, hash)."""
+    record = AuditLogger(DsnConnectionSource(dsn)).record(event_type, actor, payload)
+    return record.seq, record.hash
+
+
 def raw_insert(
     dsn: str,
     pid: str,
@@ -40,15 +71,25 @@ def raw_insert(
     to: str,
     actor: str,
     detail: str | None = None,
+    *,
+    audit_ref: tuple[int, str] | None | Literal["auto"] = "auto",
+    occurred_at: datetime | None = None,
 ) -> None:
-    """INSERT one transition directly, bypassing SharpGate (what a compromised service could do)."""
+    """INSERT one transition directly, bypassing SharpGate (what a compromised service could do).
+    ``audit_ref="auto"`` first writes the exact, valid audit record for the row."""
     if detail is None:
         detail = _detail(pid) if kind == "submitted" else json.dumps({"reason": "r"})
+    when = occurred_at or datetime.now(UTC)
+    if isinstance(audit_ref, str):
+        payload = audit_payload(pid, version, kind, frm, to, when, detail)
+        audit_ref = write_audit(dsn, f"sharp.{kind}", actor, payload)
+    seq, digest = audit_ref if audit_ref else (None, None)
     with contextlib.closing(psycopg2.connect(dsn)) as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO sharp.transitions (proposal_id, version, kind, from_state, to_state, "
-            "actor, occurred_at, detail) VALUES (%s, %s, %s, %s, %s, %s, now(), %s::jsonb)",
-            (pid, version, kind, frm, to, actor, detail),
+            "actor, occurred_at, detail, audit_seq, audit_hash) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
+            (pid, version, kind, frm, to, actor, when, detail, seq, digest),
         )
         conn.commit()
 
@@ -144,6 +185,58 @@ def test_owner_and_superuser_inserts_are_validated_too(pg: PgInstance) -> None: 
         with pytest.raises(psycopg2.Error, match=REJECTED):
             cur.execute(
                 "INSERT INTO sharp.transitions (proposal_id, version, kind, from_state, to_state, "
-                "actor, occurred_at, detail) VALUES ('f-3', 1, 'approved', NULL, 'COMPLIANCE', "
-                "'x', now(), '{}')"
+                "actor, occurred_at, detail, audit_seq, audit_hash) VALUES ('f-3', 1, 'approved', "
+                "NULL, 'COMPLIANCE', 'x', now(), '{}', 1, repeat('0', 64))"
             )
+
+
+# -- every transition must reference a matching record of the hash-chained audit log -------------
+
+
+def test_row_without_a_real_audit_record_is_refused(pg: PgInstance) -> None:  # noqa: F811
+    """No audit record, no transition: a forged row cannot exist without leaving a chain entry."""
+    dsn = pg.app_dsn
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # no reference at all
+        raw_insert(dsn, "a-1", 1, "submitted", None, "DRAFT", PROPOSER, audit_ref=None)
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # reference to a record that does not exist
+        raw_insert(dsn, "a-1", 1, "submitted", None, "DRAFT", PROPOSER,
+                   audit_ref=(2_000_000_000, "0" * 64))  # fmt: skip
+    _submitted(dsn, "a-1")
+    with pytest.raises(psycopg2.Error, match=REJECTED):
+        raw_insert(dsn, "a-1", 2, "approved", "DRAFT", "COMPLIANCE", "c-1", audit_ref=None)
+
+
+def test_row_must_match_the_audit_record_it_references(pg: PgInstance) -> None:  # noqa: F811
+    dsn = pg.app_dsn
+    when = datetime.now(UTC)
+    _submitted(dsn, "a-2")
+    detail = json.dumps({"reason": "r"})
+    good = audit_payload("a-2", 2, "rejected", "DRAFT", "REJECTED", when, detail)
+    seq, digest = write_audit(dsn, "sharp.rejected", "compliance-1", good)
+
+    def insert(**changes: Any) -> None:
+        row: dict[str, Any] = {
+            "version": 2, "kind": "rejected", "frm": "DRAFT", "to": "REJECTED",
+            "actor": "compliance-1", "audit_ref": (seq, digest), "occurred_at": when,
+        }  # fmt: skip
+        row.update(changes)
+        raw_insert(dsn, "a-2", row.pop("version"), row.pop("kind"), row.pop("frm"),
+                   row.pop("to"), row.pop("actor"), detail, **row)  # fmt: skip
+
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # different actor than the audit record
+        insert(actor="compliance-2")
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # right seq, wrong hash
+        insert(audit_ref=(seq, "f" * 64))
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # different timestamp
+        insert(occurred_at=when + timedelta(seconds=5))
+    other_proposal = audit_payload("someone-else", 2, "rejected", "DRAFT", "REJECTED", when, detail)
+    foreign = write_audit(dsn, "sharp.rejected", "compliance-1", other_proposal)
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # another proposal's audit record
+        insert(audit_ref=foreign)
+    aborted = write_audit(dsn, "sharp.transition_aborted", "compliance-1", good)
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # wrong event type (e.g. an abort record)
+        insert(audit_ref=aborted)
+    insert()  # the exact, matching record is accepted
+    with pytest.raises(psycopg2.Error, match=REJECTED):  # and cannot back a second row
+        raw_insert(dsn, "a-2", 3, "rejected", "REJECTED", "REJECTED", "compliance-1", detail,
+                   audit_ref=(seq, digest), occurred_at=when)  # fmt: skip
