@@ -1,51 +1,78 @@
-version: "3.9"
+# Three-zone trading infrastructure (local / staging shape, NOT a production deployment).
+#
+#   Zone A  thinking   : cognitive-core, regime-detector, vector-db (Chroma). No general internet.
+#   Zone B  execution  : sensory-array, aegis (execution-motor is not runnable yet, see below).
+#   Zone C  compliance : postgres-audit (hash-chained audit DB), hitl-interface.
+#
+# Usage (paths are relative to this directory):
+#   cp .env.example .env            # then fill EVERY empty value; nothing here has a default secret
+#   docker compose config           # validate (fails loudly on any missing ${VAR:?} secret)
+#   docker compose up -d            # base file only: secure defaults, no host ports except HITL on loopback
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # local dev (insecure Aegis, host ports)
+#
+# Design rules enforced by this file:
+#   * Secrets come only from the environment via ${VAR:?message}; there are no default secrets.
+#   * Zone networks are `internal: true`. Only sensory-array (Polygon) and, when enabled, execution-motor
+#     (broker) get a non-internal egress network; cognitive-core's LLM egress network is PROPOSED in ADR-003.
+#   * Host ports: only hitl-interface (bound to 127.0.0.1). Everything else is published by
+#     docker-compose.dev.yml for local development only.
+#   * Images are pinned (no :latest). Health checks that need no curl/wget use bash /dev/tcp because the
+#     chroma and questdb images ship neither curl nor wget (verified on the pinned tags).
+#
+# Requires Docker Compose >= 2.24 (the dev override uses the !reset tag).
 
-# Three-zone sovereign trading infrastructure
-# Zone A: Thinking  — LLMs, LangGraph, HMM, Vector DB (no outbound internet)
-# Zone B: Execution — Aegis PTCs, SOR, HSM, FIX engines (outbound to exchanges only)
-# Zone C: Compliance — Audit logs, HITL terminal, DORA reporting (append-only, air-gapped from signing keys)
+name: afe
 
 networks:
   zone-a-internal:
-    internal: true        # Zone A: no outbound internet
-  zone-ab-grpc:           # Zone A ↔ B via gRPC only
-    internal: true
-  zone-bc-audit:          # Zone B → C audit writes (one-way)
-    internal: true
-  zone-c-external:        # Zone C: outbound to compliance data lake only
+    internal: true # Zone A: no route out of the host
+  zone-ab-grpc:
+    internal: true # Zone A <-> B (gRPC to Aegis, Redis pub/sub, QuestDB)
+  zone-bc-audit:
+    internal: true # Zone B/C audit path and audit database
+  zone-b-egress: {} # Zone B market-data / broker egress (sensory-array). Restrict at the host firewall.
+  zone-a-llm-egress: {} # PROPOSED (ADR-003 option 1): Bedrock egress for cognitive-core. Restrict at the host firewall.
+  zone-c-external: {} # Zone C: operator access (HITL)
 
 services:
-  # ─────────────────────────────────────────────────────────────
-  # ZONE A — THINKING (GPU inference, LangGraph orchestration)
-  # ─────────────────────────────────────────────────────────────
+  # -------------------------------------------------------------
+  # ZONE A - THINKING
+  # -------------------------------------------------------------
   cognitive-core:
+    # Build context is agent-core/ so the image can include shared/proto and zone-a/vector-db.
     build:
-      context: ../zone-a/cognitive-core
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: zone-a/cognitive-core/Dockerfile
     container_name: afe-cognitive-core
     environment:
-      - PYTHONUNBUFFERED=1
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - CHROMA_HOST=vector-db
-      - CHROMA_PORT=8000
-      - QUESTDB_HOST=questdb
-      - REDIS_HOST=redis
-      - ZONE_B_GRPC_HOST=aegis
-      - ZONE_B_GRPC_PORT=50051
+      PYTHONUNBUFFERED: "1"
+      # LLM access is AWS Bedrock (ADR-002, IAM role auth). Region has no safe default.
+      COGNITIVE_BEDROCK_REGION: ${COGNITIVE_BEDROCK_REGION:?set the AWS region that hosts the Bedrock models}
+      COGNITIVE_SINK: grpc
+      ZONE_B_GRPC_HOST: aegis
+      ZONE_B_GRPC_PORT: "50051"
+      REDIS_URL: redis://redis:6379
+      SNAPSHOT_CHANNEL: sensory:snapshots
+      COGNITIVE_MEMORY_ENABLED: "true"
+      CHROMA_HOST: vector-db
+      CHROMA_PORT: "8000"
+      # 0 => every debate abstains. TODO(owner): replace with the position sizer before live use.
+      COGNITIVE_ORDER_QUANTITY: ${COGNITIVE_ORDER_QUANTITY:-0}
+      COGNITIVE_STRATEGY_ID: ${COGNITIVE_STRATEGY_ID:-AFE-STRATEGY-001}
     depends_on:
-      - vector-db
-      - questdb
-      - redis
+      vector-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - zone-a-internal
       - zone-ab-grpc
+      - zone-a-llm-egress
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   regime-detector:
     build:
@@ -53,130 +80,210 @@ services:
       dockerfile: Dockerfile
     container_name: afe-regime-detector
     environment:
-      - PYTHONUNBUFFERED=1
-      - QUESTDB_HOST=questdb
-      - QUESTDB_PORT=9000
-      - MODEL_PATH=/app/models/hmm_5state.pkl
+      QUESTDB_HOST: questdb
+      QUESTDB_PORT: "9000"
+      REDIS_URL: redis://redis:6379
+      MODEL_DIR: /app/models
+      # Without a key (>= 32 chars) models are trained in memory only and never persisted.
+      MODEL_HMAC_KEY: ${MODEL_HMAC_KEY:?set MODEL_HMAC_KEY (>= 32 chars, e.g. openssl rand -base64 48)}
     volumes:
       - regime-models:/app/models
     depends_on:
-      - questdb
+      questdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - zone-a-internal
+      - zone-ab-grpc # Redis (regime:labels) lives on the A<->B network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
+    # HEALTHCHECK is defined in the image (heartbeat file).
 
   vector-db:
-    image: chromadb/chroma:latest
+    # Keep the tag on the same major.minor as the chromadb client pin in zone-a/vector-db/requirements.txt.
+    image: chromadb/chroma:1.5.9
     container_name: afe-vector-db
-    environment:
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_PORT=8000
     volumes:
-      - chroma-data:/chroma/chroma
+      - chroma-data:/data # persist_path in the image config is /data
     networks:
       - zone-a-internal
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 30s
+      # /api/v1 is gone in 1.x (410); v2 heartbeat verified on 1.5.9. No curl/wget in the image.
+      test:
+        - CMD
+        - bash
+        - -c
+        - |-
+          exec 3<>/dev/tcp/127.0.0.1/8000 && printf 'GET /api/v2/heartbeat HTTP/1.0\r\n\r\n' >&3 && read -r line <&3 && [[ $$line == *" 200 "* ]]
+      interval: 15s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 10s
 
-  # ─────────────────────────────────────────────────────────────
-  # ZONE B — EXECUTION (Aegis, SOR, HSM, FIX)
-  # ─────────────────────────────────────────────────────────────
+  # -------------------------------------------------------------
+  # ZONE B - EXECUTION
+  # -------------------------------------------------------------
   sensory-array:
     build:
       context: ../zone-b/sensory-array
       dockerfile: Dockerfile
     container_name: afe-sensory-array
     environment:
-      - POLYGON_API_KEY=${POLYGON_API_KEY}
-      - QUESTDB_ILP_HOST=questdb
-      - QUESTDB_ILP_PORT=9009
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - FRESHNESS_L2_MS=1
-      - FRESHNESS_PRINT_MS=5
+      POLYGON_API_KEY: ${POLYGON_API_KEY:?set POLYGON_API_KEY}
+      QUESTDB_ILP_HOST: questdb
+      QUESTDB_ILP_PORT: "9009"
+      REDIS_URL: redis://redis:6379
+      FRESHNESS_L2_MS: "1"
+      FRESHNESS_PRINT_MS: "5"
     depends_on:
-      - questdb
-      - redis
+      questdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
-      - zone-ab-grpc   # receives regime labels from Zone A
+      - zone-ab-grpc # QuestDB ILP, Redis (snapshots out, regime labels in)
+      - zone-b-egress # Polygon WebSocket (wss://socket.polygon.io)
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
+    # HEALTHCHECK is defined in the image (`sensory-array --healthcheck`).
 
   aegis:
+    # Build context is agent-core/ (build.rs reads shared/proto). PKCS#11 signer feature is on by default;
+    # the HSM's PKCS#11 module (.so) is NOT in the image: put it in ${AEGIS_HSM_MODULE_DIR}.
     build:
-      context: ../zone-b/aegis
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: zone-b/aegis/Dockerfile
+      args:
+        AEGIS_FEATURES: ${AEGIS_FEATURES:-pkcs11}
+    image: afe-aegis:local # also used by aegis-supervisor
     container_name: afe-aegis
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - HSM_PKCS11_LIB=${HSM_PKCS11_LIB:-/usr/lib/softhsm/libsofthsm2.so}
-      - HSM_PIN=${HSM_PIN}
-      - GRPC_PORT=50051
-      - MAX_DAILY_DRAWDOWN_PCT=2.0
-      - PRICE_COLLAR_PCT=1.5
-      - LOW_CONFIDENCE_THRESHOLD=0.55
-      - HEARTBEAT_INTERVAL_SECONDS=14400   # 4 hours
+      AEGIS_ENV: production
+      AEGIS_LISTEN_ADDR: 0.0.0.0:50051
+      AEGIS_STATE_DIR: /var/lib/aegis
+      # Owner-supplied files (no invented risk limits): limits.json, identities.json, hsm_pin in AEGIS_CONFIG_DIR.
+      AEGIS_LIMITS_FILE: /cfg/limits.json
+      AEGIS_IDENTITIES_FILE: /cfg/identities.json
+      AEGIS_TLS_CERT: /tls/server.pem
+      AEGIS_TLS_KEY: /tls/server.key
+      AEGIS_TLS_CLIENT_CA: /tls/ca.pem
+      AEGIS_SIGNER: pkcs11
+      AEGIS_PKCS11_MODULE: ${AEGIS_PKCS11_MODULE:-}
+      AEGIS_PKCS11_TOKEN_LABEL: ${AEGIS_PKCS11_TOKEN_LABEL:-}
+      AEGIS_PKCS11_KEY_LABEL: ${AEGIS_PKCS11_KEY_LABEL:-}
+      AEGIS_PKCS11_PIN_FILE: /cfg/hsm_pin
     volumes:
-      - hsm-tokens:/var/lib/softhsm/tokens
-    depends_on:
-      - redis
+      - aegis-state:/var/lib/aegis
+      - ${AEGIS_CONFIG_DIR:-./secrets/aegis-config}:/cfg:ro
+      - ${AEGIS_TLS_DIR:-./secrets/aegis-tls}:/tls:ro
+      - ${AEGIS_HSM_MODULE_DIR:-./secrets/hsm}:/hsm:ro
     networks:
       - zone-ab-grpc
       - zone-bc-audit
-    ports:
-      - "50051:50051"   # gRPC: cognitive-core → aegis
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    # HEALTHCHECK is defined in the image (TCP connect to the listen port; it does not do the mTLS handshake).
+
+  # Independent liveness Supervisor (`aegis supervisor`): same image, separate process and identity. It probes
+  # Aegis over mTLS and latches the HARD kill switch when Aegis stops answering (see zone-b/aegis/README.md).
+  # Its client certificate CN needs the roles state-reader + kill-trigger in the identities file.
+  aegis-supervisor:
+    image: afe-aegis:local
+    command: ["supervisor"]
+    container_name: afe-aegis-supervisor
+    environment:
+      AEGIS_ENV: production
+      AEGIS_SUPERVISOR_TARGET: https://aegis:50051
+      AEGIS_SUPERVISOR_TLS_CA: /tls/ca.pem
+      AEGIS_SUPERVISOR_TLS_CERT: /tls/client.pem
+      AEGIS_SUPERVISOR_TLS_KEY: /tls/client.key
+      AEGIS_SUPERVISOR_TRIP_AFTER_MS: ${AEGIS_SUPERVISOR_TRIP_AFTER_MS:-60000} # allowed 10000-60000
+      AEGIS_SUPERVISOR_PROBE_INTERVAL_MS: ${AEGIS_SUPERVISOR_PROBE_INTERVAL_MS:-1000}
+      AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS: ${AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS:-2000}
+    volumes:
+      - ${AEGIS_SUPERVISOR_TLS_DIR:-./secrets/supervisor-tls}:/tls:ro
+    depends_on:
+      - aegis # started, not healthy: the Supervisor must keep running (and trip) while Aegis is down
+    healthcheck:
+      disable: true # the image's TCP check targets the Aegis listen port, which does not apply here
+    networks:
+      - zone-ab-grpc
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
 
+  # execution-motor is a library today: there is no Dockerfile, no entrypoint and no gRPC server
+  # (zone-b/execution-motor has models/limits/alpaca client/proto adapter and tests only). It is kept
+  # behind a profile so `docker compose up` does not fail on it. Enable with --profile pending-impl
+  # only once a Dockerfile and a service entrypoint exist.
   execution-motor:
+    profiles: ["pending-impl"]
     build:
       context: ../zone-b/execution-motor
       dockerfile: Dockerfile
     container_name: afe-execution-motor
     environment:
-      - PYTHONUNBUFFERED=1
-      - ALPACA_API_KEY=${ALPACA_API_KEY}
-      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
-      - ALPACA_BASE_URL=${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - VENUE_TOXICITY_WINDOW_DAYS=5
+      PYTHONUNBUFFERED: "1"
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      # No defaults for the caps: an empty cap is a startup error in the motor (fail closed). TODO(owner): choose values.
+      # These use :- (not :?) because Compose interpolates disabled-profile services too, and a service that cannot
+      # run yet must not force secrets onto everyone. Switch to :? when the motor becomes runnable.
+      MOTOR_MAX_ORDER_NOTIONAL_USD: ${MOTOR_MAX_ORDER_NOTIONAL_USD:-}
+      MOTOR_MAX_SESSION_NOTIONAL_USD: ${MOTOR_MAX_SESSION_NOTIONAL_USD:-}
     depends_on:
-      - redis
-      - aegis
+      aegis:
+        condition: service_healthy
     networks:
       - zone-ab-grpc
       - zone-bc-audit
+      - zone-b-egress # broker API
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────
-  # SHARED INFRASTRUCTURE (Zone A + B access)
-  # ─────────────────────────────────────────────────────────────
+  # -------------------------------------------------------------
+  # SHARED DATA PLANE
+  # -------------------------------------------------------------
   questdb:
     image: questdb/questdb:8.0.3
     container_name: afe-questdb
     environment:
-      - QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE=4194304
-    ports:
-      - "9000:9000"   # REST / Web console (dev only)
-      - "9009:9009"   # ILP (InfluxDB Line Protocol)
+      QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE: "4194304"
+      QDB_TELEMETRY_ENABLED: "false"
     volumes:
-      - questdb-data:/root/.questdb
+      - questdb-data:/var/lib/questdb # image WORKDIR / data root (not /root/.questdb)
     networks:
       - zone-a-internal
       - zone-ab-grpc
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
-      interval: 30s
+      # No curl/wget in the image. /exec on the HTTP port (9000) answers 200 when the server is up.
+      test:
+        - CMD
+        - bash
+        - -c
+        - |-
+          exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /exec?query=select%%201 HTTP/1.0\r\n\r\n' >&3 && read -r line <&3 && [[ $$line == *" 200 "* ]]
+      interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.6-alpine
     container_name: afe-redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
@@ -190,77 +297,23 @@ services:
       timeout: 3s
       retries: 5
 
-  # ─────────────────────────────────────────────────────────────
-  # ZONE C — COMPLIANCE (Audit logs, HITL, DORA reporting)
-  # ─────────────────────────────────────────────────────────────
-  audit-logger:
-    build:
-      context: ../zone-c/audit-logger
-      dockerfile: Dockerfile
-    container_name: afe-audit-logger
-    environment:
-      - PYTHONUNBUFFERED=1
-      - POSTGRES_HOST=postgres-audit
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=${AUDIT_DB_NAME:-trading_audit}
-      - POSTGRES_USER=${AUDIT_DB_USER:-audit_user}
-      - POSTGRES_PASSWORD=${AUDIT_DB_PASSWORD}
-      - KL_SOFT_ALERT_THRESHOLD=0.1
-      - KL_SOFT_SWITCH_THRESHOLD=0.3
-      - KL_LOGIC_SWITCH_THRESHOLD=0.5
-    depends_on:
-      - postgres-audit
-    networks:
-      - zone-bc-audit
-      - zone-c-external
-    restart: unless-stopped
-
-  compliance-manifest:
-    build:
-      context: ../zone-c/compliance-manifest
-      dockerfile: Dockerfile
-    container_name: afe-compliance-manifest
-    environment:
-      - PYTHONUNBUFFERED=1
-      - POSTGRES_HOST=postgres-audit
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=${AUDIT_DB_NAME:-trading_audit}
-      - POSTGRES_USER=${AUDIT_DB_USER:-audit_user}
-      - POSTGRES_PASSWORD=${AUDIT_DB_PASSWORD}
-      - RETENTION_YEARS=7
-    depends_on:
-      - postgres-audit
-    networks:
-      - zone-bc-audit
-    restart: unless-stopped
-
-  hitl-interface:
-    build:
-      context: ../zone-c/hitl-interface
-      dockerfile: Dockerfile
-    container_name: afe-hitl-interface
-    environment:
-      - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
-      - POSTGRES_HOST=postgres-audit
-      - POSTGRES_PORT=5432
-      - JWT_SECRET=${HITL_JWT_SECRET}
-    ports:
-      - "3000:3000"   # HITL operator terminal
-    depends_on:
-      - postgres-audit
-    networks:
-      - zone-bc-audit
-      - zone-c-external
-    restart: unless-stopped
-
+  # -------------------------------------------------------------
+  # ZONE C - COMPLIANCE
+  # -------------------------------------------------------------
+  # audit-logger, compliance-manifest and sharp-gate are Python LIBRARIES (afe_audit, afe_manifest,
+  # afe_sharp) imported by the services that need them; they are not daemons and have no Dockerfile,
+  # so they are intentionally not compose services. Their database is postgres-audit below.
   postgres-audit:
-    image: postgres:16-alpine
+    image: postgres:16.10-alpine
     container_name: afe-postgres-audit
     environment:
-      - POSTGRES_DB=${AUDIT_DB_NAME:-trading_audit}
-      - POSTGRES_USER=${AUDIT_DB_USER:-audit_user}
-      - POSTGRES_PASSWORD=${AUDIT_DB_PASSWORD}
+      # Bootstrap superuser: used by the init script only. Services connect as afe_audit_app.
+      POSTGRES_DB: ${AUDIT_DB_NAME:-trading_audit}
+      POSTGRES_USER: ${AUDIT_DB_USER:-audit_admin}
+      POSTGRES_PASSWORD: ${AUDIT_DB_PASSWORD:?set AUDIT_DB_PASSWORD}
+      # Passwords for the two least-privilege roles created by sql/init-audit-db.sh (>= 16 chars, different).
+      AFE_AUDIT_OWNER_PASSWORD: ${AFE_AUDIT_OWNER_PASSWORD:?set AFE_AUDIT_OWNER_PASSWORD (>= 16 chars)}
+      AFE_AUDIT_APP_PASSWORD: ${AFE_AUDIT_APP_PASSWORD:?set AFE_AUDIT_APP_PASSWORD (>= 16 chars, differs from owner)}
     command: >
       postgres
       -c wal_level=logical
@@ -268,19 +321,47 @@ services:
       -c max_replication_slots=3
     volumes:
       - postgres-audit-data:/var/lib/postgresql/data
+      # The image runs the top-level *.sh on first initialisation only (files must have LF endings).
+      - ../zone-c/audit-logger/sql:/docker-entrypoint-initdb.d:ro
     networks:
       - zone-bc-audit
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AUDIT_DB_USER:-audit_user}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  hitl-interface:
+    build:
+      context: ../zone-c/hitl-interface
+      dockerfile: Dockerfile
+    container_name: afe-hitl-interface
+    environment:
+      # Server-side variables only; there are no NEXT_PUBLIC_* variables. The app exits at startup if the
+      # secret is unset, < 32 chars or a placeholder.
+      HITL_JWT_SECRET: ${HITL_JWT_SECRET:?set HITL_JWT_SECRET (>= 32 chars, e.g. openssl rand -base64 48)}
+      # No HITL backend exists in this repo yet (docs/api-contract.md is PROPOSED). Until one does, every
+      # decision fails closed as "not approved".
+      HITL_API_BASE_URL: ${HITL_API_BASE_URL:-http://hitl-backend:4000}
+      HITL_API_TOKEN: ${HITL_API_TOKEN:-}
+      HITL_ALLOWED_ORIGINS: ${HITL_ALLOWED_ORIGINS:-}
+    ports:
+      - "127.0.0.1:${HITL_HOST_PORT:-3000}:3000" # operator terminal; put a TLS-terminating proxy in front
+    networks:
+      - zone-bc-audit
+      - zone-c-external
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    # HEALTHCHECK is defined in the image (GET /api/health).
 
 volumes:
   chroma-data:
   questdb-data:
   redis-data:
-  hsm-tokens:
   regime-models:
+  aegis-state:
   postgres-audit-data:

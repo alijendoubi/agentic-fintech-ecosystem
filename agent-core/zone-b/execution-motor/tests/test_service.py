@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+
 from execution_motor.alpaca import AlpacaPaperBroker
 from execution_motor.config import MotorConfig
 from execution_motor.halt import KillStateHaltSource, KillSwitch

@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+
 from regime_detector.config import Settings
 from regime_detector.questdb_client import (
     QuestDbClient,

@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 
 import pytest
+
 from execution_motor.attestation import AttestationVerifier
 from execution_motor.broker import (
     AccountSnapshot,

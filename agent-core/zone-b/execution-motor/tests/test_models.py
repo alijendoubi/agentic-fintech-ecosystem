@@ -3,6 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
+
 from execution_motor.models import (
     ExecutionReport,
     ExecutionStatus,
@@ -10,7 +12,6 @@ from execution_motor.models import (
     OrderType,
     RejectReason,
 )
-from pydantic import ValidationError
 
 from .helpers import make_order
 

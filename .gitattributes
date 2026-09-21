@@ -1,0 +1,8 @@
+# Files executed inside Linux containers must keep LF endings on every platform. A CRLF checkout on
+# Windows turns `#!/usr/bin/env bash` into `bash\r` and the container refuses to run the script
+# (seen with agent-core/zone-c/audit-logger/sql/init-audit-db.sh).
+*.sh text eol=lf
+*.sql text eol=lf
+Dockerfile text eol=lf
+Dockerfile.dockerignore text eol=lf
+.dockerignore text eol=lf
