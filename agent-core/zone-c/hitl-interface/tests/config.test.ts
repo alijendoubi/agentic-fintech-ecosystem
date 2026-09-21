@@ -6,7 +6,9 @@ const GOOD_SECRET = "k9Xv2mQ7pL4tR8wZ1nB6cY3dF5hJ0aGs";
 function env(overrides: Record<string, string | undefined> = {}) {
   return {
     HITL_JWT_SECRET: GOOD_SECRET,
-    HITL_API_BASE_URL: "http://backend.internal:4000",
+    HITL_API_BASE_URL: "https://backend.internal:4000",
+    HITL_JWT_ISSUER: "https://idp.example.test",
+    HITL_JWT_AUDIENCE: "afe-hitl",
     NODE_ENV: "production",
     ...overrides,
   };

@@ -274,12 +274,18 @@ def _http_client_factory(settings: VectorMemorySettings) -> Callable[[], ChromaC
     except ImportError as exc:  # pragma: no cover - depends on the deployment image
         raise MemoryUnavailableError("chromadb is not installed") from exc
 
+    client_options: dict[str, Any] = {"anonymized_telemetry": False}
+    if settings.ssl_verify is not True:
+        client_options["chroma_server_ssl_verify"] = settings.ssl_verify
+    headers = {"Authorization": f"Bearer {settings.auth_token}"} if settings.auth_token else None
+
     def make() -> ChromaClient:
         return chromadb.HttpClient(  # type: ignore[no-any-return]
             host=settings.host,
             port=settings.port,
             ssl=settings.ssl,
-            settings=ChromaSettings(anonymized_telemetry=False),
+            headers=headers,
+            settings=ChromaSettings(**client_options),
         )
 
     return make

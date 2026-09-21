@@ -63,12 +63,12 @@ describe("login", () => {
 });
 
 describe("logout", () => {
-  it("clears the cookie", () => {
-    const response = handleLogout(form("/api/auth/logout", {}), deps());
+  it("clears the cookie", async () => {
+    const response = await handleLogout(form("/api/auth/logout", {}), deps());
     expect(response.headers.get("set-cookie")).toMatch(/Max-Age=0/);
   });
-  it("refuses cross-origin logout", () => {
-    expect(handleLogout(form("/api/auth/logout", {}, "https://evil.test"), deps()).status).toBe(403);
+  it("refuses cross-origin logout", async () => {
+    expect((await handleLogout(form("/api/auth/logout", {}, "https://evil.test"), deps())).status).toBe(403);
   });
 });
 
