@@ -647,3 +647,105 @@ fn controller_tick_trips_dead_mans_and_heartbeat_is_published() {
 fn state_store_trait_object_is_usable() {
     let _s: Arc<dyn KillStore> = Arc::new(MemoryKillStore::default());
 }
+
+// ---- a slow publisher must not overwrite a newer state ----
+
+/// Audit sink that parks the first record whose reason is "slow" until
+/// released, so a test can force a precise interleaving.
+struct GatedSink {
+    entered: std::sync::atomic::AtomicBool,
+    released: std::sync::Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+impl GatedSink {
+    fn new() -> GatedSink {
+        GatedSink {
+            entered: std::sync::atomic::AtomicBool::new(false),
+            released: std::sync::Mutex::new(false),
+            cv: std::sync::Condvar::new(),
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+}
+
+impl crate::audit::AuditSink for GatedSink {
+    fn record(&self, event: &AuditEvent) -> Result<(), crate::audit::AuditError> {
+        if matches!(event, AuditEvent::KillTransition(k) if k.reason == "slow") {
+            self.entered
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let mut released = self.released.lock().unwrap();
+            while !*released {
+                released = self.cv.wait(released).unwrap();
+            }
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn a_late_publisher_cannot_lower_the_watched_level_below_a_newer_hard() {
+    let sink = Arc::new(GatedSink::new());
+    let ctl = Arc::new(KillController::start(
+        Arc::new(MemoryKillStore::default()),
+        sink.clone(),
+        Arc::new(ManualClock::new(T0)),
+        cfg(),
+        true,
+    ));
+    let rx = ctl.subscribe();
+    // A: a LOGIC trip that stalls after computing its state.
+    let a = {
+        let ctl = ctl.clone();
+        std::thread::spawn(move || ctl.trigger(L::KillLevelLogic as i32, "slow", "a"))
+    };
+    while !sink.entered.load(std::sync::atomic::Ordering::SeqCst) {
+        std::thread::yield_now();
+    }
+    // B: a newer HARD trip completes while A is stalled.
+    ctl.trigger(L::KillLevelHard as i32, "fast", "b").unwrap();
+    sink.release();
+    a.join().unwrap().unwrap();
+    assert_eq!(ctl.effective_level(), Some(L::KillLevelHard));
+    let published = rx.borrow().clone();
+    assert_eq!(
+        published.effective_level,
+        L::KillLevelHard as i32,
+        "watchers must never be left below the controller's real level"
+    );
+    assert_eq!(published.state_seq, ctl.state().state_seq);
+}
+
+#[test]
+fn concurrent_trips_and_resets_leave_watchers_at_the_real_state() {
+    for _ in 0..20 {
+        let r = rig();
+        let ctl = Arc::new(r.ctl);
+        let rx = ctl.subscribe();
+        let seed = ctl.trigger(L::KillLevelSoft as i32, "seed", "op").unwrap();
+        let soft_id = seed.latches[0].trigger_id.clone();
+        let resetter = {
+            let ctl = ctl.clone();
+            std::thread::spawn(move || {
+                let _ = ctl.reset(&req(&soft_id, vec![approval("a", Role::Operator)], ""), "p");
+            })
+        };
+        let tripper = {
+            let ctl = ctl.clone();
+            std::thread::spawn(move || {
+                ctl.trigger(L::KillLevelHard as i32, "hard", "b").unwrap();
+            })
+        };
+        resetter.join().unwrap();
+        tripper.join().unwrap();
+        assert_eq!(rx.borrow().state_seq, ctl.state().state_seq);
+        assert_eq!(
+            rx.borrow().effective_level,
+            ctl.effective_level().unwrap() as i32
+        );
+    }
+}
