@@ -15,6 +15,10 @@ class ConfigError(MotorError):
     """Configuration is missing or invalid. The motor refuses to start."""
 
 
+class IdempotencyStoreError(MotorError):
+    """A single-use claim could not be persisted. Fail closed: the motor halts."""
+
+
 class LiveTradingRefused(ConfigError):
     """A non-paper endpoint was requested without BOTH explicit live opt-ins."""
 
