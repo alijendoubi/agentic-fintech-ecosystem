@@ -17,7 +17,6 @@ pub mod store;
 pub mod watchdog;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::pb::KillSwitchLevel;
 
@@ -32,12 +31,6 @@ pub const STARTUP_ACTOR: &str = "aegis/startup";
 /// Actor id used when a trip could not be persisted.
 pub const STORE_FAILURE_ACTOR: &str = "aegis/state-store";
 const NANOS_PER_MS: i64 = 1_000_000;
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum KillError {
-    #[error("too many active latches")]
-    TooManyLatches,
-}
 
 /// One active latch. `level` is the wire integer so persisted data with an
 /// unknown value can be loaded and treated as HARD instead of being lost.
@@ -94,6 +87,8 @@ pub enum KillEvent {
         level: KillSwitchLevel,
         reason: String,
         actor_id: String,
+        /// Weaker latches evicted to make room at the cap (normally empty).
+        evicted: Vec<String>,
     },
     Reset {
         trigger_id: String,
@@ -147,7 +142,7 @@ impl KillSwitch {
     /// Persisted state missing or unreadable: start at HARD (spec 5.1).
     pub fn fail_closed(now_ns: i64, cfg: HeartbeatConfig, why: &str) -> KillSwitch {
         let mut ks = KillSwitch::fresh(now_ns, cfg);
-        let _ = ks.latch(
+        ks.latch(
             KillSwitchLevel::KillLevelHard,
             format!("start-up fail-closed: {why}"),
             STARTUP_ACTOR,
@@ -181,27 +176,65 @@ impl KillSwitch {
         self.state.updated_at_ns = now_ns;
     }
 
+    /// Add a latch. Infallible by design: a trip must never be dropped.
+    ///
+    /// * An identical (level, reason, actor) trigger is deduplicated onto the
+    ///   existing latch, so a retrying peer cannot grow the table.
+    /// * At the cap the weakest (then oldest) latch that is not stronger than
+    ///   the new one is evicted to make room, so an escalation always lands.
+    ///   If every latch is stronger, the new trip is already covered and is
+    ///   reported against the weakest covering latch.
     fn latch(
         &mut self,
         level: KillSwitchLevel,
         reason: String,
         actor: &str,
         now_ns: i64,
-    ) -> Result<KillEvent, KillError> {
-        if self.state.latches.len() >= MAX_LATCHES
-            && level_rank(level) <= level_rank(self.effective_level())
+    ) -> KillEvent {
+        if let Some(existing) = self
+            .state
+            .latches
+            .iter()
+            .find(|l| l.level == level as i32 && l.reason == reason && l.actor_id == actor)
         {
-            // At the cap a lower-or-equal trip adds no protection; report the
-            // current state instead of growing without bound.
-            return Ok(KillEvent::Latched {
-                trigger_id: String::new(),
-                level: self.effective_level(),
+            return KillEvent::Latched {
+                trigger_id: existing.trigger_id.clone(),
+                level,
                 reason,
                 actor_id: actor.to_owned(),
-            });
+                evicted: Vec::new(),
+            };
         }
+        let mut evicted = Vec::new();
         if self.state.latches.len() >= MAX_LATCHES {
-            return Err(KillError::TooManyLatches);
+            let victim = self
+                .state
+                .latches
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, l)| (level_rank(l.level_enum()), l.latched_at_ns))
+                .map(|(i, l)| (i, level_rank(l.level_enum())));
+            match victim {
+                Some((i, rank)) if rank <= level_rank(level) => {
+                    let gone = self.state.latches.remove(i);
+                    tracing::warn!(
+                        evicted = %gone.trigger_id,
+                        "latch table full: evicted the weakest latch to admit a trip"
+                    );
+                    evicted.push(gone.trigger_id);
+                }
+                Some((i, _)) => {
+                    let covering = &self.state.latches[i];
+                    return KillEvent::Latched {
+                        trigger_id: covering.trigger_id.clone(),
+                        level: covering.level_enum(),
+                        reason,
+                        actor_id: actor.to_owned(),
+                        evicted,
+                    };
+                }
+                None => {}
+            }
         }
         let trigger_id = uuid::Uuid::new_v4().to_string();
         self.state.latches.push(Latch {
@@ -212,24 +245,19 @@ impl KillSwitch {
             latched_at_ns: now_ns,
         });
         self.bump(now_ns);
-        Ok(KillEvent::Latched {
+        KillEvent::Latched {
             trigger_id,
             level,
             reason,
             actor_id: actor.to_owned(),
-        })
+            evicted,
+        }
     }
 
     /// Latch a trigger. Level 0 (NORMAL / unset) and unknown values are
     /// malformed and latch HARD: the request cannot be understood, and doing
     /// nothing would fail open.
-    pub fn trigger(
-        &mut self,
-        raw_level: i32,
-        reason: &str,
-        actor: &str,
-        now_ns: i64,
-    ) -> Result<KillEvent, KillError> {
+    pub fn trigger(&mut self, raw_level: i32, reason: &str, actor: &str, now_ns: i64) -> KillEvent {
         let (level, reason) = match KillSwitchLevel::from_wire(raw_level) {
             Some(l) if l != KillSwitchLevel::KillLevelNormal => (l, reason.to_owned()),
             _ => (
@@ -262,14 +290,12 @@ impl KillSwitch {
             .any(|l| l.actor_id == HEARTBEAT_ACTOR);
         if lapsed && !already {
             let reason = "operator heartbeat missed".to_owned();
-            if let Ok(ev) = self.latch(
+            events.push(self.latch(
                 KillSwitchLevel::KillLevelDeadMans,
                 reason,
                 HEARTBEAT_ACTOR,
                 now_ns,
-            ) {
-                events.push(ev);
-            }
+            ));
         }
         let warn_at = self
             .state

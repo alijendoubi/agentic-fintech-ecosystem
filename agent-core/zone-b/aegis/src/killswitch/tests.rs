@@ -43,11 +43,8 @@ fn trigger_id(ev: KillEvent) -> String {
 fn effective_level_is_the_max_over_latches_and_reset_of_one_keeps_the_others() {
     let mut ks = KillSwitch::fresh(T0, cfg());
     assert_eq!(ks.effective_level(), L::KillLevelNormal);
-    let soft = trigger_id(ks.trigger(L::KillLevelSoft as i32, "s", "op1", T0).unwrap());
-    let logic = trigger_id(
-        ks.trigger(L::KillLevelLogic as i32, "l", "mon", T0)
-            .unwrap(),
-    );
+    let soft = trigger_id(ks.trigger(L::KillLevelSoft as i32, "s", "op1", T0));
+    let logic = trigger_id(ks.trigger(L::KillLevelLogic as i32, "l", "mon", T0));
     assert_eq!(ks.effective_level(), L::KillLevelLogic);
     ks.reset(
         &req(
@@ -78,7 +75,7 @@ fn every_level_is_reachable_and_ordered() {
         L::KillLevelPhysical,
     ] {
         let mut ks = KillSwitch::fresh(T0, cfg());
-        ks.trigger(lvl as i32, "x", "a", T0).unwrap();
+        ks.trigger(lvl as i32, "x", "a", T0);
         assert_eq!(ks.effective_level(), lvl);
     }
 }
@@ -88,7 +85,7 @@ fn every_level_is_reachable_and_ordered() {
 fn trigger_with_unset_or_unknown_level_latches_hard_never_normal() {
     for raw in [0, 6, 99, -1, i32::MAX, i32::MIN] {
         let mut ks = KillSwitch::fresh(T0, cfg());
-        ks.trigger(raw, "monitor bug", "mon", T0).unwrap();
+        ks.trigger(raw, "monitor bug", "mon", T0);
         assert_eq!(ks.effective_level(), L::KillLevelHard, "raw {raw}");
         assert!(ks.state().latches[0].reason.contains("malformed"));
     }
@@ -118,7 +115,7 @@ fn persisted_latch_with_unknown_level_counts_as_hard() {
 #[test]
 fn heartbeat_and_tick_never_lower_the_level() {
     let mut ks = KillSwitch::fresh(T0, cfg());
-    ks.trigger(L::KillLevelSoft as i32, "s", "op", T0).unwrap();
+    ks.trigger(L::KillLevelSoft as i32, "s", "op", T0);
     ks.heartbeat("op", T0 + HOUR_NS);
     ks.tick(T0 + 2 * HOUR_NS);
     assert_eq!(ks.effective_level(), L::KillLevelSoft);
@@ -137,7 +134,7 @@ fn state_seq_increases_on_every_change() {
         assert!(ks.state().state_seq > last);
         last = ks.state().state_seq;
     };
-    let id = trigger_id(ks.trigger(L::KillLevelSoft as i32, "s", "op", T0).unwrap());
+    let id = trigger_id(ks.trigger(L::KillLevelSoft as i32, "s", "op", T0));
     check(&ks);
     ks.heartbeat("op", T0 + 1);
     check(&ks);
@@ -243,7 +240,7 @@ fn reset_requirements_per_level() {
     ];
     for c in cases {
         let mut ks = KillSwitch::fresh(T0, cfg());
-        let id = trigger_id(ks.trigger(c.lvl as i32, "x", "m", T0).unwrap());
+        let id = trigger_id(ks.trigger(c.lvl as i32, "x", "m", T0));
         let refused = ks.reset(&req(&id, c.short.clone(), c.root), T0 + 1);
         assert!(
             matches!(refused, Err(ResetRefusal::InsufficientApprovals { .. })),
@@ -271,7 +268,7 @@ fn reset_with_no_approvals_is_refused_at_every_level() {
         L::KillLevelPhysical,
     ] {
         let mut ks = KillSwitch::fresh(T0, cfg());
-        let id = trigger_id(ks.trigger(lvl as i32, "x", "m", T0).unwrap());
+        let id = trigger_id(ks.trigger(lvl as i32, "x", "m", T0));
         assert!(
             ks.reset(&req(&id, vec![], "RCA"), T0 + 1).is_err(),
             "{lvl:?}"
@@ -283,11 +280,11 @@ fn reset_with_no_approvals_is_refused_at_every_level() {
 #[test]
 fn one_person_cannot_fill_two_seats_or_be_counted_twice() {
     let mut ks = KillSwitch::fresh(T0, cfg());
-    let id = trigger_id(ks.trigger(L::KillLevelLogic as i32, "x", "m", T0).unwrap());
+    let id = trigger_id(ks.trigger(L::KillLevelLogic as i32, "x", "m", T0));
     let dup = vec![approval("a", Role::Operator), approval("a", Role::Operator)];
     assert!(ks.reset(&req(&id, dup, "RCA"), T0 + 1).is_err());
     let mut ks = KillSwitch::fresh(T0, cfg());
-    let id = trigger_id(ks.trigger(L::KillLevelHard as i32, "x", "m", T0).unwrap());
+    let id = trigger_id(ks.trigger(L::KillLevelHard as i32, "x", "m", T0));
     // "a" tries to be both an operator and the compliance officer
     let both = vec![
         approval("a", Role::Operator),
@@ -322,7 +319,7 @@ fn logic_hard_and_physical_resets_need_a_root_cause_reference() {
         ),
     ] {
         let mut ks = KillSwitch::fresh(T0, cfg());
-        let id = trigger_id(ks.trigger(lvl as i32, "x", "m", T0).unwrap());
+        let id = trigger_id(ks.trigger(lvl as i32, "x", "m", T0));
         assert_eq!(
             ks.reset(&req(&id, apps.clone(), "  "), T0 + 1),
             Err(ResetRefusal::RootCauseRequired)
@@ -361,17 +358,47 @@ fn reset_of_unknown_trigger_is_refused() {
 }
 
 #[test]
-fn latch_cap_is_enforced_without_lowering_protection() {
+fn identical_triggers_are_deduplicated_and_return_the_existing_latch() {
     let mut ks = KillSwitch::fresh(T0, cfg());
-    for _ in 0..MAX_LATCHES {
-        ks.trigger(L::KillLevelSoft as i32, "x", "m", T0).unwrap();
+    let first = trigger_id(ks.trigger(L::KillLevelSoft as i32, "x", "m", T0));
+    let seq = ks.state().state_seq;
+    for _ in 0..10 {
+        let again = trigger_id(ks.trigger(L::KillLevelSoft as i32, "x", "m", T0));
+        assert_eq!(again, first);
     }
-    assert!(ks.trigger(L::KillLevelSoft as i32, "x", "m", T0).is_ok());
+    assert_eq!(ks.state().latches.len(), 1);
+    assert_eq!(ks.state().state_seq, seq);
+}
+
+#[test]
+fn a_full_latch_table_never_blocks_an_escalation() {
+    let mut ks = KillSwitch::fresh(T0, cfg());
+    for i in 0..MAX_LATCHES {
+        ks.trigger(L::KillLevelSoft as i32, &format!("retry {i}"), "peer", T0);
+    }
     assert_eq!(ks.state().latches.len(), MAX_LATCHES);
-    assert_eq!(
-        ks.trigger(L::KillLevelHard as i32, "x", "m", T0),
-        Err(KillError::TooManyLatches)
-    );
+    assert_eq!(ks.effective_level(), L::KillLevelSoft);
+    for lvl in [L::KillLevelLogic, L::KillLevelHard] {
+        let ev = ks.trigger(lvl as i32, "escalate", "supervisor", T0);
+        let id = trigger_id(ev);
+        assert!(ks.state().latches.iter().any(|l| l.trigger_id == id));
+        assert_eq!(ks.effective_level(), lvl);
+        assert!(ks.state().latches.len() <= MAX_LATCHES);
+    }
+}
+
+#[test]
+fn a_lower_trip_at_the_cap_is_covered_by_a_stronger_latch_not_dropped() {
+    let mut ks = KillSwitch::fresh(T0, cfg());
+    for i in 0..MAX_LATCHES {
+        ks.trigger(L::KillLevelHard as i32, &format!("r{i}"), "p", T0);
+    }
+    let ev = ks.trigger(L::KillLevelSoft as i32, "late", "q", T0);
+    let id = trigger_id(ev);
+    assert!(!id.is_empty());
+    assert!(ks.state().latches.iter().any(|l| l.trigger_id == id));
+    assert_eq!(ks.effective_level(), L::KillLevelHard);
+    assert!(ks.state().latches.len() <= MAX_LATCHES);
 }
 
 // ---- controller: persistence, fail-closed, audit, watch ----
@@ -469,6 +496,37 @@ fn trip_that_cannot_be_persisted_still_latches_and_forces_hard() {
         .latches
         .iter()
         .any(|l| l.actor_id == STORE_FAILURE_ACTOR));
+}
+
+#[test]
+fn controller_escalation_succeeds_when_the_table_is_full_of_soft_latches() {
+    let r = rig();
+    for i in 0..MAX_LATCHES {
+        r.ctl
+            .trigger(L::KillLevelSoft as i32, &format!("retry {i}"), "peer")
+            .unwrap();
+    }
+    assert_eq!(r.ctl.effective_level(), Some(L::KillLevelSoft));
+    let st = r
+        .ctl
+        .trigger(L::KillLevelHard as i32, "supervisor liveness", "supervisor")
+        .unwrap();
+    assert_eq!(st.effective_level, L::KillLevelHard as i32);
+    assert!(st.latches.len() <= MAX_LATCHES);
+    assert_eq!(r.store.saved().unwrap().latches.len(), st.latches.len());
+}
+
+#[test]
+fn store_failure_forces_hard_even_when_the_table_is_full() {
+    let r = rig();
+    for i in 0..MAX_LATCHES {
+        r.ctl
+            .trigger(L::KillLevelSoft as i32, &format!("retry {i}"), "peer")
+            .unwrap();
+    }
+    r.store.set_fail_saves(true);
+    r.ctl.heartbeat("op");
+    assert_eq!(r.ctl.effective_level(), Some(L::KillLevelHard));
 }
 
 #[test]
