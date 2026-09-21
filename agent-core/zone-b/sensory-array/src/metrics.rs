@@ -12,6 +12,8 @@ pub struct Metrics {
     pub quotes: AtomicU64,
     pub trades: AtomicU64,
     pub rejected_messages: AtomicU64,
+    /// Quotes dropped because their exchange timestamp was older than the last accepted one.
+    pub out_of_order_quotes: AtomicU64,
     pub snapshots: AtomicU64,
     pub stale_snapshots: AtomicU64,
     pub reconnects: AtomicU64,
@@ -46,6 +48,7 @@ impl Metrics {
             quotes = g(&self.quotes),
             trades = g(&self.trades),
             rejected_messages = g(&self.rejected_messages),
+            out_of_order_quotes = g(&self.out_of_order_quotes),
             snapshots = g(&self.snapshots),
             stale_snapshots = g(&self.stale_snapshots),
             reconnects = g(&self.reconnects),
