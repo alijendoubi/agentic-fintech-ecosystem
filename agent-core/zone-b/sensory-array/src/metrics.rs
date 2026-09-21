@@ -24,6 +24,8 @@ pub struct Metrics {
     pub redis_errors: AtomicU64,
     pub regime_updates: AtomicU64,
     pub regime_rejected: AtomicU64,
+    /// Regime labels dropped because they were older than the cached label.
+    pub regime_out_of_order: AtomicU64,
 }
 
 impl Metrics {
@@ -61,6 +63,7 @@ impl Metrics {
             redis_dropped,
             regime_updates = g(&self.regime_updates),
             regime_rejected = g(&self.regime_rejected),
+            regime_out_of_order = g(&self.regime_out_of_order),
             "metrics"
         );
     }

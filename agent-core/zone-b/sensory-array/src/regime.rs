@@ -65,6 +65,8 @@ pub enum RegimeReject {
     Timestamp,
     #[error("regime cache full")]
     CacheFull,
+    #[error("out-of-order regime label (older than the cached one)")]
+    OutOfOrder,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +100,13 @@ impl RegimeCache {
         let mut map = self.entries.write().unwrap_or_else(|p| p.into_inner());
         if !map.contains_key(&symbol) && map.len() >= MAX_SYMBOLS {
             return Err(RegimeReject::CacheFull);
+        }
+        // Monotonic guard: a delayed or replayed older label must not
+        // overwrite a newer one. Equal timestamps: last write wins.
+        if let Some(cur) = map.get(&symbol) {
+            if entry.published_ns < cur.published_ns {
+                return Err(RegimeReject::OutOfOrder);
+            }
         }
         map.insert(symbol, entry);
         Ok(())
@@ -229,6 +238,9 @@ fn handle_message(msg: &redis::Msg, cache: &RegimeCache, metrics: &Metrics) {
         Ok(()) => Metrics::inc(&metrics.regime_updates),
         Err(reject) => {
             Metrics::inc(&metrics.regime_rejected);
+            if reject == RegimeReject::OutOfOrder {
+                Metrics::inc(&metrics.regime_out_of_order);
+            }
             warn!(reason = %reject, "regime label rejected");
         }
     }
@@ -369,6 +381,37 @@ mod tests {
         // Updating an existing key is still allowed.
         assert!(c.ingest(&payload("S0", "CRISIS", "0.6", None), NOW).is_ok());
         assert_eq!(c.len(), MAX_SYMBOLS);
+    }
+
+    #[test]
+    fn older_label_does_not_overwrite_newer() {
+        let c = cache();
+        c.ingest(&payload("AAPL", "TRENDING_BULL", "0.6", Some(NOW)), NOW)
+            .expect("newer");
+        // A delayed / replayed older label arrives afterwards.
+        assert_eq!(
+            c.ingest(
+                &payload("AAPL", "CRISIS", "0.9", Some(NOW - 5_000_000_000)),
+                NOW + 1,
+            ),
+            Err(RegimeReject::OutOfOrder)
+        );
+        assert_eq!(c.lookup("AAPL", NOW + 2), ("TRENDING_BULL", 0.6));
+    }
+
+    #[test]
+    fn equal_timestamp_label_is_accepted_and_guard_is_per_symbol() {
+        let c = cache();
+        c.ingest(&payload("AAPL", "CRISIS", "0.9", Some(NOW)), NOW)
+            .expect("first");
+        c.ingest(&payload("AAPL", "LOW_VOL_CHOP", "0.4", Some(NOW)), NOW)
+            .expect("equal ts");
+        c.ingest(
+            &payload("MSFT", "CRISIS", "0.9", Some(NOW - 1_000_000_000)),
+            NOW,
+        )
+        .expect("other symbol unaffected");
+        assert_eq!(c.lookup("AAPL", NOW), ("LOW_VOL_CHOP", 0.4));
     }
 
     #[test]
