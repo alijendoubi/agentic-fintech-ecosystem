@@ -167,6 +167,69 @@ fn clean_restart_of_a_bootstrapped_state_dir_stays_normal() {
     assert_eq!(level(&again), Some(KillSwitchLevel::KillLevelNormal));
 }
 
+/// Production-shaped config (mTLS + pkcs11 signer paths; nothing is loaded
+/// from them before the fresh-state guard runs).
+fn production_env(allow_fresh: bool) -> Env {
+    let e = env_with(Some(&all_week_limits()));
+    let mut vars: HashMap<&str, String> = HashMap::from([
+        ("AEGIS_ENV", "production".to_owned()),
+        ("AEGIS_SIGNER", "pkcs11".to_owned()),
+        ("AEGIS_PKCS11_MODULE", "/nonexistent/module.so".to_owned()),
+        ("AEGIS_PKCS11_TOKEN_LABEL", "t".to_owned()),
+        ("AEGIS_PKCS11_KEY_LABEL", "k".to_owned()),
+        ("AEGIS_PKCS11_PIN_FILE", "/nonexistent/pin".to_owned()),
+        ("AEGIS_TLS_CERT", "/nonexistent/c.pem".to_owned()),
+        ("AEGIS_TLS_KEY", "/nonexistent/k.pem".to_owned()),
+        ("AEGIS_TLS_CLIENT_CA", "/nonexistent/ca.pem".to_owned()),
+        ("AEGIS_LIMITS_FILE", e.cfg.limits_file.display().to_string()),
+        (
+            "AEGIS_IDENTITIES_FILE",
+            e.cfg.identities_file.display().to_string(),
+        ),
+        ("AEGIS_STATE_DIR", e.state.display().to_string()),
+    ]);
+    if allow_fresh {
+        vars.insert("AEGIS_ALLOW_FRESH_STATE", "1".to_owned());
+    }
+    let cfg = RuntimeConfig::from_lookup(&|k| vars.get(k).cloned()).unwrap();
+    Env {
+        _dir: e._dir,
+        cfg,
+        state: e.state,
+    }
+}
+
+#[test]
+fn production_refuses_a_fresh_state_dir_without_explicit_opt_in() {
+    let e = production_env(false);
+    let err = build_app(&e.cfg).err().expect("must refuse").to_string();
+    assert!(err.contains("AEGIS_ALLOW_FRESH_STATE"), "{err}");
+    assert!(
+        !e.state.join("kill_state.json").exists(),
+        "a refused start must not create state"
+    );
+}
+
+#[test]
+fn production_fresh_state_with_opt_in_gets_past_the_guard() {
+    let e = production_env(true);
+    // The pkcs11 module does not exist so start-up still fails, but only AFTER
+    // the state was bootstrapped, not because of the fresh-state guard.
+    let err = build_app(&e.cfg).err().expect("no HSM here").to_string();
+    assert!(!err.contains("AEGIS_ALLOW_FRESH_STATE"), "{err}");
+    assert!(e.state.join("kill_state.json").exists());
+}
+
+#[test]
+fn production_restart_of_a_populated_state_dir_needs_no_opt_in() {
+    let first = production_env(true);
+    let _ = build_app(&first.cfg);
+    let mut cfg = production_env(false).cfg;
+    cfg.state_dir = first.state.clone();
+    let err = build_app(&cfg).err().expect("no HSM here").to_string();
+    assert!(!err.contains("AEGIS_ALLOW_FRESH_STATE"), "{err}");
+}
+
 fn seed_portfolio(dir: &Path) {
     let now = SystemClock.now_ns().unwrap();
     let mut p = Portfolio::default();

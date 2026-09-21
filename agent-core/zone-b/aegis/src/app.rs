@@ -44,6 +44,12 @@ pub enum StartupError {
     Sign(#[from] SignError),
     #[error("state directory: {0}")]
     StateDir(String),
+    #[error(
+        "state directory is empty: refusing a first boot in production. Set \
+         AEGIS_ALLOW_FRESH_STATE=1 for the very first start only (an empty dir may \
+         mean a wiped or wrongly mounted volume)"
+    )]
+    FreshStateNotAllowed,
     #[error("audit: {0}")]
     Audit(#[from] AuditError),
     #[error(transparent)]
@@ -140,6 +146,9 @@ pub fn build_app(cfg: &RuntimeConfig) -> Result<App, StartupError> {
     // Sampled before any store creates a file: only an entirely empty dir may
     // bootstrap empty portfolio / replay state.
     let state_init = if state_dir_is_empty(&cfg.state_dir)? {
+        if cfg.env.is_production() && !cfg.allow_fresh_state {
+            return Err(StartupError::FreshStateNotAllowed);
+        }
         StateInit::Bootstrap
     } else {
         StateInit::Existing

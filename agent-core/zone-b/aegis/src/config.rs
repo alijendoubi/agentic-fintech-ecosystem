@@ -80,6 +80,10 @@ pub struct RuntimeConfig {
     pub limits_file: PathBuf,
     pub identities_file: PathBuf,
     pub state_dir: PathBuf,
+    /// `AEGIS_ALLOW_FRESH_STATE=1`: permit the first boot of an EMPTY state dir
+    /// in production (otherwise an empty dir there is refused: it may mean a
+    /// wiped or wrongly mounted volume, not a genuine first start).
+    pub allow_fresh_state: bool,
     pub tls: TlsMode,
     pub signer: SignerKind,
     pub max_concurrency: usize,
@@ -200,6 +204,7 @@ impl RuntimeConfig {
             limits_file: required(get, "AEGIS_LIMITS_FILE")?.into(),
             identities_file: required(get, "AEGIS_IDENTITIES_FILE")?.into(),
             state_dir: required(get, "AEGIS_STATE_DIR")?.into(),
+            allow_fresh_state: get("AEGIS_ALLOW_FRESH_STATE").as_deref() == Some("1"),
             tls: parse_tls(get, env)?,
             signer: parse_signer(get, env)?,
             max_concurrency,
@@ -241,6 +246,16 @@ mod tests {
         assert_eq!(c.env, Environment::Development);
         assert!(matches!(c.tls, TlsMode::Mutual(_)));
         assert_eq!(c.max_concurrency, 64);
+    }
+
+    #[test]
+    fn fresh_state_opt_in_is_the_literal_one_only() {
+        let mut m = base();
+        assert!(!parse(&m).unwrap().allow_fresh_state);
+        m.insert("AEGIS_ALLOW_FRESH_STATE", "1");
+        assert!(parse(&m).unwrap().allow_fresh_state);
+        m.insert("AEGIS_ALLOW_FRESH_STATE", "true");
+        assert!(!parse(&m).unwrap().allow_fresh_state);
     }
 
     #[test]
