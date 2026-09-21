@@ -14,6 +14,8 @@ _NS_PER_MS: Final = 1_000_000
 # 5 s covers the Aegis -> motor gRPC hop with room to spare (end-to-end budget is 2.6 s).
 _DEFAULT_MAX_AGE_MS: Final = 5_000
 _DEFAULT_SKEW_MS: Final = 1_000
+# A market-order cap price older than this is not trusted (fail closed).
+_DEFAULT_QUOTE_AGE_MS: Final = 2_000
 
 
 def _positive_decimal(env: Mapping[str, str], name: str) -> Decimal:
@@ -67,6 +69,7 @@ class MotorConfig:
     max_session_notional: Decimal
     max_order_age_ns: int = _DEFAULT_MAX_AGE_MS * _NS_PER_MS
     max_clock_skew_ns: int = _DEFAULT_SKEW_MS * _NS_PER_MS
+    max_quote_age_ns: int = _DEFAULT_QUOTE_AGE_MS * _NS_PER_MS
     # Fail closed: an unset environment is production (dev signing keys are then refused).
     environment: str = "production"
     # Aegis may sign SELL_SHORT; the motor only accepts it when this is explicitly enabled.
@@ -85,7 +88,7 @@ class MotorConfig:
             raise ConfigError("notional caps must be > 0")
         if self.max_session_notional < self.max_order_notional:
             raise ConfigError("session notional cap must be >= per-order notional cap")
-        if self.max_order_age_ns <= 0 or self.max_clock_skew_ns < 0:
+        if self.max_order_age_ns <= 0 or self.max_clock_skew_ns < 0 or self.max_quote_age_ns <= 0:
             raise ConfigError("age/skew windows are invalid")
 
     @classmethod
@@ -95,6 +98,7 @@ class MotorConfig:
             max_session_notional=_positive_decimal(env, "MOTOR_MAX_SESSION_NOTIONAL_USD"),
             max_order_age_ns=_positive_ms(env, "MOTOR_MAX_ORDER_AGE_MS", _DEFAULT_MAX_AGE_MS),
             max_clock_skew_ns=_positive_ms(env, "MOTOR_MAX_CLOCK_SKEW_MS", _DEFAULT_SKEW_MS),
+            max_quote_age_ns=_positive_ms(env, "MOTOR_MAX_QUOTE_AGE_MS", _DEFAULT_QUOTE_AGE_MS),
             environment=env.get("MOTOR_ENV", "production").strip().lower() or "production",
             allow_short_selling=_flag(env, "MOTOR_SHORT_SELLING_ENABLED"),
             state_dir=_optional_path(env, "MOTOR_STATE_DIR"),

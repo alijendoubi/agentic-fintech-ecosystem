@@ -119,18 +119,19 @@ def _usable_price(value: Decimal | None) -> Decimal | None:
     return value
 
 
-def compute_notional(order: Order, reference_price: Decimal | None) -> Decimal | None:
-    """Worst-case notional: quantity x the highest usable price among limit, stop, reference.
+def compute_notional(order: Order, trusted_price: Decimal | None) -> Decimal | None:
+    """Worst-case notional: quantity x the highest usable price among the signed limit, the
+    signed stop and ``trusted_price`` (the motor's own fresh quote, NEVER a caller-supplied one).
 
-    Returns None when no usable price exists (e.g. a market order without a reference
-    price), which the motor treats as a rejection: an unknown exposure cannot be capped.
+    Returns None when no usable price exists (e.g. a market order with no trusted quote),
+    which the motor treats as a rejection: an unknown exposure cannot be capped.
     """
     prices = [
         p
         for p in (
             _usable_price(order.limit_price),
             _usable_price(order.stop_price),
-            _usable_price(reference_price),
+            _usable_price(trusted_price),
         )
         if p is not None
     ]

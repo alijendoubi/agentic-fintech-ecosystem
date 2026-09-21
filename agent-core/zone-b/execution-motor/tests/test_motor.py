@@ -281,14 +281,6 @@ def test_market_order_without_reference_price_is_rejected() -> None:
     assert run(make_motor(), market).reject_reason is RejectReason.NOTIONAL_UNDETERMINABLE
 
 
-def test_market_order_capped_using_reference_price() -> None:
-    market = attest(make_order(order_type=OrderType.MARKET, limit_price=D("0"), quantity=D("200")))
-    over = run(make_motor(), market, reference_price=D("190"))
-    assert over.reject_reason is RejectReason.NOTIONAL_CAP_EXCEEDED
-    ok_order = attest(make_order(order_type=OrderType.MARKET, limit_price=D("0"), quantity=D("10")))
-    assert run(make_motor(), ok_order, reference_price=D("190")).status is ExecutionStatus.FILLED
-
-
 def test_session_cap_accumulates_and_broker_reject_releases_capacity() -> None:
     motor = make_motor(order_cap="20000", session_cap="30000")
     a = attest(make_order(order_id="a", quantity=D("100"), limit_price=D("190")))

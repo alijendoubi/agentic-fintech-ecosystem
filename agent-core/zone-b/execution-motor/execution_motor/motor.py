@@ -41,6 +41,7 @@ from .models import (
     Order,
     RejectReason,
 )
+from .quotes import QuoteSource
 from .sor import SmartOrderRouter
 from .toxicity import VenueObservation
 
@@ -63,6 +64,7 @@ class ExecutionMotor:
         kill_switch: KillSwitch,
         verifier: AttestationVerifier | None = None,
         idempotency: IdempotencyStore | None = None,
+        quotes: QuoteSource | None = None,
         venue_stats: VenueStats = _no_stats,
         clock_ns: Callable[[], int] = time.time_ns,
     ) -> None:
@@ -76,6 +78,7 @@ class ExecutionMotor:
         if config.is_production and getattr(self._verifier, "accepts_dev_keys", False) is True:
             raise ConfigError("a verifier that accepts dev signing keys is forbidden in production")
         self._idem: IdempotencyStore = self._resolve_idempotency(config, idempotency)
+        self._quotes = quotes
         self._stats = venue_stats
         self._clock = clock_ns
         self._ledger = NotionalLedger(config.max_session_notional)
@@ -165,12 +168,28 @@ class ExecutionMotor:
         if order.algo is not ExecAlgo.DIRECT:
             detail = f"{order.algo.value} not implemented"
             return self._rejected(order, RejectReason.ALGO_UNSUPPORTED, detail, received, ref)
-        notional = compute_notional(order, ref)
+        # The caller's ``ref`` is unsigned and only feeds arrival_price (TCA): never the cap.
+        notional = compute_notional(order, self._trusted_quote_price(order.symbol, received))
         if notional is None:
             return self._rejected(order, RejectReason.NOTIONAL_UNDETERMINABLE, "", received, ref)
         if notional > self._config.max_order_notional:
             return self._rejected(order, RejectReason.NOTIONAL_CAP_EXCEEDED, "", received, ref)
         return notional
+
+    def _trusted_quote_price(self, symbol: str, now: int) -> Decimal | None:
+        """Price from the motor's own quote source if fresh and sane, else None (fail closed)."""
+        if self._quotes is None:
+            return None
+        try:
+            quote = self._quotes.latest(symbol)
+            if quote is None or not quote.price.is_finite() or quote.price <= _ZERO:
+                return None
+            too_new = quote.as_of_ns > now + self._config.max_clock_skew_ns
+            too_old = now - quote.as_of_ns > self._config.max_quote_age_ns
+        except Exception as exc:  # noqa: BLE001 - a broken feed must reject, not crash the motor
+            _log.warning("quote_source_error", symbol=symbol, error=type(exc).__name__)
+            return None
+        return None if too_new or too_old else quote.price
 
     def _timing_reason(self, attested: AttestedOrder, now: int) -> RejectReason | None:
         att = attested.attestation

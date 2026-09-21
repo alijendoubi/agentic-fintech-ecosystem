@@ -77,6 +77,9 @@ def handle_decision(
 ) -> ExecutionReport:
     """Execute an AegisDecision. Anything other than a complete APPROVED decision is refused.
 
+    ``reference_price`` is unsigned caller data: it is only recorded as the report's
+    arrival_price for slippage. The notional cap never uses it (see ``ExecutionMotor``).
+
     With a ``reporter``, the outcome is sent back to Aegis (``ReportExecution``) when the order
     reached the broker. Delivery problems never change the returned report.
     """
