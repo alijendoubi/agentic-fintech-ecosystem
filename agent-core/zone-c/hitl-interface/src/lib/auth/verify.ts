@@ -21,7 +21,9 @@ export type AuthFailureCode =
   | "bad_signature"
   | "missing_subject"
   | "invalid_role"
-  | "mfa_required";
+  | "mfa_required"
+  | "missing_jti"
+  | "lifetime_too_long";
 
 export type AuthResult =
   | { readonly ok: true; readonly session: OperatorSession }
@@ -48,7 +50,7 @@ const claimsSchema = z.object({
   amr: z.array(z.string()),
 });
 
-type VerifierConfig = Pick<AppConfig, "jwtSecret" | "jwtIssuer" | "jwtAudience" | "isProduction">;
+type VerifierConfig = Pick<AppConfig, "jwtSecret" | "jwtIssuer" | "jwtAudience" | "jwtMaxLifetimeSec" | "isProduction">;
 
 function fail(code: AuthFailureCode): AuthResult {
   return { ok: false, code };
@@ -66,6 +68,25 @@ function mapClaimsFailure(payload: Record<string, unknown>): AuthResult {
     return fail("invalid_role");
   }
   return fail("mfa_required");
+}
+
+/**
+ * Production-only claim rules: a `jti` (so a session can be revoked), an `iat`, and a bounded lifetime.
+ * The lifetime is checked twice: exp - iat, and exp - now, so a future-dated `iat` cannot stretch the window.
+ */
+function checkProductionClaims(
+  payload: Record<string, unknown>,
+  exp: number,
+  maxLifetimeSec: number,
+  now: Date,
+): AuthResult | null {
+  if (typeof payload.jti !== "string" || payload.jti.length === 0) return fail("missing_jti");
+  if (typeof payload.iat !== "number") return fail("invalid_token");
+  const nowSec = Math.floor(now.getTime() / 1000);
+  if (exp - payload.iat > maxLifetimeSec || exp - nowSec > maxLifetimeSec + CLOCK_TOLERANCE_SEC) {
+    return fail("lifetime_too_long");
+  }
+  return null;
 }
 
 /**
@@ -101,6 +122,11 @@ export async function verifyOperatorToken(
     return mapClaimsFailure(payload);
   }
   if (typeof payload.exp !== "number") return fail("invalid_token");
+
+  if (config.isProduction) {
+    const denied = checkProductionClaims(payload, payload.exp, config.jwtMaxLifetimeSec, now);
+    if (denied) return denied;
+  }
 
   return {
     ok: true,

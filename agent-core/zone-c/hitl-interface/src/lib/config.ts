@@ -28,6 +28,7 @@ const DEFAULT_API_TIMEOUT_MS = 5000;
 const DEFAULT_FOUR_EYES_QUANTITY_THRESHOLD = 1000;
 const DEFAULT_MUTATIONS_PER_MINUTE = 10;
 const DEFAULT_LOGINS_PER_MINUTE = 10;
+const DEFAULT_JWT_MAX_LIFETIME_SEC = 900;
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
@@ -35,6 +36,8 @@ export interface AppConfig {
   readonly jwtSecret: string;
   readonly jwtIssuer: string | null;
   readonly jwtAudience: string | null;
+  /** Production only: tokens whose exp - iat exceeds this are refused (default 15 minutes). */
+  readonly jwtMaxLifetimeSec: number;
   readonly apiBaseUrl: string | null;
   readonly apiServiceToken: string | null;
   readonly apiTimeoutMs: number;
@@ -166,6 +169,10 @@ export function loadConfig(env: EnvSource): AppConfig {
     "HITL_LOGIN_RATE_LIMIT_PER_MIN", env.HITL_LOGIN_RATE_LIMIT_PER_MIN,
     DEFAULT_LOGINS_PER_MINUTE, { min: 1, integer: true }, problems);
 
+  const jwtMaxLifetimeSec = parseNumber(
+    "HITL_JWT_MAX_LIFETIME_SEC", env.HITL_JWT_MAX_LIFETIME_SEC,
+    DEFAULT_JWT_MAX_LIFETIME_SEC, { min: 1, integer: true }, problems);
+
   if (problems.length > 0) {
     throw new ConfigError(problems);
   }
@@ -174,6 +181,7 @@ export function loadConfig(env: EnvSource): AppConfig {
     jwtSecret: (env.HITL_JWT_SECRET ?? "").trim(),
     jwtIssuer: optionalString(env.HITL_JWT_ISSUER),
     jwtAudience: optionalString(env.HITL_JWT_AUDIENCE),
+    jwtMaxLifetimeSec: jwtMaxLifetimeSec ?? DEFAULT_JWT_MAX_LIFETIME_SEC,
     apiBaseUrl,
     apiServiceToken: optionalString(env.HITL_API_TOKEN),
     apiTimeoutMs: apiTimeoutMs ?? DEFAULT_API_TIMEOUT_MS,

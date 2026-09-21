@@ -23,6 +23,8 @@ export interface TokenSpec {
   readonly issuer?: string;
   readonly audience?: string;
   readonly issuedAt?: Date;
+  readonly jti?: string;
+  readonly omitIssuedAt?: boolean;
 }
 
 /** Mints a test JWT. Pass null for a claim to omit it. */
@@ -34,8 +36,9 @@ export async function mintToken(spec: TokenSpec = {}): Promise<string> {
   const iat = Math.floor(issuedAt.getTime() / 1000);
   let jwt = new SignJWT(claims)
     .setProtectedHeader({ alg: spec.alg ?? "HS256" })
-    .setIssuedAt(iat)
     .setExpirationTime(iat + (spec.expiresInSec ?? 600));
+  if (!spec.omitIssuedAt) jwt = jwt.setIssuedAt(iat);
+  if (spec.jti) jwt = jwt.setJti(spec.jti);
   if (spec.sub !== null) jwt = jwt.setSubject(spec.sub ?? "approver-a");
   if (spec.issuer) jwt = jwt.setIssuer(spec.issuer);
   if (spec.audience) jwt = jwt.setAudience(spec.audience);

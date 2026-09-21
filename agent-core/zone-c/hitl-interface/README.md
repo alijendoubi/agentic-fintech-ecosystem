@@ -29,7 +29,7 @@ the browser bundle (checked in the container: not present in `.next/static`).
 | Concern | Implementation |
 |---|---|
 | Refuse to start | `HITL_JWT_SECRET` unset, < 32 chars, placeholder, or < 8 distinct chars; missing/invalid `HITL_API_BASE_URL`; demo mode in production => process exits 1 (`src/lib/startup-guard.ts`). A throw in `instrumentation.ts` alone does not stop `next start`, hence the explicit exit |
-| AuthN | HS256 JWT verified server-side (`jose`, algorithm pinned). Required: `sub`, `role` in approver/viewer, `exp`, `amr` containing `mfa`. `iss`/`aud` pinning (`HITL_JWT_ISSUER`/`HITL_JWT_AUDIENCE`, both required in production). Any failure => deny |
+| AuthN | HS256 JWT verified server-side (`jose`, algorithm pinned). Required: `sub`, `role` in approver/viewer, `exp`, `amr` containing `mfa`. `iss`/`aud` pinning (`HITL_JWT_ISSUER`/`HITL_JWT_AUDIENCE`, both required in production). In production also required: `iat`, a unique `jti`, and `exp - iat` <= `HITL_JWT_MAX_LIFETIME_SEC` (default 900). Any failure => deny |
 | AuthZ | Only `approver` + MFA can act; viewers are read-only. Checked in the page, the route, the decision service and the policy |
 | Identity boundary | `TokenVerifier` / `extractToken` (`src/lib/auth`). **TODO(owner): SSO / IdP (OIDC + JWKS) integration is not implemented and no fake IdP is provided.** Today: paste a token at `/login`, or a fronting gateway injects `Authorization: Bearer` |
 | CSRF | SameSite=Strict HttpOnly cookie + mandatory `Origin` match (or `HITL_ALLOWED_ORIGINS`) + per-session HMAC token in `x-csrf-token` |
