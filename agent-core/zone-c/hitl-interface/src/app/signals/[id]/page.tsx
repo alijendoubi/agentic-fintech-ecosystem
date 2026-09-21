@@ -10,6 +10,7 @@ import { deriveStatus, msToNs, requiredApprovals } from "@/lib/signals/policy";
 import type { DisplayStatus } from "@/lib/signals/policy";
 import { signalIdParamSchema } from "@/lib/signals/schema";
 import { deriveCsrfToken } from "@/lib/security/csrf";
+import { serverNowMs } from "@/server/clock";
 import { getRuntime } from "@/server/runtime";
 import { requireSession } from "@/server/session";
 
@@ -31,7 +32,7 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
   const session = await requireSession();
   const { config, client } = getRuntime();
   const result = await client.getHold(parsedId.data, { token: session.token, sub: session.sub });
-  const nowMs = Date.now();
+  const nowMs = serverNowMs();
 
   if (!result.ok) {
     if (result.error.code === "not_found") notFound();

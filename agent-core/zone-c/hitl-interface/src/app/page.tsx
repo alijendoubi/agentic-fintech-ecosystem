@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { formatNanos, humanizeEnum, nsToMs } from "@/lib/format";
 import { deriveStatus, msToNs } from "@/lib/signals/policy";
 import type { Signal } from "@/lib/signals/schema";
+import { serverNowMs } from "@/server/clock";
 import { getRuntime } from "@/server/runtime";
 import { requireSession } from "@/server/session";
 
@@ -18,7 +19,7 @@ export default async function QueuePage() {
   const session = await requireSession();
   const { config, client } = getRuntime();
   const result = await client.listHolds({ token: session.token, sub: session.sub });
-  const nowMs = Date.now();
+  const nowMs = serverNowMs();
   const nowNs = msToNs(nowMs);
   const signals = result.ok ? [...result.value].sort((a, b) => expiryMs(a) - expiryMs(b)) : [];
 
