@@ -139,6 +139,12 @@ export function loadConfig(env: EnvSource): AppConfig {
   if (demoMode && isProduction) {
     problems.push("HITL_DEMO_MODE is not allowed in production (demo mode is disabled in production builds)");
   }
+  if (isProduction && optionalString(env.HITL_JWT_ISSUER) === null) {
+    problems.push("HITL_JWT_ISSUER is required in production (tokens must be pinned to one issuer)");
+  }
+  if (isProduction && optionalString(env.HITL_JWT_AUDIENCE) === null) {
+    problems.push("HITL_JWT_AUDIENCE is required in production (tokens must be pinned to this audience)");
+  }
 
   const apiBaseUrl = parseHttpUrl("HITL_API_BASE_URL", env.HITL_API_BASE_URL, problems);
   if (!demoMode && apiBaseUrl === null && !problems.some((p) => p.startsWith("HITL_API_BASE_URL"))) {

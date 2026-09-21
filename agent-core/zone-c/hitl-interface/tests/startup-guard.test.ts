@@ -4,6 +4,8 @@ import { enforceStartupConfig } from "@/lib/startup-guard";
 const GOOD = {
   HITL_JWT_SECRET: "k9Xv2mQ7pL4tR8wZ1nB6cY3dF5hJ0aGs",
   HITL_API_BASE_URL: "http://backend.internal:4000",
+  HITL_JWT_ISSUER: "https://idp.example.test",
+  HITL_JWT_AUDIENCE: "afe-hitl",
   NODE_ENV: "production",
 };
 

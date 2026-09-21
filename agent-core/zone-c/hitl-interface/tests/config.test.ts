@@ -7,6 +7,8 @@ function env(overrides: Record<string, string | undefined> = {}) {
   return {
     HITL_JWT_SECRET: GOOD_SECRET,
     HITL_API_BASE_URL: "http://backend.internal:4000",
+    HITL_JWT_ISSUER: "https://idp.example.test",
+    HITL_JWT_AUDIENCE: "afe-hitl",
     NODE_ENV: "production",
     ...overrides,
   };

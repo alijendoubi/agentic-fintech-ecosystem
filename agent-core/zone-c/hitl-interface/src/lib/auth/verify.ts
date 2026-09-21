@@ -48,7 +48,7 @@ const claimsSchema = z.object({
   amr: z.array(z.string()),
 });
 
-type VerifierConfig = Pick<AppConfig, "jwtSecret" | "jwtIssuer" | "jwtAudience">;
+type VerifierConfig = Pick<AppConfig, "jwtSecret" | "jwtIssuer" | "jwtAudience" | "isProduction">;
 
 function fail(code: AuthFailureCode): AuthResult {
   return { ok: false, code };
@@ -78,6 +78,8 @@ export async function verifyOperatorToken(
   now: Date = new Date(),
 ): Promise<AuthResult> {
   if (!token) return fail("missing_token");
+  // Defence in depth: loadConfig already refuses to start without these in production.
+  if (config.isProduction && (!config.jwtIssuer || !config.jwtAudience)) return fail("invalid_token");
 
   let payload: Record<string, unknown>;
   try {
