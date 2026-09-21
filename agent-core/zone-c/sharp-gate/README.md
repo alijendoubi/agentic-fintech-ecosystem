@@ -21,21 +21,63 @@ whose sign-off is recorded; `approve(proposal_id, approver, gate=<next stage>)` 
   the automated backtest and canary results).
 * Rejection at any point needs a reason and an authorized identity for the pending stage; nothing is possible after
   `REJECTED` or `PROMOTED` (`ProposalClosedError`).
-* History is append-only; approvals are frozen records folded from immutable events. Corrupt stored history fails
-  `fold` with `StoreError`.
+* History is append-only; approvals are frozen records folded from immutable events. `fold` re-verifies, on every read
+  (`SharpGate.get`), the same invariants the database enforces at insert time (sequential versions, legal transitions,
+  no stage skips, submitter is the proposer and never approves, one stage per approver, rejection needs a reason) and
+  that every transition is backed by a matching audit record. Any inconsistency raises `StoreError`: an invalid
+  history is never reported as advanced or `PROMOTED` (fail closed). `SharpGate` therefore needs an `audit_lookup`
+  (`PostgresAuditLookup` reads `audit.audit_events`).
 * Every transition is written to the audit logger (`AuditSink.record`, satisfied by `afe_audit.AuditLogger`) BEFORE
-  it is stored; audit failure => `AuditFailureError`, nothing stored. If the store then fails, a best-effort
-  `sharp.transition_aborted` audit record is written and the error re-raised.
+  it is stored, and the stored row carries the audit record's `seq`/`hash`; audit failure => `AuditFailureError`,
+  nothing stored. Audit log and store are two transactions, so the pair is not atomic; instead the gate compensates.
+  On ANY failure of the store step it first checks whether the row landed anyway (lost commit acknowledgement: then
+  the transition happened and is returned), otherwise writes an explicit `sharp.transition_aborted` audit record
+  (orphaned `audit_seq`/`audit_hash`, error class, `store_outcome` = `absent` | `unverified`) and re-raises the
+  original error. If that record cannot be written either, `AbortNotRecordedError` (an `AuditFailureError`, chained
+  from the original error, carrying `audit_seq`) is raised instead: nothing is swallowed, and an operator must
+  reconcile the orphaned audit record. An audit record with no store row always means "not performed".
 * Concurrency: optimistic (`expected_version`); racing approvals yield exactly one winner (`ConcurrencyError`).
 
 ## Stores
 
 * `InMemoryProposalStore` (tests / single process).
-* `PostgresProposalStore` over its own append-only table `sharp.transitions` (`sql/001_sharp_transitions.sql`, run as
-  `afe_audit_owner` after audit-logger's migrations; own schema because `audit`'s DDL is locked). Same pattern as the
-  audit table: statement-level triggers reject UPDATE/DELETE/TRUNCATE for every role (ENABLE ALWAYS), runtime role
-  `afe_audit_app` has INSERT+SELECT only, `UNIQUE(proposal_id, version)`. Tamper-evidence of content comes from the
-  hash-chained audit copy. Not covered: the `sharp` schema has no DDL guard event trigger (TODO: extend 900_ddl_guard).
+* `PostgresProposalStore` over its own append-only table `sharp.transitions` (own schema because `audit`'s DDL is
+  locked). Migrations, in order: `001_sharp_transitions.sql`, `002_sharp_enforce_transitions.sql`,
+  `003_sharp_audit_reference.sql` (all as `afe_audit_owner`, after audit-logger's migrations), then
+  `900_sharp_ddl_guard.sql` (as a superuser, LAST: once installed the owner can no longer change schema `sharp`).
+  `sharp.transitions` must be empty when 003 is applied (rows without audit references cannot be trusted).
+  All triggers are `ENABLE ALWAYS` (they fire even under `session_replication_role = replica`):
+  * statement-level triggers reject UPDATE/DELETE/TRUNCATE for every role; the runtime role `afe_audit_app` has
+    INSERT+SELECT only; `UNIQUE(proposal_id, version)`;
+  * a BEFORE INSERT state-machine trigger enforces, for every role including the owner and superusers, the rules
+    listed under "Enforced rules" that are database-checkable: version sequence, legal transition from the previous
+    row, one-stage approvals (so `PROMOTED` needs all six), submitter != approver, distinct approvers (NFKC/trim/lower
+    in SQL; `fold` uses casefold and is the stricter, authoritative check), terminal states, rejection reason;
+  * a BEFORE INSERT audit-reference trigger refuses a row unless `audit.audit_events` holds the record it names, with
+    the same event type, actor, timestamp and full payload; each audit record can back only one row;
+  * `900_sharp_ddl_guard.sql` event triggers refuse any DDL on schema `sharp` by non-superusers (disable/replace/drop
+    triggers, rules, rename or drop the schema). Break-glass is superuser-only (same procedure as audit-logger's guard).
+  Tamper-evidence of the content otherwise comes from the hash-chained audit copy.
+
+## Limits (what this does NOT protect against)
+
+* `actor` and `occurred_at` are client-asserted: the database checks that they are consistent with the audit record,
+  but the audit record is also written by the client. A holder of the app role that can write the audit chain can
+  still forge a fully self-consistent history using ANY distinct, non-proposer identity names; it will be a real,
+  permanent, hash-chained entry (detectable by review, not preventable here).
+* Approver AUTHORIZATION (who may sign which stage) is enforced only by the injected `ApproverAuthorizer` in the
+  gate, not in the database or in `fold`: identities can rotate, and the authorization decision is not recorded or
+  signed. Closing this needs signed approvals or a recorded role snapshot per transition (TODO(owner)).
+* The audit log is trusted as a source: `fold` checks that the referenced record exists and matches, not the chain's
+  integrity (run `ChainVerifier` / anchors for that). A superuser can still remove the guard or disable triggers
+  (deliberate break-glass); that is only detectable afterwards.
+* An audit record the gate wrote for a transition that then failed to store (see `sharp.transition_aborted`) could be
+  replayed as a row by a compromised app role, but only with exactly the content the gate had already validated, and
+  only where it is still a legal next transition.
+* If the store outcome cannot be verified after a failure (`store_outcome: unverified`) the abort record states that
+  it is unverified; it is not a proof of "not performed".
+* The `sharp` migration files are not wired into `infrastructure/docker-compose.yml` / init scripts (only audit-logger's
+  `sql/` is mounted there); whoever deploys `sharp.transitions` must run them in the order above.
 
 ## Proposal schema (what the Zone A Reflector must supply)
 
