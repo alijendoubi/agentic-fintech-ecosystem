@@ -16,6 +16,7 @@ mod hold;
 mod report;
 mod submit;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::audit::AuditSink;
@@ -33,6 +34,27 @@ use crate::state::refdata::ReferenceData;
 use crate::state::replay::ReplayStore;
 
 pub use hold::HoldError;
+
+/// Set by the transport when the caller has given up on a request (deadline
+/// exceeded or disconnect). The engine checks it before signing and before
+/// committing a reservation, so an abandoned `SubmitSignal` neither signs nor
+/// leaves exposure reserved. A default token is never cancelled.
+#[derive(Debug, Clone, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> CancelToken {
+        CancelToken::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
 
 /// Dependencies, injected so tests can substitute every side effect.
 #[derive(Clone)]
@@ -58,16 +80,18 @@ pub(crate) struct Core {
 pub struct Engine {
     pub(crate) deps: EngineDeps,
     core: Mutex<Core>,
+    /// Why the portfolio could not be loaded at start-up, if it could not.
+    portfolio_error: Option<String>,
 }
 
 impl Engine {
     pub fn new(deps: EngineDeps) -> Engine {
         let now = deps.clock.now_ns().unwrap_or(0);
-        let portfolio = match deps.portfolio_store.load() {
-            Ok(p) => Some(p),
+        let (portfolio, portfolio_error) = match deps.portfolio_store.load() {
+            Ok(p) => (Some(p), None),
             Err(e) => {
                 tracing::error!(error = %e, "portfolio state unreadable; all approvals will fail closed");
-                None
+                (None, Some(e.to_string()))
             }
         };
         let cfg = &deps.limits.config;
@@ -79,7 +103,13 @@ impl Engine {
         Engine {
             deps,
             core: Mutex::new(core),
+            portfolio_error,
         }
+    }
+
+    /// Why the portfolio was unavailable at start-up (`None` = it loaded).
+    pub fn portfolio_load_error(&self) -> Option<String> {
+        self.portfolio_error.clone()
     }
 
     /// The kill-switch controller this engine consults.

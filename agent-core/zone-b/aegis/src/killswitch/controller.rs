@@ -203,6 +203,17 @@ impl KillController {
         })
     }
 
+    /// Fan the current state out to watchers. Callers MUST hold the state lock
+    /// (`ks` is the guard's contents): publishing under the lock makes
+    /// publication order equal state order, so a slow publisher can never
+    /// overwrite a newer state (e.g. a late reset publishing below a HARD).
+    /// `send_replace` never blocks or awaits.
+    fn publish(&self, ks: &KillSwitch) -> pb::KillSwitchState {
+        let state = to_pb(ks);
+        self.tx.send_replace(state.clone());
+        state
+    }
+
     /// Persist after a trip; on failure force HARD in memory.
     fn persist_or_force_hard(&self, ks: &mut KillSwitch, now: i64) -> bool {
         match self.store.save(ks.state()) {
@@ -235,10 +246,9 @@ impl KillController {
         let ev = ks.trigger(raw_level, reason, actor, now);
         let persisted = self.persist_or_force_hard(&mut ks, now);
         let audit = self.kill_audit("latch", &ev, prev, &ks);
-        let state = to_pb(&ks);
+        let state = self.publish(&ks);
         drop(ks);
         self.emit(&audit);
-        self.tx.send_replace(state.clone());
         if persisted {
             Ok(state)
         } else {
@@ -256,10 +266,9 @@ impl KillController {
         let ev = ks.heartbeat(operator_id, now);
         self.persist_or_force_hard(&mut ks, now);
         let audit = self.kill_audit("heartbeat", &ev, prev, &ks);
-        let state = to_pb(&ks);
+        let state = self.publish(&ks);
         drop(ks);
         self.emit(&audit);
-        self.tx.send_replace(state.clone());
         state
     }
 
@@ -284,12 +293,11 @@ impl KillController {
                 self.kill_audit(kind, ev, prev, &ks)
             })
             .collect();
-        let state = to_pb(&ks);
+        self.publish(&ks);
         drop(ks);
         for a in &audits {
             self.emit(a);
         }
-        self.tx.send_replace(state);
     }
 
     /// Reset one latch. `caller` is the authenticated peer, for audit.
@@ -329,9 +337,8 @@ impl KillController {
             return Err(ResetRefusal::StoreUnavailable);
         }
         *ks = candidate;
-        let state = to_pb(&ks);
+        let state = self.publish(&ks);
         drop(ks);
-        self.tx.send_replace(state.clone());
         Ok(state)
     }
 }

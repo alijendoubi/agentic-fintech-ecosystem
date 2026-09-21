@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use super::StateError;
+use super::{sync_dir, StateError, StateInit};
 use crate::hex;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,13 +106,20 @@ pub struct FileReplayStore {
 const LOG_NAME: &str = "replay.log";
 
 impl FileReplayStore {
-    /// Open (creating if needed). A corrupt log is an ERROR, not an empty
-    /// store: silently dropping replay history would defeat the control.
-    pub fn open(dir: &Path, retention_ms: u64, now_ns: i64) -> Result<FileReplayStore, StateError> {
+    /// Open the log. A corrupt log is an ERROR, not an empty store, and so is a
+    /// MISSING log unless `init` is [`StateInit::Bootstrap`] (first boot of an
+    /// empty state dir): silently dropping replay history would defeat the
+    /// control by letting every previously seen signal id be approved again.
+    pub fn open(
+        dir: &Path,
+        retention_ms: u64,
+        now_ns: i64,
+        init: StateInit,
+    ) -> Result<FileReplayStore, StateError> {
         let path = dir.join(LOG_NAME);
         let inner = MemoryReplayStore::new(retention_ms);
         let cutoff = now_ns.saturating_sub(retention_ns(retention_ms));
-        let kept = load(&path, cutoff)?;
+        let kept = load(&path, cutoff, init == StateInit::Bootstrap)?;
         rewrite(&path, dir, kept.values())?;
         {
             let mut map = inner.map.lock().map_err(|_| poisoned())?;
@@ -130,11 +137,22 @@ impl FileReplayStore {
     }
 }
 
-fn load(path: &PathBuf, cutoff_ns: i64) -> Result<HashMap<String, ReplayRecord>, StateError> {
+fn load(
+    path: &PathBuf,
+    cutoff_ns: i64,
+    allow_missing: bool,
+) -> Result<HashMap<String, ReplayRecord>, StateError> {
     let mut map = HashMap::new();
     let file = match File::open(path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && allow_missing => return Ok(map),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(StateError::Unavailable(
+                "replay.log is missing from an existing state dir: refusing to start with \
+                 empty replay history"
+                    .into(),
+            ))
+        }
         Err(e) => return Err(StateError::Unavailable(format!("read replay log: {e}"))),
     };
     for (n, line) in BufReader::new(file).lines().enumerate() {
@@ -166,7 +184,8 @@ fn rewrite<'a>(
         f.write_all(&line).map_err(|e| err("write", e))?;
     }
     f.sync_all().map_err(|e| err("fsync", e))?;
-    fs::rename(&tmp, path).map_err(|e| err("rename", e))
+    fs::rename(&tmp, path).map_err(|e| err("rename", e))?;
+    sync_dir(dir).map_err(|e| err("fsync dir", e))
 }
 
 impl ReplayStore for FileReplayStore {
@@ -247,14 +266,14 @@ mod tests {
     fn file_store_survives_restart_and_takes_the_latest_record() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let s = FileReplayStore::open(dir.path(), DAY_MS, 100).unwrap();
+            let s = FileReplayStore::open(dir.path(), DAY_MS, 100, StateInit::Bootstrap).unwrap();
             s.record(&rec("a", 100)).unwrap();
             let mut fin = rec("a", 101);
             fin.decision_hex = hex::encode(b"final");
             s.record(&fin).unwrap();
             s.record(&rec("b", 102)).unwrap();
         }
-        let s = FileReplayStore::open(dir.path(), DAY_MS, 200).unwrap();
+        let s = FileReplayStore::open(dir.path(), DAY_MS, 200, StateInit::Bootstrap).unwrap();
         assert_eq!(
             s.lookup("a").unwrap().unwrap().decision_hex,
             hex::encode(b"final")
@@ -266,11 +285,12 @@ mod tests {
     #[test]
     fn file_store_drops_expired_records_on_open() {
         let dir = tempfile::tempdir().unwrap();
-        FileReplayStore::open(dir.path(), DAY_MS, 0)
+        FileReplayStore::open(dir.path(), DAY_MS, 0, StateInit::Bootstrap)
             .unwrap()
             .record(&rec("old", 10))
             .unwrap();
-        let s = FileReplayStore::open(dir.path(), DAY_MS, 10 + 2 * DAY_NS).unwrap();
+        let s = FileReplayStore::open(dir.path(), DAY_MS, 10 + 2 * DAY_NS, StateInit::Bootstrap)
+            .unwrap();
         assert!(s.lookup("old").unwrap().is_none());
     }
 
@@ -278,7 +298,23 @@ mod tests {
     fn corrupt_log_is_an_error_not_an_empty_store() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(LOG_NAME), b"{broken\n").unwrap();
-        assert!(FileReplayStore::open(dir.path(), DAY_MS, 1).is_err());
+        assert!(FileReplayStore::open(dir.path(), DAY_MS, 1, StateInit::Bootstrap).is_err());
+    }
+
+    #[test]
+    fn missing_log_in_an_existing_state_dir_is_an_error_not_an_empty_store() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("kill_state.json"), b"{}").unwrap();
+        assert!(FileReplayStore::open(dir.path(), DAY_MS, 1, StateInit::Existing).is_err());
+        assert!(!dir.path().join(LOG_NAME).exists(), "nothing is created");
+    }
+
+    #[test]
+    fn bootstrap_creates_the_log_so_the_next_start_finds_it() {
+        let dir = tempfile::tempdir().unwrap();
+        FileReplayStore::open(dir.path(), DAY_MS, 1, StateInit::Bootstrap).unwrap();
+        assert!(dir.path().join(LOG_NAME).exists());
+        assert!(FileReplayStore::open(dir.path(), DAY_MS, 2, StateInit::Existing).is_ok());
     }
 
     #[test]

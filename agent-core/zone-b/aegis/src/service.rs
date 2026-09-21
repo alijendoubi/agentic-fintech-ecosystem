@@ -28,7 +28,7 @@ use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
 
 use crate::audit::AuditEvent;
-use crate::engine::{Engine, HoldError};
+use crate::engine::{CancelToken, Engine, HoldError};
 use crate::identity::{cert_identity, Identities, PeerRole};
 use crate::killswitch::controller::ControllerError;
 use crate::killswitch::{ResetRefusal, ResetRequest};
@@ -61,6 +61,15 @@ pub struct AegisService {
 
 struct Caller {
     id: String,
+}
+
+/// Cancels its token on drop.
+struct CancelOnDrop(CancelToken);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
 }
 
 impl AegisService {
@@ -211,9 +220,14 @@ impl pb::Aegis for AegisService {
         self.authorize(&request, PeerRole::SignalSubmitter)?;
         let signal = request.into_inner();
         let engine = self.engine.clone();
+        // Cancelled when this future ends for any reason short of the blocking
+        // task finishing first (deadline, client disconnect): the engine then
+        // neither signs nor keeps a reservation for a caller that has left.
+        let cancel = CancelToken::new();
+        let _cancel_on_drop = CancelOnDrop(cancel.clone());
         let d = self
             .run(self.opts.submit_timeout, move || {
-                engine.submit_signal(&signal)
+                engine.submit_signal_cancellable(&signal, &cancel)
             })
             .await?;
         Ok(Response::new(d))

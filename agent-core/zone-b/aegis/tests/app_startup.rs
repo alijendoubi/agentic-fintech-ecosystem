@@ -5,16 +5,21 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use aegis::app::{build_app, App};
 use aegis::clock::{Clock, SystemClock};
 use aegis::config::RuntimeConfig;
 use aegis::controls::{RefPrice, RegimeView};
+use aegis::identity::Identities;
 use aegis::money::Nanos;
 use aegis::pb::{self, DecisionStatus, KillSwitchLevel};
+use aegis::server::serve_on;
+use aegis::service::{AegisService, ServiceOptions};
 use aegis::state::portfolio::{FilePortfolioStore, Portfolio, PortfolioStore};
-use aegis::testkit::{limits_json, uuid_n, SHARE};
+use aegis::state::StateInit;
+use aegis::testkit::{limits_json, uuid_n, Rig, RigOptions, SHARE};
 
 /// Session open all week so the wall clock cannot flake the test.
 fn all_week_limits() -> String {
@@ -42,6 +47,7 @@ fn env_with(limits: Option<&str>) -> Env {
     let vars: HashMap<&str, String> = HashMap::from([
         ("AEGIS_ENV", "test".to_owned()),
         ("AEGIS_INSECURE_DEV", "1".to_owned()),
+        ("AEGIS_LISTEN_ADDR", "127.0.0.1:0".to_owned()),
         ("AEGIS_SIGNER", "dev".to_owned()),
         (
             "AEGIS_LIMITS_FILE",
@@ -132,6 +138,156 @@ fn deleted_or_corrupt_kill_state_starts_at_hard() {
     );
 }
 
+#[test]
+fn a_lost_portfolio_or_replay_log_next_to_other_state_latches_hard() {
+    for lost in ["portfolio.json", "replay.log"] {
+        let e = env_with(Some(&all_week_limits()));
+        drop(build_app(&e.cfg).unwrap());
+        for f in ["kill_state.json", "portfolio.json", "replay.log"] {
+            assert!(e.state.join(f).exists(), "first boot must create {f}");
+        }
+        std::fs::remove_file(e.state.join(lost)).unwrap();
+        let app = build_app(&e.cfg).unwrap();
+        assert_eq!(
+            level(&app),
+            Some(KillSwitchLevel::KillLevelHard),
+            "{lost} missing"
+        );
+        let why = app.engine.kill().state().latches[0].reason.clone();
+        assert!(why.contains("start-up") && why.contains("missing"), "{why}");
+        drop(app);
+        // the HARD latch was persisted: a restart with the file restored stays HARD
+        assert_eq!(
+            level(&build_app(&e.cfg).unwrap()),
+            Some(KillSwitchLevel::KillLevelHard)
+        );
+    }
+}
+
+#[test]
+fn clean_restart_of_a_bootstrapped_state_dir_stays_normal() {
+    let e = env_with(Some(&all_week_limits()));
+    drop(build_app(&e.cfg).unwrap());
+    let again = build_app(&e.cfg).unwrap();
+    assert_eq!(level(&again), Some(KillSwitchLevel::KillLevelNormal));
+}
+
+fn plaintext_service() -> AegisService {
+    let rig = Rig::build(RigOptions::default());
+    let ids = Identities::from_bytes(IDENTITIES.as_bytes()).unwrap();
+    AegisService::new(
+        rig.engine.clone(),
+        Arc::new(ids),
+        ServiceOptions {
+            insecure_dev: true,
+            max_concurrency: 4,
+            max_watchers: 2,
+            submit_timeout: Duration::from_secs(1),
+            rpc_timeout: Duration::from_secs(1),
+        },
+    )
+}
+
+#[tokio::test]
+async fn plaintext_serving_refuses_a_non_loopback_listener() {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let served = tokio::time::timeout(
+        Duration::from_secs(2),
+        serve_on(
+            listener,
+            None,
+            plaintext_service(),
+            Duration::from_secs(1),
+            std::future::pending::<()>(),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(served, Ok(Err(_))),
+        "a plaintext server bound off-loopback must refuse to serve, got {served:?}"
+    );
+}
+
+#[tokio::test]
+async fn plaintext_serving_on_loopback_still_serves() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let served = tokio::time::timeout(
+        Duration::from_millis(500),
+        serve_on(
+            listener,
+            None,
+            plaintext_service(),
+            Duration::from_secs(1),
+            std::future::pending::<()>(),
+        ),
+    )
+    .await;
+    assert!(served.is_err(), "loopback plaintext keeps serving");
+}
+
+/// Production-shaped config (mTLS + pkcs11 signer paths; nothing is loaded
+/// from them before the fresh-state guard runs).
+fn production_env(allow_fresh: bool) -> Env {
+    let e = env_with(Some(&all_week_limits()));
+    let mut vars: HashMap<&str, String> = HashMap::from([
+        ("AEGIS_ENV", "production".to_owned()),
+        ("AEGIS_SIGNER", "pkcs11".to_owned()),
+        ("AEGIS_PKCS11_MODULE", "/nonexistent/module.so".to_owned()),
+        ("AEGIS_PKCS11_TOKEN_LABEL", "t".to_owned()),
+        ("AEGIS_PKCS11_KEY_LABEL", "k".to_owned()),
+        ("AEGIS_PKCS11_PIN_FILE", "/nonexistent/pin".to_owned()),
+        ("AEGIS_TLS_CERT", "/nonexistent/c.pem".to_owned()),
+        ("AEGIS_TLS_KEY", "/nonexistent/k.pem".to_owned()),
+        ("AEGIS_TLS_CLIENT_CA", "/nonexistent/ca.pem".to_owned()),
+        ("AEGIS_LIMITS_FILE", e.cfg.limits_file.display().to_string()),
+        (
+            "AEGIS_IDENTITIES_FILE",
+            e.cfg.identities_file.display().to_string(),
+        ),
+        ("AEGIS_STATE_DIR", e.state.display().to_string()),
+    ]);
+    if allow_fresh {
+        vars.insert("AEGIS_ALLOW_FRESH_STATE", "1".to_owned());
+    }
+    let cfg = RuntimeConfig::from_lookup(&|k| vars.get(k).cloned()).unwrap();
+    Env {
+        _dir: e._dir,
+        cfg,
+        state: e.state,
+    }
+}
+
+#[test]
+fn production_refuses_a_fresh_state_dir_without_explicit_opt_in() {
+    let e = production_env(false);
+    let err = build_app(&e.cfg).err().expect("must refuse").to_string();
+    assert!(err.contains("AEGIS_ALLOW_FRESH_STATE"), "{err}");
+    assert!(
+        !e.state.join("kill_state.json").exists(),
+        "a refused start must not create state"
+    );
+}
+
+#[test]
+fn production_fresh_state_with_opt_in_gets_past_the_guard() {
+    let e = production_env(true);
+    // The pkcs11 module does not exist so start-up still fails, but only AFTER
+    // the state was bootstrapped, not because of the fresh-state guard.
+    let err = build_app(&e.cfg).err().expect("no HSM here").to_string();
+    assert!(!err.contains("AEGIS_ALLOW_FRESH_STATE"), "{err}");
+    assert!(e.state.join("kill_state.json").exists());
+}
+
+#[test]
+fn production_restart_of_a_populated_state_dir_needs_no_opt_in() {
+    let first = production_env(true);
+    let _ = build_app(&first.cfg);
+    let mut cfg = production_env(false).cfg;
+    cfg.state_dir = first.state.clone();
+    let err = build_app(&cfg).err().expect("no HSM here").to_string();
+    assert!(!err.contains("AEGIS_ALLOW_FRESH_STATE"), "{err}");
+}
+
 fn seed_portfolio(dir: &Path) {
     let now = SystemClock.now_ns().unwrap();
     let mut p = Portfolio::default();
@@ -139,7 +295,9 @@ fn seed_portfolio(dir: &Path) {
         p.record_size("AAPL", Nanos::new(100 * SHARE), now - 3_600_000_000_000 + i);
     }
     p.record_equity(1_000_000 * SHARE, now);
-    FilePortfolioStore::new(dir).save(&p).unwrap();
+    FilePortfolioStore::new(dir, StateInit::Existing)
+        .save(&p)
+        .unwrap();
 }
 
 fn signal(n: u64, now: i64) -> pb::TradeSignal {

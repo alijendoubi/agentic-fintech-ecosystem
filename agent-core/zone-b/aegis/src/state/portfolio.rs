@@ -11,10 +11,11 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use super::StateError;
+use super::{sync_dir, StateError, StateInit};
 use crate::controls::{ExposureView, SizeHistory};
 use crate::money::{mul_up, Nanos};
 
@@ -131,6 +132,15 @@ impl Portfolio {
             },
         );
         Ok(())
+    }
+
+    /// Drop a reservation whose order was never reported as submitted (its
+    /// attestation was abandoned). Returns whether one was removed.
+    pub fn release_unsubmitted(&mut self, order_id: &str) -> bool {
+        match self.open_orders.get(order_id) {
+            Some(o) if !o.submitted => self.open_orders.remove(order_id).is_some(),
+            _ => false,
+        }
     }
 
     /// Apply an execution report (cumulative fill quantity). Idempotent for
@@ -350,17 +360,22 @@ struct OnDisk {
 }
 
 /// Atomic JSON snapshot in the state dir. A missing file is an empty portfolio
-/// only if the file never existed; a corrupt file is an ERROR (the engine then
-/// has no exposure data and rejects everything).
+/// only on an explicit one-shot [`StateInit::Bootstrap`] (first boot of an
+/// empty state dir; the empty snapshot is persisted immediately so the next
+/// start finds it). Otherwise a missing file is loss or tampering and a corrupt
+/// file is likewise an ERROR (the engine then has no exposure data and rejects
+/// everything): assuming a flat portfolio would fail open on exposure limits.
 #[derive(Debug)]
 pub struct FilePortfolioStore {
     dir: PathBuf,
+    bootstrap_pending: AtomicBool,
 }
 
 impl FilePortfolioStore {
-    pub fn new(dir: &Path) -> FilePortfolioStore {
+    pub fn new(dir: &Path, init: StateInit) -> FilePortfolioStore {
         FilePortfolioStore {
             dir: dir.to_path_buf(),
+            bootstrap_pending: AtomicBool::new(init == StateInit::Bootstrap),
         }
     }
 }
@@ -377,7 +392,19 @@ impl PortfolioStore for FilePortfolioStore {
                 }
                 Ok(d.portfolio)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Portfolio::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if self.bootstrap_pending.swap(false, Ordering::SeqCst) {
+                    let flat = Portfolio::default();
+                    self.save(&flat)?;
+                    Ok(flat)
+                } else {
+                    Err(StateError::Unavailable(
+                        "portfolio.json is missing from an existing state dir: refusing to \
+                         assume a flat portfolio"
+                            .into(),
+                    ))
+                }
+            }
             Err(e) => Err(StateError::Unavailable(format!("read portfolio: {e}"))),
         }
     }
@@ -393,7 +420,8 @@ impl PortfolioStore for FilePortfolioStore {
         let mut f = fs::File::create(&tmp).map_err(|e| err("create", e))?;
         f.write_all(&body).map_err(|e| err("write", e))?;
         f.sync_all().map_err(|e| err("fsync", e))?;
-        fs::rename(&tmp, self.dir.join(STATE_FILE)).map_err(|e| err("rename", e))
+        fs::rename(&tmp, self.dir.join(STATE_FILE)).map_err(|e| err("rename", e))?;
+        sync_dir(&self.dir).map_err(|e| err("fsync dir", e))
     }
 }
 
@@ -402,9 +430,28 @@ impl PortfolioStore for FilePortfolioStore {
 pub struct MemoryPortfolioStore {
     state: std::sync::Mutex<Option<Portfolio>>,
     fail_saves: std::sync::atomic::AtomicBool,
+    after_save: std::sync::Mutex<Option<SaveHook>>,
+}
+
+/// Test hook run after every successful save (e.g. to simulate a caller
+/// deadline expiring during a slow fsync).
+#[derive(Clone)]
+struct SaveHook(std::sync::Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for SaveHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SaveHook")
+    }
 }
 
 impl MemoryPortfolioStore {
+    /// Run `hook` after each successful save.
+    pub fn set_after_save(&self, hook: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut h) = self.after_save.lock() {
+            *h = Some(SaveHook(hook));
+        }
+    }
+
     pub fn set_fail_saves(&self, v: bool) {
         self.fail_saves
             .store(v, std::sync::atomic::Ordering::SeqCst);
@@ -433,6 +480,10 @@ impl PortfolioStore for MemoryPortfolioStore {
             .state
             .lock()
             .map_err(|_| StateError::Unavailable("poisoned".into()))? = Some(p.clone());
+        let hook = self.after_save.lock().ok().and_then(|h| h.clone());
+        if let Some(SaveHook(f)) = hook {
+            f();
+        }
         Ok(())
     }
 }

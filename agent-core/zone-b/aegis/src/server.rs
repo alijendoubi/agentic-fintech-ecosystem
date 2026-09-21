@@ -33,6 +33,8 @@ pub enum ServeError {
     Transport(#[from] tonic::transport::Error),
     #[error("cannot listen: {0}")]
     Listen(#[from] std::io::Error),
+    #[error("refusing to serve plaintext (no TLS) on non-loopback address {0}")]
+    PlaintextNotLoopback(std::net::SocketAddr),
 }
 
 fn read(path: &std::path::Path, what: &'static str) -> Result<Vec<u8>, ServeError> {
@@ -71,6 +73,11 @@ where
     if let Some(cfg) = tls {
         builder = builder.tls_config(cfg)?;
     } else {
+        // Plaintext means no authentication at all: never off-loopback.
+        let local = listener.local_addr()?;
+        if !local.ip().is_loopback() {
+            return Err(ServeError::PlaintextNotLoopback(local));
+        }
         tracing::warn!("serving WITHOUT TLS (AEGIS_INSECURE_DEV=1): development only");
     }
     builder
