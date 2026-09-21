@@ -22,7 +22,7 @@ testkit = []
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-stream = { version = "0.1", features = ["sync", "net"] }
 tonic = { version = "0.12", features = ["tls"] }
 prost = "0.13"
 serde = { version = "1", features = ["derive"] }

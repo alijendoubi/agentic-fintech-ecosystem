@@ -5,6 +5,7 @@
 //! in REJECT (or HELD_FOR_HUMAN where the Phase 3 spec says so). Money is
 //! fixed-point int64 nanos; there is no `f64` money on the decision path.
 
+pub mod app;
 pub mod audit;
 pub mod clock;
 pub mod config;
@@ -13,10 +14,13 @@ pub mod domain;
 pub mod engine;
 pub mod error;
 pub mod hex;
+pub mod identity;
 pub mod killswitch;
 pub mod limits;
 pub mod money;
 pub mod pb;
+pub mod server;
+pub mod service;
 pub mod signing;
 pub mod state;
 #[cfg(any(test, feature = "testkit"))]

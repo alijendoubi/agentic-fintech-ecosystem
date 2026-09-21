@@ -166,6 +166,79 @@ impl AuditSink for FanoutSink {
     }
 }
 
+/// Sink used at start-up: the kill-switch controller must load its state
+/// BEFORE the audit WAL file exists in the state directory (a missing kill
+/// state next to other files means "lost", i.e. HARD), so early records are
+/// buffered here and flushed when the real sink is attached.
+pub struct DeferredSink {
+    inner: Mutex<Deferred>,
+}
+
+enum Deferred {
+    Buffering(Vec<AuditEvent>),
+    Attached(std::sync::Arc<dyn AuditSink>),
+}
+
+/// Bound on records buffered before the real sink is attached.
+const MAX_DEFERRED: usize = 1_024;
+
+impl DeferredSink {
+    pub fn new() -> DeferredSink {
+        DeferredSink {
+            inner: Mutex::new(Deferred::Buffering(Vec::new())),
+        }
+    }
+
+    /// Attach the real sink and flush what was buffered. A flush failure is
+    /// returned and the sink stays attached (later records still flow).
+    pub fn attach(&self, sink: std::sync::Arc<dyn AuditSink>) -> Result<(), AuditError> {
+        let mut g = self
+            .inner
+            .lock()
+            .map_err(|_| AuditError::Unavailable("deferred sink poisoned".into()))?;
+        let buffered = match std::mem::replace(&mut *g, Deferred::Attached(sink.clone())) {
+            Deferred::Buffering(v) => v,
+            Deferred::Attached(_) => Vec::new(),
+        };
+        buffered.iter().try_for_each(|e| sink.record(e))
+    }
+}
+
+impl Default for DeferredSink {
+    fn default() -> Self {
+        DeferredSink::new()
+    }
+}
+
+impl AuditSink for DeferredSink {
+    fn record(&self, event: &AuditEvent) -> Result<(), AuditError> {
+        let mut g = self
+            .inner
+            .lock()
+            .map_err(|_| AuditError::Unavailable("deferred sink poisoned".into()))?;
+        match &mut *g {
+            Deferred::Buffering(v) if v.len() < MAX_DEFERRED => {
+                v.push(event.clone());
+                Ok(())
+            }
+            Deferred::Buffering(_) => {
+                Err(AuditError::Unavailable("start-up audit buffer full".into()))
+            }
+            Deferred::Attached(s) => s.record(event),
+        }
+    }
+
+    fn is_healthy(&self) -> bool {
+        match self.inner.lock() {
+            Ok(g) => match &*g {
+                Deferred::Buffering(_) => true,
+                Deferred::Attached(s) => s.is_healthy(),
+            },
+            Err(_) => false,
+        }
+    }
+}
+
 /// In-memory sink for tests and embedding.
 #[derive(Debug, Default)]
 pub struct MemorySink {
@@ -238,6 +311,35 @@ mod tests {
         assert!(fan.record(&sec()).is_err());
         assert_eq!(mem.events().len(), 1);
         assert!(!fan.is_healthy());
+    }
+
+    #[test]
+    fn deferred_sink_buffers_then_flushes_in_order_and_then_forwards() {
+        let d = DeferredSink::new();
+        d.record(&sec()).unwrap();
+        let mut second = sec();
+        if let AuditEvent::Security { detail, .. } = &mut second {
+            *detail = "second".into();
+        }
+        d.record(&second).unwrap();
+        let mem = std::sync::Arc::new(MemorySink::default());
+        d.attach(mem.clone()).unwrap();
+        d.record(&sec()).unwrap();
+        let events = mem.events();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1], second);
+        assert!(d.is_healthy());
+    }
+
+    #[test]
+    fn deferred_sink_buffer_is_bounded_and_flush_errors_surface() {
+        let d = DeferredSink::new();
+        for _ in 0..MAX_DEFERRED {
+            d.record(&sec()).unwrap();
+        }
+        assert!(d.record(&sec()).is_err());
+        assert!(d.attach(std::sync::Arc::new(FailingSink)).is_err());
+        assert!(!d.is_healthy());
     }
 
     #[test]
