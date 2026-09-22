@@ -5,7 +5,8 @@ Variable names follow agent-core/infrastructure/docker-compose.yml where it defi
 `ConfigError`, so a bad deployment refuses to start instead of running with a guess.
 
     COGNITIVE_HEALTH_HOST / _PORT      127.0.0.1 / 8080
-    COGNITIVE_ORDER_QUANTITY           0 (shares; 0 means every debate abstains, see below)
+    COGNITIVE_ORDER_QUANTITY           0 outside production (every debate abstains, see below);
+                                       REQUIRED and must be > 0 when ENVIRONMENT=production
     COGNITIVE_STRATEGY_ID              AFE-STRATEGY-001 (TODO(owner): confirm)
     COGNITIVE_MIN_DEBATE_INTERVAL_S    60   per-symbol cooldown (LLM cost / rate control)
     COGNITIVE_MAX_CONTEXT_AGE_S        5    drop snapshots older than this
@@ -21,11 +22,21 @@ Variable names follow agent-core/infrastructure/docker-compose.yml where it defi
     SNAPSHOT_CHANNEL                   sensory:snapshots
     ZONE_B_GRPC_HOST / _PORT           aegis / 50051
     COGNITIVE_AEGIS_TIMEOUT_S          1.0
+    MOTOR_TARGET                       execution-motor:50052 (host:port for the execution-motor
+                                       relay; see sinks.py "Known limitations")
+    COGNITIVE_MOTOR_TIMEOUT_S          1.0
     AFE_PROTO_DIR                      directory holding the generated *_pb2 modules
 
 Position sizing: the cognitive core has no portfolio or risk state, so it never invents a
-quantity. `COGNITIVE_ORDER_QUANTITY` is a fixed placeholder (TODO(owner): replace with the
-position sizer); with the default 0 every signal is an abstain.
+real quantity — building a real risk-based position sizer is out of scope here (a
+strategy/risk decision, not something an LLM debate should decide unilaterally).
+`COGNITIVE_ORDER_QUANTITY` is a fixed placeholder (TODO(owner): replace with a real position
+sizer). Outside production it defaults to 0, so every signal abstains unless a caller opts in
+(e.g. `tests/runner_fakes.py` sets a TEST-ONLY fixed quantity of 10 for tests that expect an
+actionable signal — that value is not a sizing policy, just a fixture constant). In
+production (`ENVIRONMENT=production`) `COGNITIVE_ORDER_QUANTITY` is REQUIRED: unset or <= 0
+raises `ConfigError` at startup rather than silently trading nothing (or, if this default were
+ever changed, silently trading an arbitrary fixed size).
 """
 
 from __future__ import annotations
@@ -38,12 +49,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .config import ConfigError
+from .sinks import DEFAULT_MOTOR_TARGET
 
 _SYMBOL = re.compile(r"[A-Z0-9.\-]{1,32}")
 _HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?")
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 MAX_PORT = 65_535
+ENVIRONMENT_VAR = "ENVIRONMENT"
 
 SinkKind = Literal["grpc", "log"]
 
@@ -145,6 +158,8 @@ class RunnerSettings:
     aegis_host: str
     aegis_port: int
     aegis_timeout_s: float
+    motor_target: str
+    motor_timeout_s: float
     proto_dir: str | None
 
     @property
@@ -156,10 +171,20 @@ class RunnerSettings:
     def from_env(cls, env: Mapping[str, str] | None = None) -> RunnerSettings:
         source = os.environ if env is None else env
         proto_dir = source.get("AFE_PROTO_DIR", "").strip() or None
+        order_quantity = _read(source, "COGNITIVE_ORDER_QUANTITY", "0", _float(0.0, 1e9))
+        production = source.get(ENVIRONMENT_VAR, "").strip().lower() == "production"
+        if production and order_quantity <= 0.0:
+            raise ConfigError(
+                "ENVIRONMENT=production requires COGNITIVE_ORDER_QUANTITY to be set to a "
+                "positive value (unset or 0 abstains every signal). This is a fixed "
+                "placeholder quantity, not a real position sizer "
+                "(TODO(owner): replace with one) — production must not start without an "
+                "explicit choice here."
+            )
         return cls(
             health_host=_read(source, "COGNITIVE_HEALTH_HOST", "127.0.0.1", _host),
             health_port=_read(source, "COGNITIVE_HEALTH_PORT", "8080", _int(0, MAX_PORT)),
-            order_quantity=_read(source, "COGNITIVE_ORDER_QUANTITY", "0", _float(0.0, 1e9)),
+            order_quantity=order_quantity,
             strategy_id=_read(source, "COGNITIVE_STRATEGY_ID", "AFE-STRATEGY-001", _text),
             min_debate_interval_s=_read(
                 source, "COGNITIVE_MIN_DEBATE_INTERVAL_S", "60", _float(0.0, 86_400.0)
@@ -182,5 +207,9 @@ class RunnerSettings:
             aegis_host=_read(source, "ZONE_B_GRPC_HOST", "aegis", _host),
             aegis_port=_read(source, "ZONE_B_GRPC_PORT", "50051", _int(1, MAX_PORT)),
             aegis_timeout_s=_read(source, "COGNITIVE_AEGIS_TIMEOUT_S", "1.0", _float(0.05, 30.0)),
+            motor_target=_read(source, "MOTOR_TARGET", DEFAULT_MOTOR_TARGET, _text),
+            motor_timeout_s=_read(
+                source, "COGNITIVE_MOTOR_TIMEOUT_S", "1.0", _float(0.05, 30.0)
+            ),
             proto_dir=proto_dir,
         )

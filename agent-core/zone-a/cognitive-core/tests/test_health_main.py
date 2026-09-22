@@ -271,6 +271,49 @@ def _stub_protos(generated_dir: Any) -> dict[str, Any]:
     return {**real, "aegis_pb2_grpc": _Grpc}
 
 
+def test_build_sink_falls_back_to_aegis_only_when_motor_protos_are_unavailable(
+    generated_dir: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """execution_motor.proto is not in this worktree yet: build_sink must not block startup
+    on it, and must not silently fabricate a relay -- it degrades to a plain AegisGrpcSink."""
+    from cognitive_core.runner_config import RunnerSettings
+    from cognitive_core.sinks import AegisGrpcSink
+
+    monkeypatch.setattr(entrypoint, "open_aegis_channel", lambda host, port, env=None: object())
+    monkeypatch.setattr(entrypoint, "load_generated_protos", lambda _d: _stub_protos(generated_dir))
+
+    def no_motor_stubs(_directory: object) -> dict[str, Any]:
+        raise ImportError("execution_motor_pb2_grpc not generated")
+
+    monkeypatch.setattr(entrypoint, "load_generated_motor_protos", no_motor_stubs)
+    settings = RunnerSettings.from_env({"AFE_PROTO_DIR": str(generated_dir)})
+    assert isinstance(entrypoint.build_sink(settings), AegisGrpcSink)
+
+
+def test_build_sink_wires_the_relay_once_motor_protos_are_available(
+    generated_dir: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once execution_motor_pb2_grpc exists (this test simulates that with a fake module),
+    build_sink automatically upgrades to AegisRelaySink -- no other code change needed."""
+    from cognitive_core.runner_config import RunnerSettings
+    from cognitive_core.sinks import AegisRelaySink
+
+    monkeypatch.setattr(entrypoint, "open_aegis_channel", lambda host, port, env=None: object())
+    monkeypatch.setattr(entrypoint, "open_motor_channel", lambda target, env=None: object())
+    monkeypatch.setattr(entrypoint, "load_generated_protos", lambda _d: _stub_protos(generated_dir))
+
+    class _MotorGrpc:
+        ExecutionMotorStub = staticmethod(lambda channel: object())
+
+    monkeypatch.setattr(
+        entrypoint,
+        "load_generated_motor_protos",
+        lambda _d: {"execution_motor_pb2_grpc": _MotorGrpc},
+    )
+    settings = RunnerSettings.from_env({"AFE_PROTO_DIR": str(generated_dir)})
+    assert isinstance(entrypoint.build_sink(settings), AegisRelaySink)
+
+
 def test_main_runs_asyncio_and_returns_the_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_amain(env: Any, **_: Any) -> int:
         return 7

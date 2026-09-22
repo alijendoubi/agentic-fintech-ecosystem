@@ -23,7 +23,18 @@ from .health import HealthServer, HealthState
 from .memory import PrecedentProvider, ReflectionWriter
 from .runner_config import RunnerSettings
 from .service import CognitiveRunner, ContextSource, SourceError
-from .sinks import AegisGrpcSink, LogSink, SignalSink, load_generated_protos, open_aegis_channel
+from .sinks import (
+    AegisGrpcSink,
+    AegisRelaySink,
+    LogSink,
+    MotorGrpcSink,
+    MotorSink,
+    SignalSink,
+    load_generated_motor_protos,
+    load_generated_protos,
+    open_aegis_channel,
+    open_motor_channel,
+)
 from .sources import RedisSnapshotSource
 
 log = structlog.get_logger(__name__)
@@ -38,13 +49,44 @@ def build_sink(settings: RunnerSettings, env: Mapping[str, str] | None = None) -
         return LogSink()
     protos = load_generated_protos(settings.proto_dir)  # ImportError -> caller exits 2
     channel = open_aegis_channel(settings.aegis_host, settings.aegis_port, env)
-    stub = protos["aegis_pb2_grpc"].AegisStub(channel)
-    return AegisGrpcSink(
-        stub=stub,
+    aegis_stub = protos["aegis_pb2_grpc"].AegisStub(channel)
+    motor_sink = _build_motor_sink(settings, env)
+    if motor_sink is None:
+        # Known limitation: execution_motor.proto (PKG-X3) has not landed in this worktree,
+        # so there is nothing to relay an approved AegisDecision to yet. Aegis is still
+        # submitted to normally; see sinks.py module docstring / README "Known limitations".
+        return AegisGrpcSink(
+            stub=aegis_stub,
+            trade_signal_pb2=protos["trade_signal_pb2"],
+            strategy_id=settings.strategy_id,
+            timeout_s=settings.aegis_timeout_s,
+        )
+    return AegisRelaySink(
+        aegis_stub=aegis_stub,
         trade_signal_pb2=protos["trade_signal_pb2"],
         strategy_id=settings.strategy_id,
-        timeout_s=settings.aegis_timeout_s,
+        motor_sink=motor_sink,
+        aegis_timeout_s=settings.aegis_timeout_s,
     )
+
+
+def _build_motor_sink(settings: RunnerSettings, env: Mapping[str, str] | None) -> MotorSink | None:
+    """`None` means "not available yet" (see `load_generated_motor_protos`); the caller falls
+    back to an Aegis-only sink rather than blocking startup on a package that does not exist.
+    """
+    try:
+        motor_protos = load_generated_motor_protos(settings.proto_dir)
+    except ImportError as exc:
+        log.warning(
+            "motor_relay_unavailable",
+            reason=f"{type(exc).__name__}: {exc}",
+            detail="execution_motor.proto not generated; Aegis approvals are not forwarded "
+            "to execution-motor",
+        )
+        return None
+    motor_channel = open_motor_channel(settings.motor_target, env)  # ConfigError -> caller exits 2
+    motor_stub = motor_protos["execution_motor_pb2_grpc"].ExecutionMotorStub(motor_channel)
+    return MotorGrpcSink(stub=motor_stub, timeout_s=settings.motor_timeout_s)
 
 
 def build_memory(
