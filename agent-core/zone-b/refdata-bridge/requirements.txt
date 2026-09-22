@@ -1,0 +1,8 @@
+# Runtime dependencies for the reference-data bridge.
+# Version ranges match the pins used elsewhere in this repo (cognitive-core,
+# execution-motor, regime-detector requirements*.txt) so the resolved set stays
+# consistent across Zone A/B Python services.
+grpcio>=1.67,<2
+protobuf>=5.28
+redis>=5.2,<9
+structlog>=24.4,<27
