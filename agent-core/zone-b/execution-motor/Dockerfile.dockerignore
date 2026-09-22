@@ -1,0 +1,10 @@
+# BuildKit reads this (Dockerfile.dockerignore) for builds with
+# `-f agent-core/zone-b/execution-motor/Dockerfile agent-core`; the context is agent-core/.
+# Allow-list only what the build needs.
+*
+!shared/proto/*.proto
+!shared/proto/generate.sh
+!zone-b/execution-motor/__init__.py
+!zone-b/execution-motor/requirements.txt
+!zone-b/execution-motor/execution_motor
+!zone-b/execution-motor/execution_motor/**
