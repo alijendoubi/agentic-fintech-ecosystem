@@ -227,26 +227,38 @@ services:
       - ALL
     restart: unless-stopped
 
-  # execution-motor is a library today: there is no Dockerfile, no entrypoint and no gRPC server
-  # (zone-b/execution-motor has models/limits/alpaca client/proto adapter and tests only). It is kept
-  # behind a profile so `docker compose up` does not fail on it. Enable with --profile pending-impl
-  # only once a Dockerfile and a service entrypoint exist.
+  # execution-motor: gRPC service (agent-core/zone-b/execution-motor). Requires MOTOR_TLS_* (mTLS server
+  # material) and AEGIS_CLIENT_TLS_* (mTLS to report fills back to Aegis) via mounted secrets; refuses to
+  # start without them in production. MOTOR_ATTESTATION_KEYS_FILE and Alpaca credentials are owner-supplied.
   execution-motor:
-    profiles: ["pending-impl"]
     build:
-      context: ../zone-b/execution-motor
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: zone-b/execution-motor/Dockerfile
     container_name: afe-execution-motor
     environment:
       PYTHONUNBUFFERED: "1"
+      MOTOR_ENV: production
+      MOTOR_LISTEN_ADDR: 0.0.0.0:50052
+      AEGIS_TARGET: aegis:50051
+      MOTOR_STATE_DIR: /var/lib/execution-motor
+      MOTOR_TLS_CERT: /tls/server.pem
+      MOTOR_TLS_KEY: /tls/server.key
+      MOTOR_TLS_CLIENT_CA: /tls/ca.pem
+      AEGIS_CLIENT_TLS_CA: /aegis-tls/ca.pem
+      AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
+      AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
+      MOTOR_ATTESTATION_KEYS_FILE: /cfg/attestation-keys.json
       ALPACA_API_KEY: ${ALPACA_API_KEY:-}
       ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
       ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
       # No defaults for the caps: an empty cap is a startup error in the motor (fail closed). TODO(owner): choose values.
-      # These use :- (not :?) because Compose interpolates disabled-profile services too, and a service that cannot
-      # run yet must not force secrets onto everyone. Switch to :? when the motor becomes runnable.
-      MOTOR_MAX_ORDER_NOTIONAL_USD: ${MOTOR_MAX_ORDER_NOTIONAL_USD:-}
-      MOTOR_MAX_SESSION_NOTIONAL_USD: ${MOTOR_MAX_SESSION_NOTIONAL_USD:-}
+      MOTOR_MAX_ORDER_NOTIONAL_USD: ${MOTOR_MAX_ORDER_NOTIONAL_USD:?set MOTOR_MAX_ORDER_NOTIONAL_USD}
+      MOTOR_MAX_SESSION_NOTIONAL_USD: ${MOTOR_MAX_SESSION_NOTIONAL_USD:?set MOTOR_MAX_SESSION_NOTIONAL_USD}
+    volumes:
+      - execution-motor-state:/var/lib/execution-motor
+      - ${MOTOR_TLS_DIR:-./secrets/motor-tls}:/tls:ro
+      - ${MOTOR_AEGIS_TLS_DIR:-./secrets/motor-aegis-tls}:/aegis-tls:ro
+      - ${MOTOR_CONFIG_DIR:-./secrets/motor-config}:/cfg:ro
     depends_on:
       aegis:
         condition: service_healthy
@@ -255,6 +267,41 @@ services:
       - zone-bc-audit
       - zone-b-egress # broker API
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # refdata-bridge: pushes sensory-array snapshots + regime-detector labels into Aegis.PushReferenceData
+  # (agent-core/zone-b/refdata-bridge). Role market-data-writer in Aegis's identities file.
+  refdata-bridge:
+    build:
+      context: ..
+      dockerfile: zone-b/refdata-bridge/Dockerfile
+    container_name: afe-refdata-bridge
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      AEGIS_TARGET: aegis:50051
+      AEGIS_CLIENT_TLS_CA: /aegis-tls/ca.pem
+      AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
+      AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
+    volumes:
+      - ${REFDATA_AEGIS_TLS_DIR:-./secrets/refdata-aegis-tls}:/aegis-tls:ro
+    depends_on:
+      aegis:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - zone-a-internal
+      - zone-ab-grpc
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   # -------------------------------------------------------------
   # SHARED DATA PLANE
@@ -368,4 +415,5 @@ volumes:
   redis-data:
   regime-models:
   aegis-state:
+  execution-motor-state:
   postgres-audit-data:

@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package afe.shared;
+
+import "aegis.proto";
+
+// Execution Motor gRPC contract (PKG-X3). Additive to the Phase 3 spec, NOT part of
+// Appendix A.1 (that appendix only fixes the Aegis contract). Source of the flow this
+// serves: docs/specs/phase_3_aegis_execution.md section 5 and section 10 -- Aegis (or a
+// component forwarding its AegisDecision unchanged, e.g. cognitive-core relaying the
+// response of Aegis.SubmitSignal) calls Execute with that same AegisDecision message.
+//
+// Transport: mTLS is REQUIRED (see execution_motor/server.py). A connection without a
+// client certificate chaining to the configured client CA never reaches a handler.
+// Plaintext ("MOTOR_INSECURE_DEV=1", mirroring AEGIS_INSECURE_DEV) is refused off
+// loopback and always refused when MOTOR_ENV is production (or unset).
+//
+// Fail closed: Execute never trusts the caller. It re-verifies the attestation (dev
+// Ed25519 and HSM/PKCS11-signed ECDSA P-256 both go through execution_motor/verifiers.py),
+// enforces single-use via the idempotency store, and never reports a partial or ambiguous
+// outcome as a success. A non-OK gRPC status means the motor could not even evaluate the
+// decision (e.g. RESOURCE_EXHAUSTED); a policy outcome (rejected, duplicate, halted,
+// unknown) is always a normal ExecuteAck, never a transport error, so the caller cannot
+// mistake "no capacity" for "this order was rejected".
+service ExecutionMotor {
+  // Execute one Aegis-approved decision. See execution_motor/motor.py for the full
+  // pipeline (halt -> attestation -> expiry -> notional caps -> idempotency -> broker).
+  rpc Execute(AegisDecision) returns (ExecuteAck);
+  // Liveness/readiness probe. No policy requirement beyond mTLS (mirrors Aegis's
+  // GetKillSwitchState-style read RPC); reports the local kill-switch state.
+  rpc Health(Empty) returns (HealthStatus);
+}
+
+// Outcome of one Execute call. ``status``/``reject_reason`` mirror the string values of
+// execution_motor.models.ExecutionStatus / RejectReason (kept as strings, not a new proto
+// enum, so this contract does not fork that enum: see README "Known limitations").
+message ExecuteAck {
+  bool accepted = 1;         // true iff the order reached the broker and was not rejected
+  string order_id = 2;
+  string status = 3;         // ExecutionStatus value, e.g. "accepted", "rejected", "unknown"
+  string reject_reason = 4;  // RejectReason value; empty when not rejected/unknown
+  string detail = 5;
+}
+
+message HealthStatus {
+  bool ok = 1;       // false whenever halted is true
+  bool halted = 2;
+  string detail = 3; // halt reason, empty when not halted
+}

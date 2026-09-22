@@ -43,6 +43,7 @@ def pb2(tmp_path_factory: pytest.TempPathFactory) -> dict[str, ModuleType]:
         return {
             "order": importlib.import_module("order_request_pb2"),
             "aegis": importlib.import_module("aegis_pb2"),
+            "motor": importlib.import_module("execution_motor_pb2"),
         }
     finally:
         sys.path.remove(str(out))

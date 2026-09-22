@@ -1,0 +1,7 @@
+# Generated DEV ONLY cert/key material — never commit this. Only the
+# generator script (generate-dev-certs.sh), the dev identities.json template,
+# and this README/gitignore are checked in. Root .gitignore also globally
+# ignores *.pem / *.key / secrets/, so this is belt-and-suspenders for the
+# whole generated tree (including any non-.pem/.key files it writes, like the
+# per-identity DEV ONLY READMEs).
+/out/

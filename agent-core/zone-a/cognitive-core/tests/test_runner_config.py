@@ -15,6 +15,35 @@ def test_defaults_are_fail_closed() -> None:
     assert s.redis_url == "redis://localhost:6379"
     assert s.snapshot_channel == "sensory:snapshots"
     assert s.max_beat_age_s == 30.0
+    assert s.motor_target == "execution-motor:50052"
+    assert s.motor_timeout_s == 1.0
+
+
+# -- position sizer: COGNITIVE_ORDER_QUANTITY is required in production ------------------
+
+
+def test_order_quantity_defaults_to_zero_outside_production() -> None:
+    """Outside production the fail-safe default is 0 (every signal abstains); this is NOT a
+    real sizing policy, just the existing "nothing trades until configured" placeholder."""
+    assert RunnerSettings.from_env({}).order_quantity == 0.0
+    assert RunnerSettings.from_env({"ENVIRONMENT": "development"}).order_quantity == 0.0
+
+
+@pytest.mark.parametrize("env_value", ["production", "Production", " PRODUCTION "])
+def test_production_refuses_to_start_without_a_positive_order_quantity(env_value: str) -> None:
+    with pytest.raises(ConfigError, match="COGNITIVE_ORDER_QUANTITY"):
+        RunnerSettings.from_env({"ENVIRONMENT": env_value})
+
+
+@pytest.mark.parametrize("quantity", ["0", "-1", "-0.01"])
+def test_production_refuses_a_non_positive_order_quantity(quantity: str) -> None:
+    with pytest.raises(ConfigError, match="COGNITIVE_ORDER_QUANTITY"):
+        RunnerSettings.from_env({"ENVIRONMENT": "production", "COGNITIVE_ORDER_QUANTITY": quantity})
+
+
+def test_production_accepts_an_explicit_positive_order_quantity() -> None:
+    s = RunnerSettings.from_env({"ENVIRONMENT": "production", "COGNITIVE_ORDER_QUANTITY": "25"})
+    assert s.order_quantity == 25.0
 
 
 def test_compose_style_environment() -> None:

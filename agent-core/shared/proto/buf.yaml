@@ -30,7 +30,10 @@ lint:
   # Group 3 - aegis.proto service shape, fixed verbatim by Appendix A of the
   # Phase 3 spec: the service is `Aegis` (not AegisService); SubmitSignal takes
   # the existing TradeSignal message directly; several RPCs share Empty /
-  # KillSwitchState / AegisDecision as request or response type.
+  # KillSwitchState / AegisDecision as request or response type. The same
+  # exception group covers execution_motor.proto's `ExecutionMotor` service
+  # (PKG-X3, additive): it is not `ExecutionMotorService`, and `Execute` takes
+  # the existing `AegisDecision` message directly (see that file's header).
   #   SERVICE_SUFFIX, RPC_REQUEST_STANDARD_NAME, RPC_RESPONSE_STANDARD_NAME,
   #   RPC_REQUEST_RESPONSE_UNIQUE
   except:
