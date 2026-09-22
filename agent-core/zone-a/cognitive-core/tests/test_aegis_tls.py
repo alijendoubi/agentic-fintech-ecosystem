@@ -9,7 +9,12 @@ from typing import Any
 
 import pytest
 from cognitive_core.config import ConfigError
-from cognitive_core.sinks import aegis_tls_from_env, open_aegis_channel
+from cognitive_core.sinks import (
+    aegis_tls_from_env,
+    motor_tls_from_env,
+    open_aegis_channel,
+    open_motor_channel,
+)
 
 
 class _FakeGrpc(ModuleType):
@@ -127,6 +132,50 @@ def test_unreadable_tls_file_is_a_config_error_that_does_not_echo_contents(
 
 def test_blank_values_count_as_unset() -> None:
     assert aegis_tls_from_env({"AEGIS_CLIENT_TLS_CA": "  ", "AEGIS_CLIENT_TLS_CERT": ""}) is None
+
+
+# -- execution-motor channel: mirrors the Aegis TLS/channel tests above ------------------
+
+
+def test_motor_dev_without_tls_env_uses_an_insecure_channel(fake_grpc: _FakeGrpc) -> None:
+    assert open_motor_channel("execution-motor:50052", {}) == "insecure-channel"
+    assert fake_grpc.calls == [("insecure", "execution-motor:50052")]
+
+
+@pytest.mark.parametrize("value", ["production", "Production", " PRODUCTION "])
+def test_motor_production_refuses_an_insecure_channel(value: str, fake_grpc: _FakeGrpc) -> None:
+    with pytest.raises(ConfigError, match="MOTOR_CLIENT_TLS_CA"):
+        open_motor_channel("execution-motor:50052", {"ENVIRONMENT": value})
+    assert fake_grpc.calls == []
+
+
+def test_motor_mtls_material_is_loaded_into_a_secure_channel(
+    tmp_path: Path, fake_grpc: _FakeGrpc
+) -> None:
+    env = {
+        "ENVIRONMENT": "production",
+        "MOTOR_CLIENT_TLS_CA": _pem(tmp_path, "ca.pem", b"ca-bytes"),
+        "MOTOR_CLIENT_TLS_CERT": _pem(tmp_path, "c.pem", b"cert-bytes"),
+        "MOTOR_CLIENT_TLS_KEY": _pem(tmp_path, "k.pem", b"key-bytes"),
+    }
+    assert open_motor_channel("execution-motor:50052", env) == "secure-channel"
+    assert fake_grpc.calls == [("secure", "execution-motor:50052")]
+    assert fake_grpc.credentials_args == {
+        "root_certificates": b"ca-bytes",
+        "certificate_chain": b"cert-bytes",
+        "private_key": b"key-bytes",
+    }
+
+
+def test_motor_client_cert_and_key_must_be_given_together(tmp_path: Path) -> None:
+    ca = _pem(tmp_path, "ca.pem", b"ca")
+    cert = _pem(tmp_path, "c.pem", b"cert")
+    with pytest.raises(ConfigError, match="together"):
+        motor_tls_from_env({"MOTOR_CLIENT_TLS_CA": ca, "MOTOR_CLIENT_TLS_CERT": cert})
+
+
+def test_motor_blank_values_count_as_unset() -> None:
+    assert motor_tls_from_env({"MOTOR_CLIENT_TLS_CA": "  ", "MOTOR_CLIENT_TLS_CERT": ""}) is None
 
 
 def test_build_sink_refuses_the_insecure_channel_in_production(generated_dir: Path) -> None:
