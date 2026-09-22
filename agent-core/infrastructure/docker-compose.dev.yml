@@ -74,41 +74,50 @@ services:
 
   # cognitive-core's gRPC channel to Aegis now uses AEGIS_CLIENT_TLS_CA/CERT/KEY (see
   # zone-a/cognitive-core/sinks.py) instead of plaintext. CN=cognitive-core, role signal-submitter.
+  # It also relays approved decisions to execution-motor (MOTOR_CLIENT_TLS_*, see sinks.py); the same
+  # dev-tls client cert is presented to both servers since both trust the one dev CA.
   cognitive-core:
     environment:
       AEGIS_CLIENT_TLS_CA: /tls/ca.pem
       AEGIS_CLIENT_TLS_CERT: /tls/client.pem
       AEGIS_CLIENT_TLS_KEY: /tls/client.key
+      MOTOR_TARGET: execution-motor:50052
+      MOTOR_CLIENT_TLS_CA: /tls/ca.pem
+      MOTOR_CLIENT_TLS_CERT: /tls/client.pem
+      MOTOR_CLIENT_TLS_KEY: /tls/client.key
     volumes:
       - ./dev-tls/out/cognitive-core:/tls:ro
     networks:
       - dev-host
 
-  # --------------------------------------------------------------------------------------------------
-  # execution-motor: the base docker-compose.yml already defines this service (profile "pending-impl")
-  # but it has no Dockerfile/entrypoint yet (zone-b/execution-motor is a library today; see that file's
-  # comment). TODO(owner): once a Dockerfile + gRPC service entrypoint exist and the service is enabled
-  # (--profile pending-impl), give it the dev-tls client identity generated for it (CN=execution-motor,
-  # role execution-reporter) the same way cognitive-core is wired above:
-  #
-  #   execution-motor:
-  #     environment:
-  #       AEGIS_CLIENT_TLS_CA: /tls/ca.pem
-  #       AEGIS_CLIENT_TLS_CERT: /tls/client.pem
-  #       AEGIS_CLIENT_TLS_KEY: /tls/client.key
-  #     volumes:
-  #       - ./dev-tls/out/execution-motor:/tls:ro
-  #     networks:
-  #       - dev-host
-  # --------------------------------------------------------------------------------------------------
+  # execution-motor (agent-core/zone-b/execution-motor): own mTLS listener (server cert, dev-tls issues
+  # CN=execution-motor) plus a client identity to report fills back to Aegis (AEGIS_CLIENT_TLS_*, the
+  # execution-motor client cert generated for that purpose, role execution-reporter).
+  execution-motor:
+    environment:
+      MOTOR_ENV: development
+      AEGIS_CLIENT_TLS_CA: /aegis-tls/ca.pem
+      AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
+      AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
+      MOTOR_USE_MOCK_BROKER: "1" # no real Alpaca credentials in dev
+    volumes: !override
+      - execution-motor-state:/var/lib/execution-motor
+      - ./dev-tls/out/execution-motor:/tls:ro
+      - ./dev-tls/out/execution-motor:/aegis-tls:ro
+      - ${MOTOR_CONFIG_DIR:-./secrets/motor-config}:/cfg:ro
+    ports:
+      - "127.0.0.1:50052:50052"
+    networks:
+      - dev-host
 
-  # --------------------------------------------------------------------------------------------------
-  # refdata-bridge: does not exist anywhere in this tree yet (no package, no Dockerfile, not declared in
-  # the base docker-compose.yml — see agent-core/zone-b/aegis/README.md "Not implemented / known gaps":
-  # nothing calls PushReferenceData yet). generate-dev-certs.sh already issues its client identity
-  # (CN=refdata-bridge, role market-data-writer) so the cert is ready the moment the service is built.
-  # TODO(owner): once refdata-bridge has a service definition in docker-compose.yml, add a block here
-  # matching the execution-motor placeholder above, mounting ./dev-tls/out/refdata-bridge:/tls:ro and
-  # setting AEGIS_CLIENT_TLS_CA/CERT/KEY (or whatever env var names that service's own client actually
-  # reads — confirm against its implementation, same as sinks.py was checked for cognitive-core).
-  # --------------------------------------------------------------------------------------------------
+  # refdata-bridge (agent-core/zone-b/refdata-bridge): pushes sensory-array + regime-detector data into
+  # Aegis.PushReferenceData. CN=refdata-bridge, role market-data-writer.
+  refdata-bridge:
+    environment:
+      AEGIS_CLIENT_TLS_CA: /aegis-tls/ca.pem
+      AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
+      AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
+    volumes: !override
+      - ./dev-tls/out/refdata-bridge:/aegis-tls:ro
+    networks:
+      - dev-host

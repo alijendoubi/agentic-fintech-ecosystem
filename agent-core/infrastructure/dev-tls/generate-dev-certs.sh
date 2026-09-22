@@ -194,9 +194,10 @@ issue_cert() {
 }
 
 # ----------------------------------------------------------------------------
-# 2. Server cert for aegis itself
+# 2. Server certs for services that run their own mTLS listener
 # ----------------------------------------------------------------------------
 issue_cert server aegis aegis "DNS:aegis"
+issue_cert server execution-motor execution-motor "DNS:execution-motor"
 
 # ----------------------------------------------------------------------------
 # 3. Client certs — CN must match the "peers" keys in identities.json
