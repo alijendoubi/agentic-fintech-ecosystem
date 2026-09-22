@@ -13,12 +13,6 @@
 
 </div>
 
-> [!CAUTION]
-> This platform **cannot trade**, paper or live, end to end. Individual components are implemented and tested in
-> isolation, but the wiring between them is incomplete, several architectural decisions are still open (ADR-003,
-> ADR-004), and no qualified legal review of the regulatory drafts has happened. Read
-> [`agent-core/README.md`](agent-core/README.md) for the honest, evidence-tagged status of every package before
-> assuming anything here works.
 
 ## What this is
 
