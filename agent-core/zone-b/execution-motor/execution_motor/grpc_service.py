@@ -22,11 +22,10 @@ from typing import Any
 
 import structlog
 
-from .aegis_reporter import AegisReporter
 from .halt import KillSwitch
 from .models import ExecutionStatus
 from .motor import ExecutionMotor
-from .service import handle_decision
+from .service import ExecutionReporter, handle_decision
 
 _log = structlog.get_logger("execution_motor.grpc_service")
 
@@ -44,7 +43,7 @@ class ExecutionMotorServicer:
         pb2: Any,
         *,
         kill_switch: KillSwitch,
-        reporter: AegisReporter | None = None,
+        reporter: ExecutionReporter | None = None,
         clock_ns: Callable[[], int] = time.time_ns,
     ) -> None:
         self._motor = motor
