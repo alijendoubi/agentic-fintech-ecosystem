@@ -232,8 +232,8 @@ services:
   # start without them in production. MOTOR_ATTESTATION_KEYS_FILE and Alpaca credentials are owner-supplied.
   execution-motor:
     build:
-      context: ../zone-b/execution-motor
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: zone-b/execution-motor/Dockerfile
     container_name: afe-execution-motor
     environment:
       PYTHONUNBUFFERED: "1"
@@ -276,8 +276,8 @@ services:
   # (agent-core/zone-b/refdata-bridge). Role market-data-writer in Aegis's identities file.
   refdata-bridge:
     build:
-      context: ../zone-b/refdata-bridge
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: zone-b/refdata-bridge/Dockerfile
     container_name: afe-refdata-bridge
     environment:
       PYTHONUNBUFFERED: "1"
