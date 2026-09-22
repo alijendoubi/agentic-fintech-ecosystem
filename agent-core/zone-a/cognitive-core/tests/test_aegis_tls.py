@@ -133,6 +133,10 @@ def test_build_sink_refuses_the_insecure_channel_in_production(generated_dir: Pa
     from cognitive_core import __main__ as entrypoint
     from cognitive_core.runner_config import RunnerSettings
 
-    env = {"AFE_PROTO_DIR": str(generated_dir), "ENVIRONMENT": "production"}
+    env = {
+        "AFE_PROTO_DIR": str(generated_dir),
+        "ENVIRONMENT": "production",
+        "COGNITIVE_ORDER_QUANTITY": "10",  # isolate the TLS check from the sizer check below
+    }
     with pytest.raises(ConfigError, match="AEGIS_CLIENT_TLS_CA"):
         entrypoint.build_sink(RunnerSettings.from_env(env), env)
