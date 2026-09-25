@@ -25,7 +25,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  # Keep in sync with regime-detector/requirements-dev.txt and vector-db/requirements-dev.txt.
+  # Keep in sync with every package's requirements-dev.txt (all pin ruff==0.16.8).
   RUFF_VERSION: "0.16.8"
   # Keep in sync with agent-core/zone-b/aegis/Dockerfile (rust:1.98-bookworm) and sensory-array/Dockerfile.
   RUST_TOOLCHAIN: "1.98.1"
