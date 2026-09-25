@@ -230,6 +230,7 @@ async fn unreadable_tls_files_fail_setup_instead_of_running_blind() {
         trip_after_ms: WINDOW_MS,
         probe_interval: Duration::from_secs(1),
         probe_timeout: Duration::from_secs(1),
+        heartbeat_file: None,
     };
     let err = run(cfg, std::future::pending()).await.unwrap_err();
     assert!(matches!(err, SupervisorError::Setup(_)), "{err}");
@@ -240,12 +241,62 @@ async fn unreadable_tls_files_fail_setup_instead_of_running_blind() {
 async fn run_stops_cleanly_on_shutdown() {
     let (sup, _link, _clock) = rig();
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    let handle = tokio::spawn(sup.run(Duration::from_millis(5), async {
+    let handle = tokio::spawn(sup.run(Duration::from_millis(5), None, async {
         let _ = rx.await;
     }));
     tokio::time::sleep(Duration::from_millis(30)).await;
     tx.send(()).unwrap();
     assert!(handle.await.unwrap().is_ok());
+}
+
+/// ALI-163: the loop writes a fresh heartbeat after every step, also while Aegis
+/// is failing its probes (the Supervisor is then doing its job).
+#[tokio::test]
+async fn run_writes_a_fresh_heartbeat_even_while_aegis_is_down() {
+    let (sup, link, _clock) = rig();
+    link.set_probe(false);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("supervisor.heartbeat");
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let handle = tokio::spawn(sup.run(
+        Duration::from_millis(5),
+        Some(Heartbeat::new(path.clone())),
+        async {
+            let _ = rx.await;
+        },
+    ));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    tx.send(()).unwrap();
+    assert!(handle.await.unwrap().is_ok());
+    let content = std::fs::read_to_string(&path).expect("heartbeat written");
+    let now = heartbeat::unix_now_ms().unwrap();
+    assert_eq!(heartbeat::check(&content, now, 5_000), Ok(()));
+}
+
+#[test]
+fn heartbeat_file_is_read_from_the_environment() {
+    let env = std::collections::HashMap::from([
+        ("AEGIS_ENV", "development"),
+        ("AEGIS_SUPERVISOR_TARGET", "https://aegis:50051"),
+        ("AEGIS_SUPERVISOR_TLS_CA", "/tls/ca.pem"),
+        ("AEGIS_SUPERVISOR_TLS_CERT", "/tls/sup.pem"),
+        ("AEGIS_SUPERVISOR_TLS_KEY", "/tls/sup.key"),
+        ("AEGIS_SUPERVISOR_HEARTBEAT_FILE", "/tmp/hb"),
+    ]);
+    let cfg = SupervisorConfig::from_lookup(&|k| env.get(k).map(|v| (*v).to_owned())).unwrap();
+    assert_eq!(
+        cfg.heartbeat_file,
+        Some(std::path::PathBuf::from("/tmp/hb"))
+    );
+    let cfg = SupervisorConfig::from_lookup(&|k| {
+        if k == "AEGIS_SUPERVISOR_HEARTBEAT_FILE" {
+            Some("  ".to_owned())
+        } else {
+            env.get(k).map(|v| (*v).to_owned())
+        }
+    })
+    .unwrap();
+    assert_eq!(cfg.heartbeat_file, None, "blank means disabled");
 }
 
 #[test]

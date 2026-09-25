@@ -64,6 +64,7 @@ fn config(target: String, tls: SupervisorTlsPaths) -> SupervisorConfig {
         trip_after_ms: WINDOW_MS,
         probe_interval: Duration::from_secs(1),
         probe_timeout: Duration::from_secs(2),
+        heartbeat_file: None,
     }
 }
 
