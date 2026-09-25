@@ -31,7 +31,7 @@ from typing import Any
 import grpc
 import pytest
 
-from conftest import AEGIS_ADDR, HITL_URL, ca_only_channel
+from conftest import AEGIS_ADDR, HITL_URL, ca_only_channel, redis_as
 
 SHARE = 1_000_000_000
 SYMBOL = "AAPL"  # on the dev limits allowlist (Aegis testkit limits)
@@ -131,14 +131,38 @@ def test_kill_switch_state_is_readable_and_normal(aegis_as: Any, pb: dict[str, M
 
 
 def test_redis_to_bridge_to_aegis_reference_data(
-    aegis_as: Any, pb: dict[str, ModuleType], redis_client: Any, stack_now_ns: int
+    aegis_as: Any, pb: dict[str, ModuleType], snapshot_redis: Any, stack_now_ns: int
 ) -> None:
-    assert publish_snapshot(redis_client, stack_now_ns) >= 1, "no subscriber: is the bridge up?"
+    assert publish_snapshot(snapshot_redis, stack_now_ns) >= 1, "no subscriber: is the bridge up?"
     reader = aegis_as("aegis-supervisor")
     empty = pb["aegis_pb2"].Empty()
-    assert feed_until_fresh(redis_client, reader, empty, stack_now_ns), (
+    assert feed_until_fresh(snapshot_redis, reader, empty, stack_now_ns), (
         "Aegis never saw fresh reference data from the bridge"
     )
+
+
+# ------------------------------------------------------------------ Redis ACL (ALI-20)
+
+
+def test_redis_refuses_anonymous_clients() -> None:
+    import redis
+
+    client = redis_as(None)
+    try:
+        with pytest.raises(redis.AuthenticationError):
+            client.ping()  # type: ignore[attr-defined]
+    finally:
+        client.close()  # type: ignore[attr-defined]
+
+
+def test_only_regime_detector_may_publish_regime_labels(snapshot_redis: Any) -> None:
+    """Forging regime:labels (which move Aegis's C18) needs the regime-detector identity."""
+    import redis
+
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        snapshot_redis.publish("regime:labels", "forged")
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        snapshot_redis.set("any-key", "x")
 
 
 # ------------------------------------------------------------------ decision path
@@ -147,12 +171,16 @@ _decision: dict[str, Any] = {}
 
 
 def test_signal_gets_a_complete_decision_from_the_real_engine(
-    aegis_as: Any, pb: dict[str, ModuleType], redis_client: Any, stack_now_ns: int
+    aegis_as: Any,
+    pb: dict[str, ModuleType],
+    snapshot_redis: Any,
+    regime_redis: Any,
+    stack_now_ns: int,
 ) -> None:
-    publish_regime(redis_client, stack_now_ns)
+    publish_regime(regime_redis, stack_now_ns)
     reader = aegis_as("aegis-supervisor")
     empty = pb["aegis_pb2"].Empty()
-    feed_until_fresh(redis_client, reader, empty, stack_now_ns)
+    feed_until_fresh(snapshot_redis, reader, empty, stack_now_ns)
 
     decision = aegis_as("cognitive-core").SubmitSignal(trade_signal(pb, stack_now_ns), timeout=10)
     a = pb["aegis_pb2"]
