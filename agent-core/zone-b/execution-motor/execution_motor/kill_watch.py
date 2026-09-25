@@ -165,7 +165,14 @@ class KillSwitchWatcher:
         resweep_interval_s: float = 5.0,
         reconnect_backoff_s: float = 1.0,
         max_backoff_s: float = 30.0,
+        probe: Callable[[], Any] | None = None,
     ) -> None:
+        # ``probe`` (e.g. a unary GetKillSwitchState with a short deadline) runs on every
+        # sweeper pass while the state is known. The 2026-09-25 dev drill (ALI-170) showed
+        # that HTTP/2 keepalive does not break the idle state stream when Aegis is frozen,
+        # so without a probe the motor kept a stale NORMAL for 75 s. A failed probe marks
+        # the state unknown (HARD) and cancels the stuck stream so it reconnects.
+        self._probe = probe
         self._open_stream = open_stream
         self._mirror = mirror
         self._canceller = canceller
@@ -310,11 +317,31 @@ class KillSwitchWatcher:
                 self._canceller.sweep(reason)  # requested: sweep even if already reset
             else:
                 self.sweep_if_elevated()
+            self.check_liveness()
+
+    def check_liveness(self) -> bool:
+        """Run the probe while the state is known. On failure treat the state as unknown
+        (HARD, sweep) and cancel the current stream so the stream thread reconnects.
+        Returns False only when the probe failed."""
+        if self._probe is None or not self._mirror.is_known():
+            return True
+        try:
+            self._probe()
+        except Exception as exc:  # noqa: BLE001 - any probe failure means state is unknown
+            self.handle_stream_down(f"liveness probe failed: {type(exc).__name__}")
+            with self._call_lock:
+                call = self._call
+            cancel = getattr(call, "cancel", None)
+            if callable(cancel):
+                cancel()
+            return False
+        return True
 
 
 def build_kill_guard(
     open_stream: Callable[[], Iterable[Any]],
     brokers: Mapping[str, Broker],
+    probe: Callable[[], Any] | None = None,
     **watcher_options: float,
 ) -> tuple[KillSwitch, KillSwitchWatcher]:
     """The motor's kill switch (mirrors Aegis, no local latch) and the watcher feeding it.
@@ -329,6 +356,7 @@ def build_kill_guard(
         open_stream=open_stream,
         mirror=mirror,
         canceller=OpenOrderCanceller(brokers),
+        probe=probe,
         **watcher_options,
     )
     return kill, watcher

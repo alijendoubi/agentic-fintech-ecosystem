@@ -473,3 +473,82 @@ def test_a_slow_broker_does_not_stop_the_stream_thread_seeing_a_reset() -> None:
         broker.release.set()
         done.set()
         watcher.stop()
+
+
+# ---------------------------------------------------------------- liveness probe (ALI-170)
+
+
+def test_failed_probe_marks_state_unknown_sweeps_and_cancels_the_stream() -> None:
+    """ALI-170 drill: keepalive did not break the idle stream to a frozen Aegis. A failed
+    unary probe must stand in for it."""
+    broker = OpenOrdersBroker(open_ids=("o1",))
+
+    def frozen() -> None:
+        raise TimeoutError("deadline exceeded")
+
+    class Call:
+        cancelled = False
+
+        def cancel(self) -> None:
+            Call.cancelled = True
+
+    mirror = KillLevelMirror()
+    watcher = KillSwitchWatcher(
+        open_stream=lambda: iter(()),
+        mirror=mirror,
+        canceller=OpenOrderCanceller({broker.venue: broker}),
+        probe=frozen,
+    )
+    watcher.handle_state(State(KILL_LEVEL_NORMAL, 1))
+    watcher._call = Call()  # the live stream the stream thread is blocked on
+    assert watcher.check_liveness() is False
+    assert not mirror.is_known() and mirror.level() == KILL_LEVEL_HARD
+    assert broker.cancelled == ["o1"]
+    assert Call.cancelled, "the stuck stream must be cancelled so it reconnects"
+
+
+def test_probe_is_skipped_while_state_is_unknown_and_passes_when_healthy() -> None:
+    calls: list[int] = []
+    watcher, mirror = make_watcher(OpenOrdersBroker())
+    watcher._probe = lambda: calls.append(1)
+    assert watcher.check_liveness() is True and calls == [], "unknown: nothing to confirm"
+    watcher.handle_state(State(KILL_LEVEL_NORMAL, 1))
+    assert watcher.check_liveness() is True and calls == [1]
+    assert mirror.level() == KILL_LEVEL_NORMAL
+
+
+def test_background_probe_detects_a_frozen_peer_within_one_interval() -> None:
+    frozen = threading.Event()
+    release = threading.Event()
+
+    def stream() -> Iterator[State]:
+        yield State(KILL_LEVEL_NORMAL, 1)
+        release.wait(timeout=10)  # a frozen peer: the stream just stops, no error
+
+    def probe() -> None:
+        if frozen.is_set():
+            raise TimeoutError("deadline exceeded")
+
+    mirror = KillLevelMirror()
+    watcher = KillSwitchWatcher(
+        open_stream=stream,
+        mirror=mirror,
+        canceller=OpenOrderCanceller({}),
+        resweep_interval_s=0.1,
+        reconnect_backoff_s=10.0,
+        probe=probe,
+    )
+    watcher.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not mirror.is_known() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert mirror.level() == KILL_LEVEL_NORMAL
+        frozen.set()
+        deadline = time.monotonic() + 2
+        while mirror.is_known() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert mirror.level() == KILL_LEVEL_HARD
+    finally:
+        release.set()
+        watcher.stop()

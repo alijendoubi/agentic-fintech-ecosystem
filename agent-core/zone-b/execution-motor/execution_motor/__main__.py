@@ -37,6 +37,7 @@ _log = structlog.get_logger("execution_motor.main")
 
 _GENERATED_DIR: Path = Path(__file__).resolve().parents[2] / "shared" / "generated"
 _PROTO_MODULES = ("aegis_pb2", "aegis_pb2_grpc", "execution_motor_pb2", "execution_motor_pb2_grpc")
+_KILL_PROBE_TIMEOUT_S = 2.0  # liveness probe deadline for Aegis (see kill_watch.KillSwitchWatcher)
 
 
 def _load_protos(directory: Path = _GENERATED_DIR) -> dict[str, ModuleType]:
@@ -94,7 +95,14 @@ def _build_kill_guard(
         )
         return KillSwitch(start_halted=False), None
     stub = protos["aegis_pb2_grpc"].AegisStub(channel)
-    return build_kill_guard(aegis_state_stream(stub, protos["aegis_pb2"].Empty), brokers)
+    empty = protos["aegis_pb2"].Empty
+
+    def probe() -> None:
+        # Unary liveness check with a short deadline (ALI-170 drill: keepalive alone missed
+        # a frozen Aegis). Raises on failure; the watcher then treats the state as unknown.
+        stub.GetKillSwitchState(empty(), timeout=_KILL_PROBE_TIMEOUT_S)
+
+    return build_kill_guard(aegis_state_stream(stub, empty), brokers, probe=probe)
 
 
 def build_app(env: dict[str, str]) -> MotorApp:
