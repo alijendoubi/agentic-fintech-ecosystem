@@ -105,7 +105,7 @@ services:
 
   vector-db:
     # Keep the tag on the same major.minor as the chromadb client pin in zone-a/vector-db/requirements.txt.
-    image: chromadb/chroma:1.5.9
+    image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
     container_name: afe-vector-db
     volumes:
       - chroma-data:/data # persist_path in the image config is /data
@@ -307,7 +307,7 @@ services:
   # SHARED DATA PLANE
   # -------------------------------------------------------------
   questdb:
-    image: questdb/questdb:8.0.3
+    image: questdb/questdb:8.0.3@sha256:1178c2d0fdbeece163078b56b88c185c269b7c3ad04c3dce6513dad868a3c127
     container_name: afe-questdb
     environment:
       QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE: "4194304"
@@ -332,7 +332,7 @@ services:
       start_period: 20s
 
   redis:
-    image: redis:7.4.6-alpine
+    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
     container_name: afe-redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
@@ -353,7 +353,7 @@ services:
   # afe_sharp) imported by the services that need them; they are not daemons and have no Dockerfile,
   # so they are intentionally not compose services. Their database is postgres-audit below.
   postgres-audit:
-    image: postgres:16.10-alpine
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
     container_name: afe-postgres-audit
     environment:
       # Bootstrap superuser: used by the init script only. Services connect as afe_audit_app.
