@@ -12,7 +12,7 @@
 
 use std::sync::Mutex;
 
-use cryptoki::context::{CInitializeArgs, Pkcs11};
+use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
 use cryptoki::mechanism::Mechanism;
 use cryptoki::object::{Attribute, AttributeType, ObjectClass, ObjectHandle};
 use cryptoki::session::{Session, UserType};
@@ -68,7 +68,11 @@ fn find_slot(ctx: &Pkcs11, token_label: &str) -> Result<Slot, SignError> {
 fn read_pin(cfg: &Pkcs11Config) -> Result<AuthPin, SignError> {
     let raw =
         std::fs::read_to_string(&cfg.pin_file).map_err(|e| unavailable("read pin file", e))?;
-    Ok(AuthPin::new(raw.trim_end_matches(['\r', '\n']).to_owned()))
+    Ok(AuthPin::new(
+        raw.trim_end_matches(['\r', '\n'])
+            .to_owned()
+            .into_boxed_str(),
+    ))
 }
 
 fn open(ctx: &Pkcs11, slot: Slot, cfg: &Pkcs11Config) -> Result<Live, SignError> {
@@ -98,7 +102,8 @@ fn open(ctx: &Pkcs11, slot: Slot, cfg: &Pkcs11Config) -> Result<Live, SignError>
 impl CryptokiBackend {
     pub fn connect(cfg: &Pkcs11Config) -> Result<CryptokiBackend, SignError> {
         let ctx = Pkcs11::new(&cfg.module).map_err(|e| unavailable("load module", e))?;
-        ctx.initialize(CInitializeArgs::OsThreads)
+        // cryptoki 0.12: OS-provided locking (was CInitializeArgs::OsThreads in 0.7).
+        ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK))
             .map_err(|e| unavailable("initialize", e))?;
         let slot = find_slot(&ctx, &cfg.token_label)?;
         let live = open(&ctx, slot, cfg)?;

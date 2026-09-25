@@ -30,7 +30,10 @@ def _chroma_over_fake(clock: Clock) -> MemoryStore:
 def _chroma_real(clock: Clock) -> MemoryStore:
     """Real Chroma engine, in-process (no server, no network). Skipped if not installed."""
     chromadb: Any = pytest.importorskip("chromadb")
-    client = chromadb.EphemeralClient()
+    try:
+        client = chromadb.EphemeralClient()
+    except RuntimeError as exc:  # chromadb-client (http-only) is installed, not the engine
+        pytest.skip(f"in-process Chroma engine unavailable: {exc}")
     collection = client.get_or_create_collection(
         f"t{uuid.uuid4().hex}",
         configuration={"hnsw": {"space": "cosine"}},
