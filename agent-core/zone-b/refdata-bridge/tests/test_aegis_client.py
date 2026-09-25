@@ -33,6 +33,12 @@ def _snap(symbol: str, as_of_ns: int = 1_700_000_000_000_000_000) -> ReferenceSn
     )
 
 
+def _regime(symbol: str, label: str) -> RegimeLabelData:
+    return RegimeLabelData(
+        symbol=symbol, label=label, confidence=0.9, timestamp_ns=1_700_000_000_000_000_000
+    )
+
+
 @pytest.fixture
 def mtls_server():
     material = generate_mtls_material()
@@ -57,18 +63,20 @@ async def test_valid_batch_is_pushed_and_applied(mtls_server) -> None:
     try:
         stub = aegis_pb2_grpc.AegisStub(channel)
         client = AegisRefdataClient(stub=stub, aegis_pb2=aegis_pb2, timeout_s=5.0)
-        batch = PendingBatch(
-            snapshots=[_snap("AAPL"), _snap("MSFT")],
-            regime=RegimeLabelData(
-                label="TRENDING_BULL", confidence=0.9, timestamp_ns=1_700_000_000_000_000_000
-            ),
-        )
+        aapl = _regime("AAPL", "TRENDING_BULL")
+        msft = _regime("MSFT", "CRISIS")
+        batch = PendingBatch(snapshots=[_snap("AAPL"), _snap("MSFT")], regimes=[aapl, msft])
         result = await client.push(batch)
         assert sorted(result.applied_snapshot_symbols) == ["AAPL", "MSFT"]
-        assert result.regime_applied is True
+        assert result.applied_regimes == [aapl, msft]
         assert result.rejected == []
         assert servicer.calls == 1
         assert {s.symbol for s in servicer.applied} == {"AAPL", "MSFT"}
+        # ALI-158: each label travels with its own symbol; no universe-wide label.
+        assert [(p.symbol, p.confidence) for p in servicer.applied_regimes] == [
+            ("AAPL", 0.9),
+            ("MSFT", 0.9),
+        ]
     finally:
         await channel.close()
 
@@ -80,7 +88,7 @@ async def test_rejected_item_is_reported_not_treated_as_applied(mtls_server) -> 
     try:
         stub = aegis_pb2_grpc.AegisStub(channel)
         client = AegisRefdataClient(stub=stub, aegis_pb2=aegis_pb2, timeout_s=5.0)
-        batch = PendingBatch(snapshots=[_snap("AAPL"), _snap("BADSYM")], regime=None)
+        batch = PendingBatch(snapshots=[_snap("AAPL"), _snap("BADSYM")], regimes=[])
         result = await client.push(batch)
         assert result.applied_snapshot_symbols == ["AAPL"]
         assert len(result.rejected) == 1
@@ -92,20 +100,16 @@ async def test_rejected_item_is_reported_not_treated_as_applied(mtls_server) -> 
 
 async def test_rejected_regime_is_reported(mtls_server) -> None:
     material, servicer, port = mtls_server
-    servicer.fail_regime = True
+    servicer.fail_regime_symbols = {"MSFT"}
     channel = _client_channel(material, port)
     try:
         stub = aegis_pb2_grpc.AegisStub(channel)
         client = AegisRefdataClient(stub=stub, aegis_pb2=aegis_pb2, timeout_s=5.0)
-        batch = PendingBatch(
-            snapshots=[],
-            regime=RegimeLabelData(
-                label="CRISIS", confidence=0.5, timestamp_ns=1_700_000_000_000_000_000
-            ),
-        )
+        aapl = _regime("AAPL", "TRENDING_BULL")
+        batch = PendingBatch(snapshots=[], regimes=[aapl, _regime("MSFT", "CRISIS")])
         result = await client.push(batch)
-        assert result.regime_applied is False
-        assert result.rejected == [type(result.rejected[0])(key="regime", reason="stale")]
+        assert result.applied_regimes == [aapl], "only the accepted symbol advances"
+        assert result.rejected == [type(result.rejected[0])(key="regime:MSFT", reason="stale")]
     finally:
         await channel.close()
 
@@ -116,7 +120,7 @@ async def test_unreachable_aegis_raises_push_error_not_hang_or_silent_drop() -> 
     try:
         stub = aegis_pb2_grpc.AegisStub(channel)
         client = AegisRefdataClient(stub=stub, aegis_pb2=aegis_pb2, timeout_s=1.0)
-        batch = PendingBatch(snapshots=[_snap("AAPL")], regime=None)
+        batch = PendingBatch(snapshots=[_snap("AAPL")], regimes=[])
         with pytest.raises(PushError):
             await client.push(batch)
     finally:
@@ -137,7 +141,7 @@ async def test_mtls_without_client_certificate_is_refused() -> None:
             stub = aegis_pb2_grpc.AegisStub(channel)
             client = AegisRefdataClient(stub=stub, aegis_pb2=aegis_pb2, timeout_s=3.0)
             with pytest.raises(PushError):
-                await client.push(PendingBatch(snapshots=[_snap("AAPL")], regime=None))
+                await client.push(PendingBatch(snapshots=[_snap("AAPL")], regimes=[]))
         finally:
             await channel.close()
     finally:
@@ -154,6 +158,19 @@ async def test_empty_batch_is_never_sent_over_the_wire() -> None:
             raise AssertionError("must not be called for an empty batch")
 
     client = AegisRefdataClient(stub=ExplodingStub(), aegis_pb2=aegis_pb2, timeout_s=1.0)
-    result = await client.push(PendingBatch(snapshots=[], regime=None))
+    result = await client.push(PendingBatch(snapshots=[], regimes=[]))
     assert calls == []
     assert result.applied_snapshot_symbols == []
+
+
+async def test_symbol_less_label_rejection_never_advances_any_symbol(mtls_server) -> None:
+    """If Aegis's applied count disagrees with the rejections, advance nothing."""
+    material, servicer, port = mtls_server
+
+    class Miscounting:
+        async def PushReferenceData(self, request, timeout):  # noqa: N802
+            return aegis_pb2.PushReferenceDataResponse(applied_symbol_regimes=0)
+
+    client = AegisRefdataClient(stub=Miscounting(), aegis_pb2=aegis_pb2, timeout_s=5.0)
+    result = await client.push(PendingBatch(snapshots=[], regimes=[_regime("AAPL", "CRISIS")]))
+    assert result.applied_regimes == []

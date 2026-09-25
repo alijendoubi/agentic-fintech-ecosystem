@@ -392,11 +392,16 @@ impl pb::Aegis for AegisService {
             ));
         };
         let req = request.into_inner();
-        if req.snapshots.is_empty() && req.regime.is_none() {
+        if req.snapshots.is_empty() && req.regime.is_none() && req.symbol_regimes.is_empty() {
             return Err(Status::invalid_argument("empty reference data push"));
         }
         if req.snapshots.len() > MAX_SNAPSHOTS_PER_PUSH {
             return Err(Status::invalid_argument("too many snapshots in one push"));
+        }
+        if req.symbol_regimes.len() > MAX_SNAPSHOTS_PER_PUSH {
+            return Err(Status::invalid_argument(
+                "too many regime labels in one push",
+            ));
         }
         let engine = self.engine.clone();
         let resp = self

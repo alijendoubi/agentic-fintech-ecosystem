@@ -33,6 +33,7 @@ import structlog
 
 from refdata_bridge.batch import PendingBatch
 from refdata_bridge.config import Settings
+from refdata_bridge.mapping import RegimeLabelData
 
 log = structlog.get_logger(__name__)
 
@@ -53,10 +54,14 @@ class Rejection:
     reason: str
 
 
+# Aegis's rejection key for a per-symbol regime label (aegis.proto ReferenceRejection).
+REGIME_KEY_PREFIX = "regime:"
+
+
 @dataclass(frozen=True, slots=True)
 class PushResult:
     applied_snapshot_symbols: list[str]
-    regime_applied: bool
+    applied_regimes: list[RegimeLabelData]
     rejected: list[Rejection] = field(default_factory=list)
 
 
@@ -116,8 +121,8 @@ class AegisRefdataClient:
         self._snapshot_pb2 = market_snapshot_pb2
 
     async def push(self, batch: PendingBatch) -> PushResult:
-        if not batch.snapshots and batch.regime is None:
-            return PushResult(applied_snapshot_symbols=[], regime_applied=False)
+        if batch.is_empty:
+            return PushResult(applied_snapshot_symbols=[], applied_regimes=[])
         request = self._build_request(batch)
         try:
             response = await self._stub.PushReferenceData(request, timeout=self._timeout_s)
@@ -136,15 +141,21 @@ class AegisRefdataClient:
             )
             for s in batch.snapshots
         ]
-        kwargs: dict[str, Any] = {"snapshots": snapshots}
-        if batch.regime is not None:
-            kwargs["regime"] = self._snapshot_pb2.RegimeLabelPacket(
-                label=self._regime_enum_value(batch.regime.label),
-                confidence=batch.regime.confidence,
-                timestamp_ns=batch.regime.timestamp_ns,
-                state_index=batch.regime.state_index,
+        # Per-symbol labels only (ALI-158); the legacy universe-wide `regime`
+        # field is never sent, so Aegis never applies one symbol's label to another.
+        symbol_regimes = [
+            self._snapshot_pb2.RegimeLabelPacket(
+                symbol=r.symbol,
+                label=self._regime_enum_value(r.label),
+                confidence=r.confidence,
+                timestamp_ns=r.timestamp_ns,
+                state_index=r.state_index,
             )
-        return self._pb2.PushReferenceDataRequest(**kwargs)
+            for r in batch.regimes
+        ]
+        return self._pb2.PushReferenceDataRequest(
+            snapshots=snapshots, symbol_regimes=symbol_regimes
+        )
 
     def _regime_enum_value(self, label: str) -> int:
         enum_type = self._snapshot_pb2.RegimeLabelPacket.DESCRIPTOR.fields_by_name[
@@ -155,14 +166,22 @@ class AegisRefdataClient:
     def _parse_response(self, response: Any, batch: PendingBatch) -> PushResult:
         rejected = [Rejection(key=r.key, reason=r.reason) for r in response.rejected]
         rejected_keys = {r.key for r in rejected}
-        applied_symbols = [
-            s.symbol for s in batch.snapshots if s.symbol not in rejected_keys
+        applied_symbols = [s.symbol for s in batch.snapshots if s.symbol not in rejected_keys]
+        applied_regimes = [
+            r for r in batch.regimes if f"{REGIME_KEY_PREFIX}{r.symbol}" not in rejected_keys
         ]
-        regime_applied = bool(response.regime_applied)
+        if len(applied_regimes) != int(response.applied_symbol_regimes):
+            # Aegis's count and its rejections disagree: trust neither, advance nothing.
+            log.error(
+                "regime_apply_count_mismatch",
+                derived=len(applied_regimes),
+                reported=int(response.applied_symbol_regimes),
+            )
+            applied_regimes = []
         for r in rejected:
             log.warning("reference_data_rejected", key=r.key, reason=r.reason)
         return PushResult(
             applied_snapshot_symbols=applied_symbols,
-            regime_applied=regime_applied,
+            applied_regimes=applied_regimes,
             rejected=rejected,
         )

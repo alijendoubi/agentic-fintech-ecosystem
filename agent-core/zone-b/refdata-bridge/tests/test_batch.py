@@ -1,4 +1,4 @@
-"""``batch.py``: latest-per-symbol accumulation and single-global-regime semantics."""
+"""``batch.py``: latest-per-symbol accumulation for snapshots and regime labels."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ def snap(symbol: str, as_of_ns: int, *, stale: bool = False) -> ReferenceSnapsho
     )
 
 
-def regime(ts_ns: int, label: str = "TRENDING_BULL") -> RegimeLabelData:
-    return RegimeLabelData(label=label, confidence=0.9, timestamp_ns=ts_ns)
+def regime(ts_ns: int, label: str = "TRENDING_BULL", symbol: str = "AAPL") -> RegimeLabelData:
+    return RegimeLabelData(symbol=symbol, label=label, confidence=0.9, timestamp_ns=ts_ns)
 
 
 def test_build_batch_includes_new_symbol() -> None:
@@ -38,7 +38,7 @@ def test_out_of_order_snapshot_does_not_overwrite_newer() -> None:
 def test_unchanged_symbol_is_not_resent_after_being_applied() -> None:
     state = BatchState()
     state.record_snapshot(snap("AAPL", 100))
-    state.mark_applied(["AAPL"], regime_applied=False, regime_ts=None)
+    state.mark_applied(["AAPL"], [])
     batch = state.build_batch(max_snapshots=10)
     assert batch.snapshots == []
 
@@ -46,7 +46,7 @@ def test_unchanged_symbol_is_not_resent_after_being_applied() -> None:
 def test_rejected_symbol_is_resent_next_cycle() -> None:
     state = BatchState()
     state.record_snapshot(snap("AAPL", 100))
-    state.mark_applied([], regime_applied=False, regime_ts=None)  # Aegis rejected it
+    state.mark_applied([], [])  # Aegis rejected it
     batch = state.build_batch(max_snapshots=10)
     assert [s.symbol for s in batch.snapshots] == ["AAPL"]
 
@@ -54,7 +54,7 @@ def test_rejected_symbol_is_resent_next_cycle() -> None:
 def test_newer_snapshot_after_applied_is_sent_again() -> None:
     state = BatchState()
     state.record_snapshot(snap("AAPL", 100))
-    state.mark_applied(["AAPL"], regime_applied=False, regime_ts=None)
+    state.mark_applied(["AAPL"], [])
     state.record_snapshot(snap("AAPL", 200))
     batch = state.build_batch(max_snapshots=10)
     assert [s.as_of_ns for s in batch.snapshots] == [200]
@@ -70,34 +70,50 @@ def test_batch_respects_max_snapshots_oldest_first() -> None:
 
 def test_regime_is_included_until_applied() -> None:
     state = BatchState()
-    state.record_regime(regime(100))
+    r = regime(100)
+    state.record_regime(r)
     batch = state.build_batch(max_snapshots=10)
-    assert batch.regime is not None
-    assert batch.regime.timestamp_ns == 100
+    assert batch.regimes == [r]
 
-    state.mark_applied([], regime_applied=True, regime_ts=100)
+    state.mark_applied([], [r])
+    assert state.build_batch(max_snapshots=10).regimes == []
+
+
+def test_regimes_are_tracked_per_symbol() -> None:
+    """ALI-158: a newer label for MSFT must not replace AAPL's label."""
+    state = BatchState()
+    aapl = regime(100, label="TRENDING_BULL", symbol="AAPL")
+    msft = regime(200, label="CRISIS", symbol="MSFT")
+    state.record_regime(aapl)
+    state.record_regime(msft)
     batch = state.build_batch(max_snapshots=10)
-    assert batch.regime is None
+    assert batch.regimes == [aapl, msft], "both symbols, oldest first"
 
 
-def test_older_regime_never_overwrites_newer_across_symbols() -> None:
-    """RegimeLabelPacket has no symbol field (market_snapshot.proto): only ONE
-    global regime is tracked. A late/older message from any symbol must not
-    clobber the most recently timestamped one already recorded."""
+def test_older_regime_never_overwrites_newer_for_the_same_symbol() -> None:
     state = BatchState()
     state.record_regime(regime(200, label="CRISIS"))
-    state.record_regime(regime(100, label="TRENDING_BULL"))  # older, different "symbol" origin
+    state.record_regime(regime(100, label="TRENDING_BULL"))  # older, same symbol
     batch = state.build_batch(max_snapshots=10)
-    assert batch.regime is not None
-    assert batch.regime.label == "CRISIS"
+    assert [r.label for r in batch.regimes] == ["CRISIS"]
 
 
-def test_regime_rejected_by_aegis_is_resent() -> None:
+def test_regime_rejected_by_aegis_is_resent_and_others_are_not() -> None:
     state = BatchState()
-    state.record_regime(regime(100))
-    state.mark_applied([], regime_applied=False, regime_ts=None)  # rejected
-    batch = state.build_batch(max_snapshots=10)
-    assert batch.regime is not None
+    aapl = regime(100, symbol="AAPL")
+    msft = regime(100, symbol="MSFT")
+    state.record_regime(aapl)
+    state.record_regime(msft)
+    state.mark_applied([], [aapl])  # MSFT rejected
+    assert state.build_batch(max_snapshots=10).regimes == [msft]
+
+
+def test_batch_caps_regimes_oldest_first() -> None:
+    state = BatchState()
+    for i, sym in enumerate(["A", "B", "C"]):
+        state.record_regime(regime(100 + i, symbol=sym))
+    batch = state.build_batch(max_snapshots=10, max_regimes=2)
+    assert [r.symbol for r in batch.regimes] == ["A", "B"]
 
 
 def test_known_symbols_count() -> None:
