@@ -1,4 +1,7 @@
--r requirements.txt
+# Full `chromadb` (NOT chromadb-client) for the in-process contract tests (EphemeralClient).
+# Dev/test only, never installed in an image. Do not install alongside chromadb-client: both
+# provide the `chromadb` module.
+chromadb>=1.5,<1.6
 pytest>=8.3,<10
 pytest-asyncio>=0.24,<2
 pytest-cov>=6.0,<8

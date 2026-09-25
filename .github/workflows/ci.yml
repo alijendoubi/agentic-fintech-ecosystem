@@ -27,6 +27,10 @@ env:
   # Keep in sync with agent-core/zone-b/aegis/Dockerfile (rust:1.98-bookworm) and sensory-array/Dockerfile.
   RUST_TOOLCHAIN: "1.98.1"
   BUF_VERSION: "1.73.0"
+  # Security scanners (ALI-15). Bump deliberately; each is pinned so a scanner release cannot turn CI red.
+  GITLEAKS_VERSION: "8.30.1"
+  PIP_AUDIT_VERSION: "2.10.1"
+  CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
   # ─────────────────────────────────────────────────────────────
@@ -43,6 +47,7 @@ jobs:
           - agent-core/zone-a/regime-detector
           - agent-core/zone-a/vector-db
           - agent-core/zone-b/execution-motor
+          - agent-core/zone-b/refdata-bridge
           - agent-core/zone-c/audit-logger
           - agent-core/zone-c/compliance-manifest
           - agent-core/zone-c/sharp-gate
@@ -97,6 +102,13 @@ jobs:
             cache-paths: agent-core/zone-b/execution-motor/requirements*.txt
             test: python -m pytest -q
             types: python -m mypy .
+          # refdata-bridge (ALI-15: was missing from CI). Its mTLS/gRPC tests import the generated stubs.
+          - name: refdata-bridge
+            dir: agent-core/zone-b/refdata-bridge
+            requirements: -r requirements-dev.txt
+            cache-paths: agent-core/zone-b/refdata-bridge/requirements*.txt
+            test: bash ../../shared/proto/generate.sh && python -m pytest -q
+            types: ""
           # Zone C libraries: integration tests start postgres:16-alpine through Docker (available on ubuntu runners).
           - name: audit-logger
             dir: agent-core/zone-c/audit-logger
@@ -255,6 +267,81 @@ jobs:
           BASE_REF="${base}" bash ./check-breaking.sh
 
   # ─────────────────────────────────────────────────────────────
+  # Security scanning (ALI-15). Every exception lives next to its reason: .gitleaks.toml for
+  # secrets; none today for dependencies (a finding fails the job until it is fixed or an
+  # --ignore-vuln with a written reason is added here).
+  # ─────────────────────────────────────────────────────────────
+  secrets-scan:
+    name: gitleaks (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${GITHUB_WORKSPACE}:/repo" -w /repo             "zricethezav/gitleaks:v${GITLEAKS_VERSION}" git . --config .gitleaks.toml --redact --no-banner -v
+
+  python-deps-audit:
+    name: pip-audit — ${{ matrix.requirements }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        requirements:
+          - agent-core/zone-a/cognitive-core/requirements.txt
+          - agent-core/zone-a/regime-detector/requirements.txt
+          - agent-core/zone-a/vector-db/requirements.txt
+          - agent-core/zone-b/execution-motor/requirements.txt
+          - agent-core/zone-b/refdata-bridge/requirements.txt
+          - agent-core/zone-c/audit-logger/requirements.txt
+          - agent-core/zone-c/compliance-manifest/requirements.txt
+          - agent-core/zone-c/sharp-gate/requirements.txt
+          - agent-core/backtesting/requirements.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python -m pip install "pip-audit==${PIP_AUDIT_VERSION}"
+      - name: pip-audit (runtime requirements, i.e. what ships in the images)
+        run: pip-audit -r "${{ matrix.requirements }}" --progress-spinner off --desc on
+
+  rust-deps-audit:
+    name: cargo audit — ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [aegis, sensory-array]
+    defaults:
+      run:
+        working-directory: agent-core/zone-b/${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - run: cargo install cargo-audit --locked --version "${CARGO_AUDIT_VERSION}"
+      # Fails on any vulnerability (incl. optional features: the lockfile covers them). The
+      # "unmaintained" warnings (paste, rustls-pemfile: transitive) are reported, not fatal.
+      - run: cargo audit
+
+  node-deps-audit:
+    name: npm audit — hitl-interface
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-core/zone-c/hitl-interface
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm audit --omit=dev --audit-level=low
+
+  # ─────────────────────────────────────────────────────────────
   # Docker: build smoke test for every Dockerfile (no push) + compose validation
   # ─────────────────────────────────────────────────────────────
   docker-build:
@@ -280,6 +367,13 @@ jobs:
           - image: aegis
             context: agent-core
             file: agent-core/zone-b/aegis/Dockerfile
+          # Added in PR #8; both build from agent-core/ (they need shared/proto). ALI-15: were missing.
+          - image: execution-motor
+            context: agent-core
+            file: agent-core/zone-b/execution-motor/Dockerfile
+          - image: refdata-bridge
+            context: agent-core
+            file: agent-core/zone-b/refdata-bridge/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

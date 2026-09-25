@@ -35,7 +35,7 @@ uuid = { version = "1", features = ["v4"] }
 ed25519-dalek = { version = "2", features = ["std", "rand_core"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 x509-parser = "0.16"
-cryptoki = { version = "0.7", optional = true }
+cryptoki = { version = "0.12", optional = true }
 p256 = { version = "0.13", optional = true, features = ["ecdsa"] }
 
 [dev-dependencies]
