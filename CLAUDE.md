@@ -23,7 +23,10 @@ python -m backtesting.engine --help   # smoke CLI; python -m backtesting.calibra
 
 # Rust (Aegis needs protoc; sensory-array does not). This Windows machine has no MSVC linker (ALI-18):
 # run cargo in the pinned container instead, e.g. from agent-core/:
-#   docker run --rm -v "$(pwd -W):/work" -v afe-cargo-registry:/usr/local/cargo/registry #     -v afe-aegis-target:/target -e CARGO_TARGET_DIR=/target -w /work/zone-b/aegis rust:1.98-bookworm #     bash -c 'apt-get update -qq && apt-get install -y -qq protobuf-compiler && cargo test --locked'
+#   MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/work" -v afe-cargo-registry:/usr/local/cargo/registry
+#     -v afe-aegis-target:/target -e CARGO_TARGET_DIR=/target -w /work/zone-b/aegis rust:1.98-bookworm
+#     bash -c 'apt-get update -qq && apt-get install -y -qq protobuf-compiler && cargo test --locked'
+#   (one command, split here for reading; MSYS_NO_PATHCONV stops Git Bash rewriting the paths)
 cd agent-core/zone-b/sensory-array && cargo test --locked
 
 # HITL operator terminal (Next.js, port 3000, GET /api/health)
