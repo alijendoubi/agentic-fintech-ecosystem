@@ -10,6 +10,8 @@ Proves the three fail-closed behaviours required of the bridge:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import aegis_pb2
 import aegis_pb2_grpc
 import grpc
@@ -157,3 +159,20 @@ async def test_empty_batch_is_never_sent_over_the_wire() -> None:
     result = await client.push(PendingBatch(snapshots=[], regime=None))
     assert calls == []
     assert result.applied_snapshot_symbols == []
+
+
+def test_default_generated_dir_is_the_repo_layout() -> None:
+    import refdata_bridge.aegis_client as mod
+
+    expected = Path(mod.__file__).resolve().parents[3] / "shared" / "generated"
+    assert mod.default_generated_dir() == expected
+
+
+def test_container_layout_without_afe_proto_dir_fails_with_a_clear_error() -> None:
+    """ALI-167: /app/refdata_bridge/aegis_client.py has no fourth parent. The module must
+    still import (the old module-level constant raised IndexError at import time), and
+    only a call that needs the default fails, with an actionable message."""
+    import refdata_bridge.aegis_client as mod
+
+    with pytest.raises(ImportError, match="AFE_PROTO_DIR"):
+        mod.default_generated_dir("/app/refdata_bridge/aegis_client.py")

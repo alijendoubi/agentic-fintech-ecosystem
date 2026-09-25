@@ -29,11 +29,19 @@ root `.gitignore`'s `*.pem` / `*.key` / `secrets/` patterns):
 ```
 out/
 ├── aegis/               ca.pem  server.pem  server.key  README.md
+├── aegis-signer/        seed.hex  README.md   (dev Ed25519 attestation seed, AEGIS_DEV_SIGNING_SEED_FILE)
 ├── cognitive-core/      ca.pem  client.pem  client.key  README.md
-├── execution-motor/     ca.pem  client.pem  client.key  README.md
+├── execution-motor/     ca.pem  server.pem  server.key  client.pem  client.key
+│                        attestation-keys.json  README.md   (public key matching aegis-signer)
 ├── refdata-bridge/      ca.pem  client.pem  client.key  README.md
 └── aegis-supervisor/    ca.pem  client.pem  client.key  README.md
 ```
+
+The pinned dev signing key matters (ALI-167): with `AEGIS_SIGNER=dev` and no
+seed file Aegis generates a random key at every start, so execution-motor (which
+must know Aegis's public key in advance) could never verify an approval.
+`docker-compose.dev.yml` mounts `aegis-signer/` into Aegis and points the motor's
+`MOTOR_ATTESTATION_KEYS_FILE` at `execution-motor/attestation-keys.json`.
 
 `identities.json` (checked in — it is a template, not a secret) is the
 matching **dev-only** `AEGIS_IDENTITIES_FILE`. It is NOT the production

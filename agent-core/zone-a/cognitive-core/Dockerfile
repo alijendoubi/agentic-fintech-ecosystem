@@ -21,7 +21,8 @@ RUN pip install --no-cache-dir "grpcio-tools>=1.67,<2"
 COPY shared/proto/ ./
 RUN mkdir /generated \
     && python -m grpc_tools.protoc -I. --python_out=/generated --grpc_python_out=/generated \
-        market_snapshot.proto trade_signal.proto order_request.proto aegis.proto
+        market_snapshot.proto trade_signal.proto order_request.proto aegis.proto \
+        execution_motor.proto
 
 # Stage 2: runtime.
 FROM python:3.12-slim

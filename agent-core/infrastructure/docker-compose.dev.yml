@@ -18,9 +18,10 @@
 # missing directory and the affected containers fail to start.
 #
 # Aegis still needs an owner-supplied limits.json in ${AEGIS_CONFIG_DIR} (default ./secrets/aegis-config);
-# no risk limits are invented here. Copy dev-tls/identities.json into that same directory as
-# identities.json (or symlink it) — it is the DEV-ONLY identities file matching the certs generated above,
-# not the production one.
+# no risk limits are invented here. The DEV-ONLY identities file (dev-tls/identities.json) and the pinned
+# dev attestation signing key (dev-tls/out/aegis-signer, matching dev-tls/out/execution-motor/
+# attestation-keys.json) are mounted directly below (ALI-167): without a pinned seed Aegis's dev signer
+# picks a random key at every start and execution-motor could never verify an approval.
 
 networks:
   dev-host: {}
@@ -52,12 +53,16 @@ services:
     environment:
       AEGIS_ENV: development
       AEGIS_SIGNER: dev
+      AEGIS_DEV_SIGNING_SEED_FILE: /signer/seed.hex
+      AEGIS_IDENTITIES_FILE: /dev-identities.json
     # Replaces the base file's ${AEGIS_TLS_DIR:-./secrets/aegis-tls} mount with the dev-tls generated
     # server identity (CN=aegis, SAN=DNS:aegis) so real mTLS works out of the box in dev.
     volumes: !override
       - aegis-state:/var/lib/aegis
       - ${AEGIS_CONFIG_DIR:-./secrets/aegis-config}:/cfg:ro
       - ./dev-tls/out/aegis:/tls:ro
+      - ./dev-tls/out/aegis-signer:/signer:ro
+      - ./dev-tls/identities.json:/dev-identities.json:ro
       - ${AEGIS_HSM_MODULE_DIR:-./secrets/hsm}:/hsm:ro
     ports:
       - "127.0.0.1:50051:50051" # gRPC, mTLS (client certs required — see dev-tls/README.md)
@@ -100,6 +105,7 @@ services:
       AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
       AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
       MOTOR_USE_MOCK_BROKER: "1" # no real Alpaca credentials in dev
+      MOTOR_ATTESTATION_KEYS_FILE: /tls/attestation-keys.json # dev signer's public key (dev-tls, ALI-167)
     volumes: !override
       - execution-motor-state:/var/lib/execution-motor
       - ./dev-tls/out/execution-motor:/tls:ro
@@ -114,9 +120,10 @@ services:
   # Aegis.PushReferenceData. CN=refdata-bridge, role market-data-writer.
   refdata-bridge:
     environment:
-      AEGIS_CLIENT_TLS_CA: /aegis-tls/ca.pem
-      AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
-      AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
+      ENVIRONMENT: development
+      REFDATA_CLIENT_TLS_CA: /aegis-tls/ca.pem
+      REFDATA_CLIENT_TLS_CERT: /aegis-tls/client.pem
+      REFDATA_CLIENT_TLS_KEY: /aegis-tls/client.key
     volumes: !override
       - ./dev-tls/out/refdata-bridge:/aegis-tls:ro
     networks:
