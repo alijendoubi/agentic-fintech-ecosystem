@@ -243,7 +243,48 @@ echo "  dev attestation signer: key_id=$KEY_ID (seed in $SIGNER_DIR, public key 
 # ----------------------------------------------------------------------------
 # 4. Per-directory DEV ONLY README (also see ./README.md for the full guide)
 # ----------------------------------------------------------------------------
-for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor; do
+# ----------------------------------------------------------------------------
+# 3c. DEV ONLY operator identity and kill-switch reset approvers (ALI-170)
+#     Without them no kill switch can ever be reset in the dev stack: a reset needs
+#     a peer holding the kill-reset role PLUS signed approvals from registered
+#     approvers (operator / compliance; count per level: spec 5.2). Writes
+#     out/identities.json (the dev AEGIS_IDENTITIES_FILE) and one private Ed25519
+#     seed per approver under out/approvers/ (hex; used to sign reset approvals).
+# ----------------------------------------------------------------------------
+issue_cert client operator operator ""
+
+APPROVER_DIR="$OUT_DIR/approvers"
+mkdir -p "$APPROVER_DIR"
+approver_json=""
+for spec in "dev-operator-a:operator" "dev-operator-b:operator" "dev-compliance:compliance"; do
+    id=${spec%%:*}
+    role=${spec#*:}
+    openssl genpkey -algorithm ed25519 -out "$WORK_DIR/$id.pem"
+    openssl pkey -in "$WORK_DIR/$id.pem" -outform DER | tail -c 32 | hex_of > "$APPROVER_DIR/$id.seed"
+    chmod 600 "$APPROVER_DIR/$id.seed" 2>/dev/null || true
+    pub=$(openssl pkey -in "$WORK_DIR/$id.pem" -pubout -outform DER | tail -c 32 | hex_of)
+    if [ ${#pub} -ne 64 ]; then
+        echo "error: could not derive approver key $id" >&2
+        exit 1
+    fi
+    entry=$(printf '"%s": {"roles": ["%s"], "ed25519_pubkey_hex": "%s"}' "$id" "$role" "$pub")
+    approver_json="${approver_json:+$approver_json, }$entry"
+done
+cat > "$OUT_DIR/identities.json" <<EOF
+{
+  "peers": {
+    "cognitive-core": ["signal-submitter"],
+    "execution-motor": ["state-reader", "execution-reporter"],
+    "refdata-bridge": ["market-data-writer"],
+    "aegis-supervisor": ["state-reader", "kill-trigger"],
+    "operator": ["state-reader", "kill-trigger", "kill-reset"]
+  },
+  "approvers": {$approver_json}
+}
+EOF
+echo "  dev operator identity + 3 reset approvers: $OUT_DIR/identities.json, seeds in $APPROVER_DIR"
+
+for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor operator approvers; do
     cat > "$OUT_DIR/$d/README.md" <<EOF
 # DEV ONLY - NOT FOR PRODUCTION
 
