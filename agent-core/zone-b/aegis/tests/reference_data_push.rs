@@ -35,6 +35,7 @@ fn regime(at: i64) -> pb::RegimeLabelPacket {
         confidence: 0.9,
         timestamp_ns: at,
         state_index: 0,
+        symbol: String::new(),
     }
 }
 
@@ -42,6 +43,7 @@ fn full_push(as_of_ns: i64) -> pb::PushReferenceDataRequest {
     pb::PushReferenceDataRequest {
         snapshots: vec![snapshot(as_of_ns)],
         regime: Some(regime(as_of_ns)),
+        symbol_regimes: vec![],
     }
 }
 
@@ -136,6 +138,7 @@ async fn stale_pushes_are_refused_and_never_stored() {
     feed.push_reference_data(pb::PushReferenceDataRequest {
         snapshots: vec![flagged],
         regime: None,
+        symbol_regimes: vec![],
     })
     .await
     .unwrap();
@@ -222,10 +225,83 @@ async fn empty_and_oversized_pushes_are_invalid_arguments() {
     let huge = pb::PushReferenceDataRequest {
         snapshots: vec![snapshot(NOW_NS); aegis::state::ingest::MAX_SNAPSHOTS_PER_PUSH + 1],
         regime: None,
+        symbol_regimes: vec![],
     };
     assert_eq!(
         feed.push_reference_data(huge).await.unwrap_err().code(),
         Code::InvalidArgument
     );
     assert!(s.rig.refdata.price("AAPL").is_none());
+}
+
+fn symbol_regime(symbol: &str, label: pb::RegimeLabel, at: i64) -> pb::RegimeLabelPacket {
+    pb::RegimeLabelPacket {
+        label: label as i32,
+        symbol: symbol.into(),
+        ..regime(at)
+    }
+}
+
+fn c18_passed(d: &pb::AegisDecision) -> bool {
+    let c18: Vec<_> = d.results.iter().filter(|r| r.control_id == "C18").collect();
+    !c18.is_empty() && c18.iter().all(|r| r.passed)
+}
+
+/// ALI-158: before this change the bridge could only forward ONE regime label
+/// (the newest across all symbols), so a newer MSFT label decided C18 for AAPL.
+#[tokio::test]
+async fn c18_judges_a_signal_against_its_own_symbols_regime() {
+    let s = no_market_server().await;
+    let mut core = client(&s, "cognitive-core").await;
+    let mut feed = client(&s, "market-data").await;
+    let resp = feed
+        .push_reference_data(pb::PushReferenceDataRequest {
+            snapshots: vec![snapshot(NOW_NS)],
+            regime: None,
+            symbol_regimes: vec![
+                symbol_regime("AAPL", pb::RegimeLabel::TrendingBull, NOW_NS - 10 * MS),
+                symbol_regime("MSFT", pb::RegimeLabel::Crisis, NOW_NS),
+            ],
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.applied_symbol_regimes, 2, "{:?}", resp.rejected);
+    assert!(!resp.regime_applied);
+
+    // The rig's AAPL signal claims TRENDING_BULL: it matches AAPL's own label,
+    // even though MSFT's CRISIS label is newer.
+    let d = core
+        .submit_signal(s.rig.signal(1, 10))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(c18_passed(&d), "{:?}", d.results);
+    assert_eq!(
+        d.decision,
+        DecisionStatus::DecisionApproved as i32,
+        "{:?}",
+        d.results
+    );
+}
+
+#[tokio::test]
+async fn c18_fails_closed_for_a_symbol_without_its_own_or_a_global_label() {
+    let s = no_market_server().await;
+    let mut core = client(&s, "cognitive-core").await;
+    let mut feed = client(&s, "market-data").await;
+    feed.push_reference_data(pb::PushReferenceDataRequest {
+        snapshots: vec![snapshot(NOW_NS)],
+        regime: None,
+        symbol_regimes: vec![symbol_regime("MSFT", pb::RegimeLabel::TrendingBull, NOW_NS)],
+    })
+    .await
+    .unwrap();
+    let d = core
+        .submit_signal(s.rig.signal(1, 10))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!c18_passed(&d), "MSFT's label must not be used for AAPL");
+    assert_ne!(d.decision, DecisionStatus::DecisionApproved as i32);
 }

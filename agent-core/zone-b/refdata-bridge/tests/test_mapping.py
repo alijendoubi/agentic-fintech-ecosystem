@@ -115,9 +115,7 @@ def test_parse_snapshot_rejects_non_finite_mid_price() -> None:
 
 def test_parse_snapshot_rejects_non_positive_adv() -> None:
     with pytest.raises(MappingError):
-        parse_snapshot(
-            snapshot_payload(adv_30d=0.0), now_ns=NOW_NS, stale_after_ns=STALE_AFTER_NS
-        )
+        parse_snapshot(snapshot_payload(adv_30d=0.0), now_ns=NOW_NS, stale_after_ns=STALE_AFTER_NS)
 
 
 def test_parse_snapshot_marks_stale_when_source_flags_it() -> None:
@@ -162,6 +160,7 @@ def test_parse_snapshot_defaults_warmup_missing_to_stale() -> None:
 
 def test_parse_regime_maps_valid_message() -> None:
     data = parse_regime(regime_payload())
+    assert data.symbol == "AAPL"
     assert data.label == "TRENDING_BULL"
     assert data.confidence == 0.87
     assert data.timestamp_ns == NOW_NS
@@ -182,5 +181,15 @@ def test_parse_regime_rejects_bad_confidence(bad_confidence: float) -> None:
 def test_parse_regime_rejects_missing_ts() -> None:
     payload = regime_payload()
     del payload["ts_ns"]
+    with pytest.raises(MappingError):
+        parse_regime(payload)
+
+
+@pytest.mark.parametrize("bad_symbol", [None, "", "aapl", "TOO-LONG-SYMBOL", 7])
+def test_parse_regime_requires_a_valid_symbol(bad_symbol: object) -> None:
+    """ALI-158: labels are per symbol; a symbol-less label is refused, not guessed."""
+    payload = regime_payload(symbol=bad_symbol)
+    if bad_symbol is None:
+        del payload["symbol"]
     with pytest.raises(MappingError):
         parse_regime(payload)

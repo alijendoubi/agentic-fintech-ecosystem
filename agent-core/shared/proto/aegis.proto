@@ -247,14 +247,19 @@ message ReferenceSnapshot {
 // A batch of reference data. Either part may be absent, but not both.
 message PushReferenceDataRequest {
   repeated ReferenceSnapshot snapshots = 1;
-  // Latest regime label (label, confidence in [0,1], timestamp_ns as-of time).
-  // Omit when the batch carries no regime update.
+  // Universe-wide regime label (label, confidence in [0,1], timestamp_ns as-of
+  // time). Legacy: kept for compatibility; Aegis uses it only for a symbol that
+  // has no per-symbol label. Omit when the batch carries no such update.
   RegimeLabelPacket regime = 2;
+  // Additive (ALI-158): per-symbol regime labels. Each item MUST set `symbol`
+  // (on the C03 allowlist). C18 judges a signal against the label for the
+  // signal's own symbol. Rejections use the key "regime:<symbol>".
+  repeated RegimeLabelPacket symbol_regimes = 3;
 }
 
 // Why one item of a push was not applied.
 message ReferenceRejection {
-  string key = 1;                          // symbol, or "regime"
+  string key = 1;                          // symbol, "regime", or "regime:<symbol>"
   string reason = 2;                       // invalid, stale, future, out_of_order, unknown_symbol, capacity
 }
 
@@ -264,4 +269,5 @@ message PushReferenceDataResponse {
   uint32 applied_snapshots = 1;
   bool regime_applied = 2;
   repeated ReferenceRejection rejected = 3;
+  uint32 applied_symbol_regimes = 4;       // additive (ALI-158)
 }

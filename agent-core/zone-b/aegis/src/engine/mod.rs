@@ -178,7 +178,7 @@ impl Engine {
             kill: self.deps.kill.effective_level(),
             replay,
             ref_price: self.deps.refdata.price(&sig.symbol),
-            regime: self.deps.refdata.regime(),
+            regime: self.deps.refdata.regime_for(&sig.symbol),
             exposure,
             equity,
             rate,
