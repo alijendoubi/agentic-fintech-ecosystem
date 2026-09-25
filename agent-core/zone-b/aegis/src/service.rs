@@ -31,7 +31,7 @@ use crate::audit::AuditEvent;
 use crate::engine::{CancelToken, Engine, HoldError};
 use crate::identity::{cert_identity, Identities, PeerRole};
 use crate::killswitch::controller::ControllerError;
-use crate::killswitch::{ResetRefusal, ResetRequest};
+use crate::killswitch::{ResetRefusal, ResetRequest, Role};
 use crate::pb;
 use crate::state::ingest::{ingest, MAX_SNAPSHOTS_PER_PUSH};
 use crate::state::refdata::MemoryReferenceData;
@@ -142,6 +142,48 @@ impl AegisService {
             ))
         }
     }
+
+    /// ALI-164: when the limits require a second approver, releasing a hold needs an
+    /// Ed25519 approval signed by `second_approver_id` (a registered approver holding the
+    /// operator role, not the operator) over the hold id and the decision. A bare string
+    /// used to be enough, so one hold-resolver peer could name anyone as second approver.
+    fn check_second_approval(&self, req: &pb::ResolveHoldRequest) -> Result<(), Status> {
+        let cfg = &self.engine.deps.limits.config;
+        if !req.approve || !cfg.hold_requires_second_approver {
+            return Ok(());
+        }
+        let approval = req.second_approval.as_ref().ok_or_else(|| {
+            Status::failed_precondition("a signed second approval is required to release a hold")
+        })?;
+        if approval.approver_id != req.second_approver_id || approval.approver_id == req.operator_id
+        {
+            return Err(Status::failed_precondition(
+                "the second approval must be signed by second_approver_id, not the operator",
+            ));
+        }
+        let now = self
+            .engine
+            .deps
+            .clock
+            .now_ns()
+            .map_err(|_| Status::internal("clock unavailable"))?;
+        let verified = self
+            .identities
+            .verify_hold_approval(
+                &req.hold_id,
+                req.approve,
+                approval,
+                now,
+                cfg.timings.approval_max_age_ms,
+            )
+            .map_err(|e| Status::permission_denied(e.to_string()))?;
+        if verified.role != Role::Operator {
+            return Err(Status::permission_denied(
+                "the second approver must sign with the operator role",
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn check_len(name: &str, v: &str) -> Result<(), Status> {
@@ -240,6 +282,7 @@ impl pb::Aegis for AegisService {
         let caller = self.authorize(&request, PeerRole::HoldResolver)?;
         let req = request.into_inner();
         self.bind_operator(&caller, &req.operator_id)?;
+        self.check_second_approval(&req)?;
         let engine = self.engine.clone();
         let out = self
             .run(self.opts.rpc_timeout, move || engine.resolve_hold(&req))

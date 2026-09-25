@@ -154,6 +154,32 @@ impl Identities {
         now_ns: i64,
         max_age_ms: u64,
     ) -> Result<VerifiedApproval, ResetRefusal> {
+        let text = approval_text(trigger_id, &a.approver_id, &a.role, a.approved_at_ns);
+        self.verify_signed(&text, a, now_ns, max_age_ms)
+    }
+
+    /// Verify a signed second approval for releasing (or rejecting) `hold_id` (ALI-164).
+    /// The decision is part of the signed text, so an approval to reject cannot be
+    /// replayed to release.
+    pub fn verify_hold_approval(
+        &self,
+        hold_id: &str,
+        approve: bool,
+        a: &pb::Authorization,
+        now_ns: i64,
+        max_age_ms: u64,
+    ) -> Result<VerifiedApproval, ResetRefusal> {
+        let text = hold_approval_text(hold_id, approve, &a.approver_id, &a.role, a.approved_at_ns);
+        self.verify_signed(&text, a, now_ns, max_age_ms)
+    }
+
+    fn verify_signed(
+        &self,
+        text: &str,
+        a: &pb::Authorization,
+        now_ns: i64,
+        max_age_ms: u64,
+    ) -> Result<VerifiedApproval, ResetRefusal> {
         let deny = |why: &str| {
             ResetRefusal::Unauthenticated(format!("approval by {:?}: {why}", a.approver_id))
         };
@@ -175,7 +201,6 @@ impl Identities {
         let sig = hex::decode(&a.credential_ref)
             .and_then(|b| Signature::from_slice(&b).ok())
             .ok_or_else(|| deny("credential is not a signature"))?;
-        let text = approval_text(trigger_id, &a.approver_id, &a.role, a.approved_at_ns);
         approver
             .key
             .verify(text.as_bytes(), &sig)
@@ -195,6 +220,18 @@ pub fn approval_text(
     approved_at_ns: i64,
 ) -> String {
     format!("afe-reset-v1\ntrigger_id={trigger_id}\napprover_id={approver_id}\nrole={role}\napproved_at_ns={approved_at_ns}\n")
+}
+
+/// Canonical text a second approver signs for a hold decision (ALI-164). Binds the
+/// hold and the decision, so it cannot be replayed onto another hold or flipped.
+pub fn hold_approval_text(
+    hold_id: &str,
+    approve: bool,
+    approver_id: &str,
+    role: &str,
+    approved_at_ns: i64,
+) -> String {
+    format!("afe-hold-v1\nhold_id={hold_id}\napprove={approve}\napprover_id={approver_id}\nrole={role}\napproved_at_ns={approved_at_ns}\n")
 }
 
 /// Subject CN of a DER certificate, else the first DNS/URI SAN.
