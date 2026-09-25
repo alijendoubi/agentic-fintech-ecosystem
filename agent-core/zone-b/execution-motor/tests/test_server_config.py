@@ -127,3 +127,18 @@ def test_attestation_keys_file_required() -> None:
     del env["MOTOR_ATTESTATION_KEYS_FILE"]
     with pytest.raises(ConfigError):
         ServerConfig.from_env(env)
+
+
+def test_production_requires_aegis_target_for_the_kill_switch_watch() -> None:
+    # ALI-162: without an Aegis channel the motor cannot see a kill-switch trip, so open
+    # orders would survive a LOGIC/HARD latch. Refused in production.
+    env = base_env()
+    env["MOTOR_ENV"] = "production"
+    env["ALPACA_API_KEY"] = "k"
+    env["ALPACA_SECRET_KEY"] = "s"
+    env["AEGIS_CLIENT_TLS_CA"] = "/tls/aegis-ca.pem"
+    del env["MOTOR_USE_MOCK_BROKER"]
+    with pytest.raises(ConfigError, match="AEGIS_TARGET"):
+        ServerConfig.from_env(env)
+    env["AEGIS_TARGET"] = "aegis:50051"
+    assert ServerConfig.from_env(env).aegis_target == "aegis:50051"

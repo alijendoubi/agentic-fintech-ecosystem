@@ -66,6 +66,35 @@ bash agent-core/shared/proto/generate.sh
 * `rpc Health(Empty) returns (HealthStatus)` — liveness/readiness; reflects the local
   kill-switch state only, no policy requirement beyond mTLS.
 
+## Kill-switch reaction (ALI-162)
+
+Implements the motor's side of `docs/specs/phase_3_aegis_execution.md` §5.2
+(`execution_motor/kill_watch.py`, wired in `__main__.py`):
+
+* The motor subscribes to `Aegis.WatchKillSwitchState` (its client certificate needs the
+  `state-reader` role in Aegis's identities file, as well as `execution-reporter`).
+* **New submissions** are halted at any level above NORMAL and resume when Aegis reports
+  NORMAL again. The motor mirrors Aegis's level and does not latch it itself: Aegis owns
+  the latches and the authenticated reset.
+* **Open orders** are cancelled at LOGIC (2) and above: listed per venue
+  (`Broker.list_open_orders`, Alpaca `GET /v2/orders?status=open`) and cancelled one by one
+  by a sweeper thread that each state message wakes at once, well inside the spec's 1 s
+  budget. Sweeps never run on the stream thread, so a slow broker cannot delay reading an
+  Aegis reset. The sweep is repeated every 5 s while the level stays elevated. That catches in-flight submits, failed cancels and
+  any orders beyond the first 500-order page. SOFT (1) leaves open orders alone, per the
+  spec.
+* **Fail closed.** Until the first state arrives, and whenever the stream breaks or ends,
+  the level is treated as HARD, never NORMAL (`aegis.proto` design risk 1). Every failed
+  subscribe or broken stream, including the first attempt at start-up, triggers an
+  immediate sweep. So a motor that restarts with orders open while Aegis is unreachable
+  halts and cancels them at once. A normal restart with Aegis healthy does not sweep. The
+  watcher reconnects with backoff (1 s doubling to 30 s).
+* HTTP/2 keepalive (20 s) on the Aegis channel is meant to break a silently dead connection
+  so a stale NORMAL is not trusted forever.
+* At HARD the supervisor may already have cut broker egress. The sweep still tries, and
+  every failed list or cancel is logged at CRITICAL (`kill_sweep_list_failed`,
+  `kill_sweep_cancel_failed`) for manual cancellation per `docs/runbooks/kill-switch-drill.md`.
+
 A non-OK gRPC status means the motor could not even evaluate the decision (e.g. the server
 is at its connection/thread-pool limit); every policy outcome (rejected, duplicate, halted,
 unknown) is always a normal `ExecuteAck`, never a transport error.
@@ -102,7 +131,7 @@ Production refuses to start without `AEGIS_CLIENT_TLS_CA` configured.
 | `MOTOR_USE_MOCK_BROKER` | no | Only the literal `1`: use the in-memory `MockBroker` instead of Alpaca. Refused in production. |
 | `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` | yes (unless mock broker) | Alpaca paper credentials. Required in production. |
 | `ALPACA_BASE_URL` | no | Defaults to the pinned paper endpoint. Live trading needs `AFE_ENABLE_LIVE_TRADING`/`AFE_LIVE_TRADING_CONFIRM` (see `alpaca.py`) and is out of scope for this server today. |
-| `AEGIS_TARGET` | no | `host:port` for `Aegis.ReportExecution`. Unset disables reporting (logged as a warning at startup). |
+| `AEGIS_TARGET` | yes (production) | `host:port` of Aegis, used for `ReportExecution` and the `WatchKillSwitchState` subscription (see "Kill-switch reaction"). Required in production. Outside production, unset disables both (logged as warnings at startup). |
 | `AEGIS_CLIENT_TLS_CA`, `AEGIS_CLIENT_TLS_CERT`, `AEGIS_CLIENT_TLS_KEY` | yes (production, if `AEGIS_TARGET` is set) | mTLS material for the outbound Aegis channel. `CERT`/`KEY` must be set together (mutual TLS) or both omitted (server-auth-only, trusting only `CA`). |
 
 ### Environment variables — business policy (`config.py`, `MotorConfig`)
@@ -149,6 +178,12 @@ path (`aegis/src/signing/dev.rs` vs `aegis/src/signing/pkcs11.rs`).
 * **Aegis reporting channel is never exercised against a real Aegis server**; only against
   the fakes above. `AEGIS_TARGET` unset simply disables reporting (logged, not fatal),
   which is itself unverified in production-shaped conditions.
+* **Kill-switch reaction is tested against a Python fake of Aegis's streaming RPC over a
+  real loopback `grpc.Server`** (`tests/test_kill_watch_grpc.py`), not against the Rust
+  Aegis. Not verified: the keepalive settings against tonic's HTTP/2 ping policy, Alpaca's
+  real `GET /v2/orders?status=open` response shape and page limit, and the timing with a
+  real broker round trip. A kill-switch drill in the paper environment is still required
+  (`docs/runbooks/kill-switch-drill.md`).
 * **Broker-gateway-vs-motor-holds-credentials is ADR-004, still Proposed.** This server
   currently holds Alpaca credentials directly (env vars), following the existing
   `alpaca.py`/`alpaca_broker_from_env` design; it does not resolve or anticipate ADR-004's
