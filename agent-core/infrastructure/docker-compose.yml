@@ -281,12 +281,14 @@ services:
     container_name: afe-refdata-bridge
     environment:
       PYTHONUNBUFFERED: "1"
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+      ENVIRONMENT: production
+      REDIS_URL: redis://redis:6379
       AEGIS_TARGET: aegis:50051
-      AEGIS_CLIENT_TLS_CA: /aegis-tls/ca.pem
-      AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
-      AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
+      # The bridge reads REFDATA_CLIENT_TLS_* (see zone-b/refdata-bridge/README.md). These were
+      # AEGIS_CLIENT_TLS_*, which it ignores, so it silently ran a plaintext channel (ALI-167).
+      REFDATA_CLIENT_TLS_CA: /aegis-tls/ca.pem
+      REFDATA_CLIENT_TLS_CERT: /aegis-tls/client.pem
+      REFDATA_CLIENT_TLS_KEY: /aegis-tls/client.key
     volumes:
       - ${REFDATA_AEGIS_TLS_DIR:-./secrets/refdata-aegis-tls}:/aegis-tls:ro
     depends_on:

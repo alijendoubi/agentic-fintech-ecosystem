@@ -36,7 +36,21 @@ from refdata_bridge.config import Settings
 
 log = structlog.get_logger(__name__)
 
-DEFAULT_GENERATED_DIR = Path(__file__).resolve().parents[3] / "shared" / "generated"
+
+def default_generated_dir(module_file: str | Path = __file__) -> Path:
+    """Repo-layout default (``agent-core/shared/generated``), used only when no directory is
+    configured. Computed lazily: in the container this module lives at
+    ``/app/refdata_bridge/aegis_client.py``, which has no fourth parent, and evaluating the
+    repo path at import time crashed the service before ``AFE_PROTO_DIR`` was ever read
+    (ALI-167)."""
+    parents = Path(module_file).resolve().parents
+    if len(parents) < 4:
+        raise ImportError(
+            "no generated-proto directory configured and none at the repo layout; set AFE_PROTO_DIR"
+        )
+    return parents[3] / "shared" / "generated"
+
+
 # market_snapshot_pb2 is needed too: aegis.proto imports market_snapshot.proto, and
 # protoc generates RegimeLabelPacket (+ the RegimeLabel enum) in THAT file's module,
 # not in aegis_pb2, even though aegis.proto references it.
@@ -62,7 +76,7 @@ class PushResult:
 
 def load_generated_protos(directory: str | Path | None = None) -> dict[str, ModuleType]:
     """Import the generated stubs (``shared/proto/generate.sh`` output). Raises ImportError."""
-    path = str(Path(directory) if directory is not None else DEFAULT_GENERATED_DIR)
+    path = str(Path(directory) if directory is not None else default_generated_dir())
     if path not in sys.path:
         sys.path.insert(0, path)
     return {name: importlib.import_module(name) for name in PROTO_MODULES}
@@ -155,9 +169,7 @@ class AegisRefdataClient:
     def _parse_response(self, response: Any, batch: PendingBatch) -> PushResult:
         rejected = [Rejection(key=r.key, reason=r.reason) for r in response.rejected]
         rejected_keys = {r.key for r in rejected}
-        applied_symbols = [
-            s.symbol for s in batch.snapshots if s.symbol not in rejected_keys
-        ]
+        applied_symbols = [s.symbol for s in batch.snapshots if s.symbol not in rejected_keys]
         regime_applied = bool(response.regime_applied)
         for r in rejected:
             log.warning("reference_data_rejected", key=r.key, reason=r.reason)
