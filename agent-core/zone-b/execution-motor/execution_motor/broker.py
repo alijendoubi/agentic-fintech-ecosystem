@@ -71,6 +71,12 @@ class Broker(ABC):
         """Safe read. None = broker says the order does not exist."""
 
     @abstractmethod
+    def list_open_orders(self) -> tuple[BrokerOrder, ...]:
+        """Safe read of every order still live at the venue. Must raise rather than
+        silently drop an order it cannot parse: the kill-switch sweep cancels only what
+        this returns."""
+
+    @abstractmethod
     def cancel_order(self, broker_order_id: str) -> None:
         """Cancel one order. Never retried."""
 

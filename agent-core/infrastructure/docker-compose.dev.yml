@@ -92,7 +92,8 @@ services:
 
   # execution-motor (agent-core/zone-b/execution-motor): own mTLS listener (server cert, dev-tls issues
   # CN=execution-motor) plus a client identity to report fills back to Aegis (AEGIS_CLIENT_TLS_*, the
-  # execution-motor client cert generated for that purpose, role execution-reporter).
+  # execution-motor client cert generated for that purpose, roles state-reader + execution-reporter:
+  # the motor subscribes to WatchKillSwitchState to cancel open orders on a LOGIC/HARD trip, ALI-162).
   execution-motor:
     environment:
       MOTOR_ENV: development

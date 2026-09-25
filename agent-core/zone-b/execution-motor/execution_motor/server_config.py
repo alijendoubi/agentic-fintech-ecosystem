@@ -77,6 +77,12 @@ class ServerConfig:
         tls = _parse_tls(env, environment, host, listen_explicit)
         use_mock = _parse_broker(env, environment)
         aegis_target = env.get("AEGIS_TARGET", "").strip() or None
+        if environment == "production" and aegis_target is None:
+            raise ConfigError(
+                "MOTOR_ENV=production requires AEGIS_TARGET: without it the motor cannot "
+                "watch Aegis's kill-switch state and would leave open orders live after a "
+                "LOGIC/HARD trip"
+            )
         aegis_tls = _parse_aegis_tls(env, environment)
         keys_file = _required_path(env, "MOTOR_ATTESTATION_KEYS_FILE")
         return cls(

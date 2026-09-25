@@ -15,7 +15,7 @@ developer's own machine.**
 |----------------------|--------|-------------------------------------------------------|
 | `aegis`               | server | Aegis's own TLS identity. SAN `DNS:aegis` (the in-compose hostname). |
 | `cognitive-core`      | client | Submits signals — role `signal-submitter`.            |
-| `execution-motor`     | client | Reports executions — role `execution-reporter`.       |
+| `execution-motor`     | client | Reports executions and watches kill-switch state — roles `state-reader` + `execution-reporter`. |
 | `refdata-bridge`      | client | Pushes reference data — role `market-data-writer`.    |
 | `aegis-supervisor`    | client | Liveness probe / kill-trigger — roles `state-reader` + `kill-trigger`. |
 

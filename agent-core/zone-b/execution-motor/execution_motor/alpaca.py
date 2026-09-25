@@ -13,7 +13,8 @@ Safety design
   * Credentials come from env only and are never logged or shown in repr.
 
 ASSUMED API shape (Alpaca public docs, unverified here): POST /v2/orders,
-GET /v2/orders:by_client_order_id?client_order_id=, DELETE /v2/orders/{id},
+GET /v2/orders:by_client_order_id?client_order_id=, GET /v2/orders?status=open (JSON array),
+DELETE /v2/orders/{id},
 GET /v2/positions, GET /v2/account; auth headers APCA-API-KEY-ID / APCA-API-SECRET-KEY;
 4xx (other than 408/429) means the request was refused and no order was created; duplicate
 client_order_id yields 422. Response parsing assumptions: see ``alpaca_parse``.
@@ -60,6 +61,7 @@ _BACKOFF_CAP_S: Final = 2.0
 _RETRYABLE_STATUS: Final = frozenset({408, 429})
 _ID_RE: Final = re.compile(r"^[A-Za-z0-9\-]{1,64}$")
 _MAX_MESSAGE_CHARS: Final = 200
+_OPEN_ORDERS_PAGE: Final = 500  # Alpaca's documented maximum for GET /v2/orders (ASSUMED)
 _log = structlog.get_logger("execution_motor.alpaca")
 
 
@@ -199,6 +201,18 @@ class AlpacaBroker(Broker):
         if order.client_order_id != client_order_id:
             raise BrokerReadError("broker returned a different client_order_id")
         return order
+
+    def list_open_orders(self) -> tuple[BrokerOrder, ...]:
+        resp = self._read(
+            "/v2/orders",
+            {"status": "open", "limit": str(_OPEN_ORDERS_PAGE), "direction": "asc"},
+        )
+        orders = self._parsed(resp, parse.parse_orders)
+        if len(orders) >= _OPEN_ORDERS_PAGE:
+            # More may exist beyond this page. The kill-switch sweep re-lists while the
+            # level stays elevated, so the remainder is picked up on the next pass.
+            _log.warning("alpaca_open_orders_page_full", count=len(orders))
+        return orders
 
     def get_positions(self) -> tuple[Position, ...]:
         return self._parsed(self._read("/v2/positions", None), parse.parse_positions)
