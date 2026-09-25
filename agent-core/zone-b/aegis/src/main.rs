@@ -53,12 +53,23 @@ fn supervisor() -> ExitCode {
     }
 }
 
+/// `aegis supervisor-healthcheck`: succeeds iff the Supervisor's heartbeat file
+/// is fresh (ALI-163), so a hung Supervisor turns its container unhealthy.
+fn supervisor_healthcheck() -> ExitCode {
+    ExitCode::from(aegis::supervisor::heartbeat::healthcheck_exit_code(&|k| {
+        std::env::var(k).ok()
+    }))
+}
+
 fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         Some("healthcheck") => return healthcheck(),
         Some("supervisor") => return supervisor(),
+        Some("supervisor-healthcheck") => return supervisor_healthcheck(),
         Some(other) => {
-            eprintln!("unknown command {other:?}; use no argument, `supervisor` or `healthcheck`");
+            eprintln!(
+                "unknown command {other:?}; use no argument, `supervisor`, `healthcheck` or `supervisor-healthcheck`"
+            );
             return ExitCode::from(2);
         }
         None => {}
