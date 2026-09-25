@@ -39,6 +39,19 @@
    Aegis state. `dev-tls/generate-dev-certs.sh` now issues an `operator` identity and
    three dev approver keys.
 
+## Rerun after the fix (same day)
+
+Evidence: `2026-09-25-dev-kill-switch-rerun.json`. execution-motor rebuilt with the unary
+liveness probe (PR #9, 786f3c6).
+
+| Check | Observed |
+|---|---|
+| HARD reset (the supervisor's latch from the first run) | Accepted with **two operators plus compliance**, the authority the spec requires for HARD |
+| Steps 1, 2, 6 | Same results as the first run |
+| Freeze, 30 s | The motor logged the state stream down and **halted after 5.3 s**, then resumed as soon as Aegis answered. The supervisor did not latch HARD, as expected: 30 s is shorter than its 60 s window |
+
+Finding 1 is resolved for the dev stack.
+
 ## Not covered (needs the paper environment or owner input)
 
 - Real open paper orders cancelled at LOGIC (the mock broker has none).
