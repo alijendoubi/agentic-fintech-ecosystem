@@ -1,7 +1,7 @@
 # ADR-004: What the HSM Signs, Given Broker API-Key Authentication
 
 **Date:** 2026-09-19
-**Status:** Accepted 2026-09-29: Option C, gateway as a **separate container**. Not implemented yet.
+**Status:** Accepted 2026-09-29: Option C, with the broker gateway as a SEPARATE container (owner decision; see `docs/adr/DECISIONS-2026-09-29.md`). Production broker: Alpaca, paper for now. Implemented; see "Implementation note". The broker and HSM verification items under "Open items" remain open.
 **Deciders:** Ali Jendoubi (Lead)
 **Tracks:** ALI-44
 **Related:** ADR-001 (Accepted; status note appended), `docs/specs/phase_3_aegis_execution.md` §7
@@ -55,11 +55,10 @@ Consequence: **what the HSM signs is unresolved**, and with it the claim that on
 
 ## Decision (accepted 2026-09-29)
 
-The owner chose **Option C** with the broker gateway in its own container, and **Alpaca** as the production broker (live after paper). Until the gateway exists, execution-motor still holds the Alpaca paper key (Option A behaviour); see `docs/adr/DECISIONS-2026-09-29.md`.
+The owner chose **Option C** with the broker gateway in its own container, and **Alpaca** as the production broker (live after paper); see `docs/adr/DECISIONS-2026-09-29.md`. The gateway is implemented (see "Implementation note"): execution-motor no longer holds the Alpaca key.
 
-## Proposal as drafted
-
-Adopt **Option C**, with:
+Option C details (these sub-points were drafted as PROPOSED and are not individually
+re-confirmed by the implementation):
 1. Attestation signing key in the HSM (SoftHSM2 in dev, production HSM per Phase 5 §6), single-key ECDSA P-256 (mechanism support TODO(owner) verify).
 2. ADR-001's "2-of-3 MPC threshold" and Zone-C shard **suspended until a concrete design is supplied**; the single HSM-held key plus dual-control on key administration stands in. (Owner may instead supply a threshold design; this ADR does not judge it feasible.)
 3. Rotation (`docs/runbooks/key-rotation.md`) splits into two procedures: (a) **attestation key** rotation, fully under our control (new key id, gateway trusts both public keys during overlap); (b) **broker credential** rotation, controlled by the broker (generate new key at the broker, load into the gateway's secret store, verify, revoke the old one). ADR-001's "route 1% of orders to new key" applies to neither as written.
@@ -72,9 +71,39 @@ Adopt **Option C**, with:
 - Documents to update once decided: ADR-001 (supersede relevant sections), DORA doc asset inventory and key-rotation log semantics, README design principles, RTS6 template §3/§5, compose (new service, secret placement, network membership).
 - Requires the owner to decide the broker first (Phase 5 checklist item 2).
 
+## Implementation note (2026-09-29)
+
+- `agent-core/zone-b/broker-gateway/` (Python, own container `broker-gateway`, contract
+  `shared/proto/broker_gateway.proto`) is the only process that receives `ALPACA_API_KEY` /
+  `ALPACA_SECRET_KEY`. A submit is forwarded only when the `afe-attest-v2` text parses strictly
+  and re-serialises byte for byte, its signature verifies with Aegis's public key from the
+  gateway's own registry (dev keys refused in production), it is unexpired, its lifetime is at
+  most 5 s (spec PROPOSED value, configurable), it was decided after the gateway process started,
+  every order field equals the attested value, and its `signal_id` was not forwarded before. The
+  broker body is built from the attested fields. Cancels and the four read-only queries need no
+  attestation and each maps to one fixed Alpaca endpoint; nothing else is exposed.
+- Canonical-text and verifier code is **shared, not copied**: the gateway imports
+  `execution_motor.canonical`/`verifiers`/`keys`/`errors` and its image copies exactly those files
+  (a test enforces the list).
+- Replay store: **in memory**, single replica. A restart is covered by refusing attestations
+  decided before process start + clock-skew allowance (so nothing a previous process might have
+  forwarded is accepted again); residual risk of a large backwards clock step is documented in the
+  gateway README. Not shared across replicas.
+- Transport: gRPC over mTLS only (no plaintext mode); the client certificate CN must be on
+  `GATEWAY_ALLOWED_CLIENT_CNS` (compose: `execution-motor`). Compose: new internal network
+  `zone-b-broker` (execution-motor + broker-gateway only); the gateway alone is on `zone-b-egress`;
+  execution-motor lost its egress network and its `ALPACA_*` variables, and refuses to start if
+  they are set. The gateway runs non-root, `read_only`, `cap_drop: ALL`, `no-new-privileges`.
+- execution-motor keeps its own attestation verification (defence in depth) and its Alpaca
+  request/parse/reconcile logic, now credential-free over a gateway transport.
+- What the HSM protects remains as stated in Option C: the attestation key. The broker secret is
+  protected by ordinary secret management (compose env today); TODO(owner): production secret
+  store for it.
+- Not verified: the real Alpaca API, latency of the extra hop, load behaviour.
+
 ## Open items for the owner
 
-- [x] Choose an option and set Status (Option C, 2026-09-29).
+- [x] Choose an option and set Status (Option C, separate container, 2026-09-29).
 - [ ] TODO(owner): verify with the broker what credential scoping/restriction features exist and whether a per-order client id is supported.
 - [ ] TODO(owner): verify HSM mechanism support and any threshold-signing capability.
 - [x] Gateway placement: separate container (2026-09-29).

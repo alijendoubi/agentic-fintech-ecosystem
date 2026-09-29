@@ -100,7 +100,7 @@ _Last updated 2026-09-25. Updated with every change; the detailed per-package ta
 | **Works** | Every package is implemented and unit-tested. The paper-trade signal path (cognitive-core → Aegis → execution-motor) is wired. The full dev compose stack builds and runs (first started 2026-09-25). |
 | **Verified live (dev stack)** | mTLS and identity roles, Redis → refdata-bridge → Aegis reference data, a real Aegis decision for a real signal, execution-motor refusing unapproved or tampered decisions, and a first kill-switch drill ([record](agent-core/docs/runbooks/drill-records/)). |
 | **In review** | PRs #9–#18: kill-switch order cancellation and frozen-Aegis detection, supervisor healthcheck, per-symbol regime, compose bring-up fixes, live-stack tests, Redis ACLs, CI security scans, the drill tooling, and signed hold approvals. |
-| **Not done** | Never run against a real broker, real LLMs or the real Polygon feed. Risk limits are uncalibrated. Owner decisions (LLM route, HSM vs broker gateway, credentials, legal review) are open. CI has never run on GitHub (billing lock). **Not production ready.** |
+| **Not done** | Never run against a real broker, real LLMs or the real Polygon feed. Risk limits are uncalibrated. Owner decisions (LLM route, HSM mechanism and broker-key restrictions, credentials, legal review) are open; the broker gateway (ADR-004 Option C) is decided and implemented. CI has never run on GitHub (billing lock). **Not production ready.** |
 
 Open work is tracked in the Linear project "Agentic Fintech Ecosystem", milestone "Go-Live Readiness Blockers".
 

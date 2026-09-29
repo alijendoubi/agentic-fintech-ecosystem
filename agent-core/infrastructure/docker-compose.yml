@@ -1,7 +1,7 @@
 # Three-zone trading infrastructure (local / staging shape, NOT a production deployment).
 #
 #   Zone A  thinking   : cognitive-core, regime-detector, vector-db (Chroma). No general internet.
-#   Zone B  execution  : sensory-array, aegis (execution-motor is not runnable yet, see below).
+#   Zone B  execution  : sensory-array, aegis, execution-motor, broker-gateway, refdata-bridge.
 #   Zone C  compliance : postgres-audit (hash-chained audit DB), hitl-interface.
 #
 # Usage (paths are relative to this directory):
@@ -12,8 +12,8 @@
 #
 # Design rules enforced by this file:
 #   * Secrets come only from the environment via ${VAR:?message}; there are no default secrets.
-#   * Zone networks are `internal: true`. Only sensory-array (Polygon) and, when enabled, execution-motor
-#     (broker) get a non-internal egress network; cognitive-core's LLM egress network is PROPOSED in ADR-003.
+#   * Zone networks are `internal: true`. Only sensory-array (Polygon) and broker-gateway (broker, ADR-004)
+#     get a non-internal egress network; cognitive-core's LLM egress network is PROPOSED in ADR-003.
 #   * Host ports: only hitl-interface (bound to 127.0.0.1). Everything else is published by
 #     docker-compose.dev.yml for local development only.
 #   * Images are pinned (no :latest). Health checks that need no curl/wget use bash /dev/tcp because the
@@ -30,7 +30,9 @@ networks:
     internal: true # Zone A <-> B (gRPC to Aegis, Redis pub/sub, QuestDB)
   zone-bc-audit:
     internal: true # Zone B/C audit path and audit database
-  zone-b-egress: {} # Zone B market-data / broker egress (sensory-array). Restrict at the host firewall.
+  zone-b-egress: {} # Zone B market-data / broker egress (sensory-array, broker-gateway). Restrict at the host firewall.
+  zone-b-broker:
+    internal: true # execution-motor <-> broker-gateway only (ADR-004 Option C)
   zone-a-llm-egress: {} # PROPOSED (ADR-003 option 1): Bedrock egress for cognitive-core. Restrict at the host firewall.
   zone-c-external: {} # Zone C: operator access (HITL)
 
@@ -245,7 +247,9 @@ services:
 
   # execution-motor: gRPC service (agent-core/zone-b/execution-motor). Requires MOTOR_TLS_* (mTLS server
   # material) and AEGIS_CLIENT_TLS_* (mTLS to report fills back to Aegis) via mounted secrets; refuses to
-  # start without them in production. MOTOR_ATTESTATION_KEYS_FILE and Alpaca credentials are owner-supplied.
+  # start without them in production. MOTOR_ATTESTATION_KEYS_FILE is owner-supplied. It holds NO broker
+  # credentials (ADR-004): every broker call goes through broker-gateway (BROKER_GATEWAY_*, mTLS client
+  # identity in MOTOR_GATEWAY_TLS_DIR), and it refuses to start if ALPACA_* credentials reach its env.
   execution-motor:
     build:
       context: ..
@@ -264,9 +268,10 @@ services:
       AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
       AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
       MOTOR_ATTESTATION_KEYS_FILE: /cfg/attestation-keys.json
-      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
-      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
-      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      BROKER_GATEWAY_TARGET: broker-gateway:50071
+      BROKER_GATEWAY_TLS_CA: /gateway-tls/ca.pem
+      BROKER_GATEWAY_TLS_CERT: /gateway-tls/client.pem
+      BROKER_GATEWAY_TLS_KEY: /gateway-tls/client.key
       # No defaults for the caps: an empty cap is a startup error in the motor (fail closed). TODO(owner): choose values.
       MOTOR_MAX_ORDER_NOTIONAL_USD: ${MOTOR_MAX_ORDER_NOTIONAL_USD:?set MOTOR_MAX_ORDER_NOTIONAL_USD}
       MOTOR_MAX_SESSION_NOTIONAL_USD: ${MOTOR_MAX_SESSION_NOTIONAL_USD:?set MOTOR_MAX_SESSION_NOTIONAL_USD}
@@ -285,20 +290,60 @@ services:
       - ${MOTOR_TLS_DIR:-./secrets/motor-tls}:/tls:ro
       - ${MOTOR_AEGIS_TLS_DIR:-./secrets/motor-aegis-tls}:/aegis-tls:ro
       - ${MOTOR_CONFIG_DIR:-./secrets/motor-config}:/cfg:ro
+      - ${MOTOR_GATEWAY_TLS_DIR:-./secrets/motor-gateway-tls}:/gateway-tls:ro
     depends_on:
       aegis:
         condition: service_healthy
       postgres-audit:
         condition: service_healthy
+      broker-gateway:
+        condition: service_healthy
     networks:
       - zone-ab-grpc
       - zone-bc-audit
-      - zone-b-egress # broker API
+      - zone-b-broker # broker-gateway only; no egress (ADR-004)
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  # broker-gateway (agent-core/zone-b/broker-gateway, ADR-004 Option C): the ONLY holder of the broker
+  # credentials. Forwards a submit only with a valid, unexpired, unused Aegis attestation (verified with
+  # Aegis's PUBLIC key, own copy in GATEWAY_CONFIG_DIR/attestation-keys.json) whose signed fields equal the
+  # order; otherwise only cancels and read-only queries. Reachable only from execution-motor (zone-b-broker
+  # network + mTLS client CN allow-list); zone-b-egress is its route to the broker. Paper endpoint only:
+  # live needs AFE_ENABLE_LIVE_TRADING/AFE_LIVE_TRADING_CONFIRM, deliberately not passed here.
+  broker-gateway:
+    build:
+      context: ..
+      dockerfile: zone-b/broker-gateway/Dockerfile
+    container_name: afe-broker-gateway
+    environment:
+      GATEWAY_ENV: production
+      GATEWAY_LISTEN_ADDR: 0.0.0.0:50071
+      GATEWAY_TLS_CERT: /tls/server.pem
+      GATEWAY_TLS_KEY: /tls/server.key
+      GATEWAY_TLS_CLIENT_CA: /tls/ca.pem
+      GATEWAY_ALLOWED_CLIENT_CNS: execution-motor
+      GATEWAY_ATTESTATION_KEYS_FILE: /cfg/attestation-keys.json
+      ALPACA_API_KEY: ${ALPACA_API_KEY:?set ALPACA_API_KEY (Alpaca paper key; only broker-gateway receives it)}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:?set ALPACA_SECRET_KEY (only broker-gateway receives it)}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+    volumes:
+      - ${GATEWAY_TLS_DIR:-./secrets/gateway-tls}:/tls:ro
+      - ${GATEWAY_CONFIG_DIR:-./secrets/gateway-config}:/cfg:ro
+    networks:
+      - zone-b-broker
+      - zone-b-egress # broker API (Alpaca)
+    restart: unless-stopped
+    read_only: true
+    user: "10002:10002"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # HEALTHCHECK is defined in the image (TCP connect to the listen port; no mTLS handshake).
 
   # refdata-bridge: pushes sensory-array snapshots + regime-detector labels into Aegis.PushReferenceData
   # (agent-core/zone-b/refdata-bridge). Role market-data-writer in Aegis's identities file.

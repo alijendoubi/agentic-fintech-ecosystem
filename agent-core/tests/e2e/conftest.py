@@ -1,4 +1,5 @@
-"""ALI-48 e2e rig. No network: sockets are blocked, the broker is a mock, Aegis is a fixture.
+"""ALI-48 e2e rig. No network: sockets are blocked, Aegis is a fixture, and the broker is the REAL
+broker gateway (ADR-004) in front of an in-memory fake of the Alpaca paper API.
 
 The attestation fixture is produced by the REAL Aegis crate
 (agent-core/zone-b/execution-motor/tests/fixtures/gen_aegis_fixtures.sh), not hand-built.
@@ -19,11 +20,13 @@ import pytest
 
 AGENT_CORE = Path(__file__).resolve().parents[2]
 MOTOR_DIR = AGENT_CORE / "zone-b" / "execution-motor"
+GATEWAY_DIR = AGENT_CORE / "zone-b" / "broker-gateway"
 PROTO_DIR = AGENT_CORE / "shared" / "proto"
 FIXTURE = MOTOR_DIR / "tests" / "fixtures" / "aegis_attestations.json"
 
 # `execution-motor` has a hyphen: put its directory on sys.path to import `execution_motor`.
 sys.path.insert(0, str(MOTOR_DIR))
+sys.path.insert(0, str(GATEWAY_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
@@ -52,6 +55,7 @@ def pb2(tmp_path_factory: pytest.TempPathFactory) -> dict[str, ModuleType]:
             "order": importlib.import_module("order_request_pb2"),
             "aegis": importlib.import_module("aegis_pb2"),
             "signal": importlib.import_module("trade_signal_pb2"),
+            "gateway": importlib.import_module("broker_gateway_pb2"),
         }
     finally:
         sys.path.remove(str(out))

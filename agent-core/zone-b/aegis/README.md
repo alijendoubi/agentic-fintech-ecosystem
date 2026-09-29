@@ -379,7 +379,7 @@ signal; a hold release re-runs the rate limit control.
 | Every control implemented with unit tests, C-IDs in names | Done: `src/controls/tests.rs` (C01-C19), `src/validate.rs` (C02). |
 | Kill-switch machine, invariants 5.4 tested, persistence verified | Done: `src/killswitch/tests.rs`, `src/engine/tests.rs`, `tests/app_startup.rs`. |
 | Supervisor + liveness watchdog trips HARD in a recorded test | Done for the trip: `aegis supervisor` (see above) latches HARD as `supervisor/liveness` after >60 s of failed probes, tested on a fake clock against a real in-process Aegis. Supervising the Supervisor: heartbeat + `aegis supervisor-healthcheck` (ALI-163); alerting on unhealthy is deployment-side. NOT done: cutting the broker egress, a recorded drill on real infrastructure. |
-| Attestation + broker gateway; unattested/tampered order cannot reach the mock broker | Attestation, verification helper and tamper tests done. The broker gateway is not part of this crate. |
+| Attestation + broker gateway; unattested/tampered order cannot reach the mock broker | Attestation, verification helper and tamper tests done. The broker gateway is a separate container, `zone-b/broker-gateway` (ADR-004), with its own tamper/replay tests and `agent-core/tests/e2e`. |
 | No `f64` for money on the decision path (grep/CI check) | Holds by construction (`Nanos`). Only the legacy-double boundary and reference-data conversion use `f64`. No CI/grep check added (CI is out of scope). |
 | Measured latency evidence for section 8 | Measured, see below. The 50 ms budget is NOT demonstrated for the tail with fsyncs. |
 | Owner confirmed PROPOSED items | Not done (owner action). |
@@ -420,7 +420,7 @@ AEGIS_SOFTHSM_KEY=attest-test AEGIS_SOFTHSM_PIN_FILE=/tmp/pin \
   `double`-based `MarketSnapshot`.
 * Reference data is in memory: a restart clears it, so C08 fails until the next
   push (safe). Pushes are not written to the audit WAL (only `tracing`).
-* No broker egress cut by the Supervisor; no broker gateway; no HITL UI (spec
+* No broker egress cut by the Supervisor (the broker gateway, `zone-b/broker-gateway`, is the only egress to the broker); no HITL UI (spec
   components owned elsewhere). The `audit.wal` tailing `AuditSink` for Zone C is
   not implemented.
 * Second approver on `ResolveHold` is self-asserted in the request (the message

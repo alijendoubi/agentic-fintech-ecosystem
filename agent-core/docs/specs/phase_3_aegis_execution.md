@@ -47,7 +47,7 @@ Principles:
 - **Fail closed everywhere** (§9).
 - **PROPOSED new components** (neither exists today; both are needed for the kill-switch design to be real):
   - *Supervisor*: a minimal process, deployed separately from Aegis, that probes Aegis liveness and can enact the Hard Switch. Language/placement: TODO(owner).
-  - *Broker gateway*: the only holder of broker credentials, see §7 and ADR-004. May be a module inside Aegis or a separate container; decision in ADR-004.
+  - *Broker gateway*: the only holder of broker credentials, see §7 and ADR-004. Decided: a separate container (ADR-004 Option C), implemented as `zone-b/broker-gateway`.
 
 ## 3. Money and numeric handling
 
@@ -215,7 +215,7 @@ Problem (detailed in `docs/adr/ADR-004-hsm-signing-vs-broker-auth.md`): ADR-001 
 Options (full analysis in ADR-004):
 - **A. Attestation only**: the HSM signs an Aegis attestation; execution-motor verifies it and holds broker credentials. A compromised execution-motor can bypass Aegis using the broker credential.
 - **B. Aegis holds broker credentials and places orders itself.** Pulls SOR/algorithm logic into Aegis: bad for Aegis simplicity and latency.
-- **C. Attestation + broker gateway (PROPOSED recommendation).** The HSM signs an attestation over canonical order bytes. A small *broker gateway* is the only component holding broker credentials; it verifies signature, expiry, single-use and exact match to the order, then adds broker auth and forwards. execution-motor holds no broker credentials.
+- **C. Attestation + broker gateway (ACCEPTED by the owner; implemented as `zone-b/broker-gateway`, a separate container).** The HSM signs an attestation over canonical order bytes. A small *broker gateway* is the only component holding broker credentials; it verifies signature, expiry, single-use and exact match to the order, then adds broker auth and forwards. execution-motor holds no broker credentials.
 - **D. A different broker/auth model.** The broker decision is open (TODO(owner): the DORA doc says the production broker is "TBD").
 
 Attestation payload (canonical form v2, implemented in Aegis and execution-motor). Do not sign "protobuf bytes" (serialisation is not canonical across implementations). Sign SHA-256 of this exact UTF-8 text, one `key=value` per line, fixed order, `\n`-terminated, integers in decimal:
@@ -317,7 +317,7 @@ Integration:
 - [ ] Every control in §4.1 implemented with unit tests; C-IDs referenced in test names.
 - [ ] Kill-switch state machine implemented with the invariants in §5.4 tested; persistence verified.
 - [ ] Supervisor + liveness watchdog exist and trip HARD in a recorded test.
-- [ ] Attestation + broker gateway implemented; a test shows an unattested or tampered order cannot reach the (mock) broker.
+- [x] Attestation + broker gateway implemented; a test shows an unattested or tampered order cannot reach the (mock) broker. (`zone-b/broker-gateway/tests`, `agent-core/tests/e2e`; fake broker only.)
 - [ ] Decision path uses no `f64` for money (grep/CI check in place).
 - [ ] Measured latency evidence for §8 recorded in the repo.
 - [ ] Owner has confirmed the PROPOSED items listed in §13.
@@ -329,7 +329,7 @@ Integration:
 1. Fixed-point nanos representation and the migration approach (§3).
 2. Kill-switch model: latches + max level; two distinct heartbeats (§5).
 3. All timing values in §5.2 and §8; regime `C_MIN` and the gate definition (§4.4).
-4. Broker credential architecture: gateway option C (§7 / ADR-004).
+4. Broker credential architecture: gateway option C (§7 / ADR-004). **Decided** (Option C, separate container); broker key restriction features remain TODO(owner) in ADR-004.
 5. Market orders converted to bounded marketable limits (§4.5); shorting disabled (C04).
 6. Replay-state storage location (§4.3).
 7. Whether Dead Man's auto-flattens (§5.2) and what BusKill triggers.

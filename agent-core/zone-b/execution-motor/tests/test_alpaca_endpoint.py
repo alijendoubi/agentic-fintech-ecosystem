@@ -1,9 +1,17 @@
-"""Paper-only enforcement: the structural guarantee that no live order can be sent by accident."""
+"""Paper-only enforcement: the structural guarantee that no live order can be sent by accident.
+
+Since ADR-004 the motor's client holds no credentials and talks only through an injected
+transport (the broker gateway); credential handling and its tests live in broker-gateway.
+"""
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import httpx
 import pytest
 
+import execution_motor.alpaca as alpaca_module
 from execution_motor.alpaca import (
     LIVE_BASE_URL,
     LIVE_CONFIRM_ENV,
@@ -11,14 +19,14 @@ from execution_motor.alpaca import (
     LIVE_OPT_IN_ENV,
     PAPER_BASE_URL,
     AlpacaBroker,
-    AlpacaCredentials,
     AlpacaPaperBroker,
-    alpaca_broker_from_env,
     resolve_base_url,
 )
 from execution_motor.errors import ConfigError, LiveTradingRefused
 
-CREDS = AlpacaCredentials(api_key="PKTESTKEY123", secret_key="SECRETVALUE456")
+from .test_alpaca_http import Script, jresp, make_broker, order_json, request
+
+T = httpx.MockTransport(lambda r: httpx.Response(500))
 BOTH = {LIVE_OPT_IN_ENV: "true", LIVE_CONFIRM_ENV: LIVE_CONFIRM_VALUE}
 
 
@@ -78,74 +86,42 @@ def test_unknown_endpoints_refused_even_with_both_opt_ins(url: str) -> None:
 
 
 def test_paper_broker_is_pinned_and_has_no_url_parameter() -> None:
-    broker = AlpacaPaperBroker(CREDS)
+    broker = AlpacaPaperBroker(transport=T)
     assert broker.base_url == PAPER_BASE_URL
     with pytest.raises(TypeError):
-        AlpacaPaperBroker(CREDS, base_url=LIVE_BASE_URL)  # type: ignore[call-arg]
+        AlpacaPaperBroker(transport=T, base_url=LIVE_BASE_URL)  # type: ignore[call-arg]
 
 
 def test_base_broker_defaults_to_paper_and_refuses_live_without_opt_in() -> None:
-    assert AlpacaBroker(CREDS).base_url == PAPER_BASE_URL
+    assert AlpacaBroker(transport=T).base_url == PAPER_BASE_URL
     with pytest.raises(LiveTradingRefused):
-        AlpacaBroker(CREDS, base_url=LIVE_BASE_URL)
+        AlpacaBroker(transport=T, base_url=LIVE_BASE_URL)
     with pytest.raises(LiveTradingRefused):
-        AlpacaBroker(CREDS, base_url=LIVE_BASE_URL, live_authorisation={LIVE_OPT_IN_ENV: "true"})
+        AlpacaBroker(
+            transport=T, base_url=LIVE_BASE_URL, live_authorisation={LIVE_OPT_IN_ENV: "true"}
+        )
 
 
-def test_from_env_default_path_is_paper() -> None:
-    env = {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s"}
-    broker = alpaca_broker_from_env(env)
-    assert isinstance(broker, AlpacaPaperBroker)
-    assert broker.base_url == PAPER_BASE_URL
+def test_a_transport_is_mandatory() -> None:
+    """Without the gateway transport the client has no way to reach anything."""
+    with pytest.raises(TypeError):
+        AlpacaPaperBroker()  # type: ignore[call-arg]
 
 
-def test_from_env_with_live_url_but_no_opt_in_refuses() -> None:
-    env = {"ALPACA_API_KEY": "k", "ALPACA_SECRET_KEY": "s", "ALPACA_BASE_URL": LIVE_BASE_URL}
-    with pytest.raises(LiveTradingRefused):
-        alpaca_broker_from_env(env)
+def test_motor_client_has_no_credential_code_path() -> None:
+    """ADR-004: credentials, their env loader and the auth headers live in broker-gateway."""
+    assert not hasattr(alpaca_module, "AlpacaCredentials")
+    assert not hasattr(alpaca_module, "alpaca_broker_from_env")
+    source = Path(alpaca_module.__file__).read_text(encoding="utf-8")
+    assert "ALPACA_API_KEY" not in source and "ALPACA_SECRET_KEY" not in source
 
 
-def test_from_env_with_live_url_and_one_flag_refuses() -> None:
-    env = {
-        "ALPACA_API_KEY": "k",
-        "ALPACA_SECRET_KEY": "s",
-        "ALPACA_BASE_URL": LIVE_BASE_URL,
-        LIVE_OPT_IN_ENV: "true",
-    }
-    with pytest.raises(LiveTradingRefused):
-        alpaca_broker_from_env(env)
-
-
-def test_paper_broker_class_never_goes_live_even_when_env_has_both_flags() -> None:
-    broker = AlpacaPaperBroker(CREDS)
-    assert broker.base_url == PAPER_BASE_URL  # flags are not even consulted by this class
-
-
-def test_from_env_requires_credentials() -> None:
-    with pytest.raises(ConfigError):
-        alpaca_broker_from_env({})
-    with pytest.raises(ConfigError):
-        alpaca_broker_from_env({"ALPACA_API_KEY": "k"})
-    with pytest.raises(ConfigError):
-        alpaca_broker_from_env({"ALPACA_API_KEY": " ", "ALPACA_SECRET_KEY": "s"})
-
-
-def test_credentials_never_appear_in_repr_or_str() -> None:
-    for text in (repr(CREDS), str(CREDS), repr(AlpacaPaperBroker(CREDS))):
-        assert "PKTESTKEY123" not in text
-        assert "SECRETVALUE456" not in text
-
-
-@pytest.mark.parametrize(
-    ("key", "secret"),
-    [
-        ("change-me", "SECRETVALUE456"),
-        ("PKTESTKEY123", "your-secret-here"),
-        ("PLACEHOLDER", "PLACEHOLDER"),
-        ("PKTESTKEY123", "replace_me".replace("_", "-")),
-    ],
-)
-def test_placeholder_credentials_are_refused_at_startup(key: str, secret: str) -> None:
-    """ALI-21: a template value must stop the motor before any request carries it."""
-    with pytest.raises(ConfigError, match="placeholder"):
-        alpaca_broker_from_env({"ALPACA_API_KEY": key, "ALPACA_SECRET_KEY": secret})
+def test_no_request_ever_carries_broker_auth_headers() -> None:
+    script = Script(jresp(200, order_json()), jresp(200, []), jresp(200, order_json()))
+    broker = make_broker(script)
+    broker.submit_order(request())
+    broker.get_positions()
+    broker.get_order_by_client_id(order_json()["client_order_id"])
+    for req in script.requests:
+        assert "APCA-API-KEY-ID" not in req.headers
+        assert "APCA-API-SECRET-KEY" not in req.headers
