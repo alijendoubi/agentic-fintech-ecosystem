@@ -19,6 +19,7 @@ from .broker import AccountSnapshot, Broker, BrokerOrder, BrokerOrderRequest, Po
 from .models import ExecutionStatus
 
 _PLACEHOLDER_MARKET_PRICE: Final = Decimal("1")
+_OPEN_STATUSES: Final = frozenset({ExecutionStatus.ACCEPTED, ExecutionStatus.PARTIALLY_FILLED})
 
 
 class MockBroker(Broker):
@@ -57,6 +58,10 @@ class MockBroker(Broker):
     def get_order_by_client_id(self, client_order_id: str) -> BrokerOrder | None:
         with self._lock:
             return self._orders.get(client_order_id)
+
+    def list_open_orders(self) -> tuple[BrokerOrder, ...]:
+        with self._lock:
+            return tuple(o for o in self._orders.values() if o.status in _OPEN_STATUSES)
 
     def cancel_order(self, broker_order_id: str) -> None:
         return None

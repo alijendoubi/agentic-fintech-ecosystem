@@ -1,7 +1,7 @@
 {
   "peers": {
     "cognitive-core": ["signal-submitter"],
-    "execution-motor": ["execution-reporter"],
+    "execution-motor": ["state-reader", "execution-reporter"],
     "refdata-bridge": ["market-data-writer"],
     "aegis-supervisor": ["state-reader", "kill-trigger"]
   },

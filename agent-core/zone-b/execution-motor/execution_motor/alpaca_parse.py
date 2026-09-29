@@ -119,6 +119,14 @@ def parse_order(body: Any) -> BrokerOrder:
     )
 
 
+def parse_orders(body: Any) -> tuple[BrokerOrder, ...]:
+    """Strict: any item that is not a well-formed order fails the whole read. Unlike
+    positions, a skipped open order is one the kill-switch sweep would never cancel."""
+    if not isinstance(body, list):
+        raise MalformedResponse("orders is not a list")
+    return tuple(parse_order(item) for item in body)
+
+
 def parse_positions(body: Any) -> tuple[Position, ...]:
     if not isinstance(body, list):
         raise MalformedResponse("positions is not a list")
