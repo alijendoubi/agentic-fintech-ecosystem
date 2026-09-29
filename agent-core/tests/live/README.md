@@ -25,7 +25,7 @@ The dev override publishes these endpoints on loopback:
 | `AFE_LIVE_AEGIS` | `127.0.0.1:50051` |
 | `AFE_LIVE_MOTOR` | `127.0.0.1:50052` |
 | `AFE_LIVE_REDIS` | `redis://127.0.0.1:6379` |
-| `AFE_LIVE_HITL` | `http://127.0.0.1:3000` |
+| `AFE_LIVE_HITL` | `https://localhost:8443` (hitl-proxy; verified against `dev-tls/out/hitl-proxy/ca.pem`) |
 
 ## What is covered
 
@@ -35,7 +35,7 @@ The dev override publishes these endpoints on loopback:
 - A snapshot published to Redis reaches Aegis through refdata-bridge.
 - A real signal gets a real Aegis decision, and every failed control carries a reason.
 - execution-motor refuses an unapproved or tampered decision over its own mTLS listener.
-- The HITL terminal answers its health endpoint.
+- The HITL terminal answers its health endpoint over HTTPS through hitl-proxy.
 
 ## What is not covered
 

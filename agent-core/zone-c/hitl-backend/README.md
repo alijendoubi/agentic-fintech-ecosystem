@@ -32,9 +32,9 @@ terminal (Next.js, server side) --REST--> hitl-backend --mTLS gRPC--> Aegis  (Li
 * **State is in memory.** This matches Aegis's hold store. After a restart, final holds and
   idempotency keys are forgotten; Aegis has already dropped any resolved hold, so a replayed
   request cannot decide twice.
-* **No TLS server.** The service runs on a private network. The terminal refuses plain http to a
-  non-loopback host in production, so compose keeps this service behind the `hitl-backend`
-  profile. Owner decision 2026-09-29: TLS terminated at a reverse proxy in front of the terminal and this service (not implemented yet).
+* **No TLS server of its own.** The service speaks plain HTTP on the internal `zone-c-hitl` network
+  only; TLS is terminated by `hitl-proxy` (owner decision 2026-09-29, `infrastructure/hitl-proxy/hitl.conf`).
+  The terminal calls `https://hitl-proxy:9443`, which forwards `/v1/*` and `/healthz` here. No host port.
 
 ## Rules enforced (contract section 6)
 

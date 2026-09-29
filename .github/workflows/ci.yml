@@ -431,12 +431,12 @@ jobs:
           if docker compose --env-file .env.example -f docker-compose.yml config > /dev/null 2>&1; then
             echo "::error::compose accepted a blank .env.example; secrets must use \${VAR:?}"; exit 1
           fi
-      - name: Base file publishes no host ports except hitl-interface, and pins every image
+      - name: Base file publishes no host ports except hitl-proxy (HTTPS), and pins every image
         run: |
           set -euo pipefail
           docker compose --env-file "${RUNNER_TEMP}/ci.env" -f docker-compose.yml config --format json > "${RUNNER_TEMP}/base.json"
           published=$(jq -r '.services | to_entries[] | select(.value.ports != null) | .key' "${RUNNER_TEMP}/base.json")
-          test "${published}" = "hitl-interface"
+          test "${published}" = "hitl-proxy"
           if jq -r '.services[] | select(.build == null) | .image // empty' "${RUNNER_TEMP}/base.json" | grep -E ':latest$|^[^:]+$'; then
             echo "::error::unpinned image"; exit 1
           fi

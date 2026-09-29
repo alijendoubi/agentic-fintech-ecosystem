@@ -5,9 +5,9 @@
 #  DEV ONLY. NOT FOR PRODUCTION. DO NOT COPY THIS SCRIPT INTO A PROD RUNBOOK.
 # ============================================================================
 #
-# Generates a throwaway CA plus one server certificate (aegis) and four client
-# certificates (cognitive-core, execution-motor, refdata-bridge,
-# aegis-supervisor) for running the Agentic Fintech Ecosystem dev compose
+# Generates a throwaway CA plus server certificates (aegis, execution-motor,
+# hitl-proxy) and client certificates (cognitive-core, execution-motor,
+# refdata-bridge, aegis-supervisor, hitl-backend, operator) for running the Agentic Fintech Ecosystem dev compose
 # stack (docker-compose.dev.yml) with real mTLS instead of Aegis's plaintext
 # AEGIS_INSECURE_DEV mode.
 #
@@ -51,9 +51,9 @@ usage() {
 generate-dev-certs.sh --yes-i-know-this-is-dev-only [--days N] [--out DIR]
 
 DEV ONLY mTLS certificate bootstrap for the Agentic Fintech Ecosystem local
-dev compose stack. Regenerates a throwaway CA, a server cert for "aegis",
-and client certs for cognitive-core, execution-motor, refdata-bridge and
-aegis-supervisor. Never use this for anything other than a developer's own
+dev compose stack. Regenerates a throwaway CA, server certs for aegis,
+execution-motor and hitl-proxy, and the client certs listed in README.md.
+Never use this for anything other than a developer's own
 machine.
 
   --yes-i-know-this-is-dev-only   required; explicit human acknowledgement
@@ -202,6 +202,17 @@ issue_cert server execution-motor execution-motor "DNS:execution-motor"
 # execution-motor client cert below, reused for this channel).
 issue_cert server broker-gateway broker-gateway "DNS:broker-gateway"
 
+# hitl-proxy (TLS in front of the HITL terminal and hitl-backend, owner decision 2026-09-29):
+# internal.pem for the listener the terminal calls (https://hitl-proxy:9443), then server.pem for the
+# operator listener the browser uses (https://localhost:8443). Layout matches ${HITL_TLS_DIR}.
+issue_cert server hitl-proxy hitl-proxy "DNS:hitl-proxy"
+mv "$OUT_DIR/hitl-proxy/server.pem" "$OUT_DIR/hitl-proxy/internal.pem"
+mv "$OUT_DIR/hitl-proxy/server.key" "$OUT_DIR/hitl-proxy/internal.key"
+issue_cert server hitl-proxy localhost "DNS:localhost,IP:127.0.0.1,IP:::1"
+# The proxy container runs as uid 101 (nginx) and reads its keys through a bind mount; 0600 root-owned
+# (or host-user-owned) keys are unreadable there. DEV ONLY: make them world-readable.
+chmod 644 "$OUT_DIR/hitl-proxy/internal.key" "$OUT_DIR/hitl-proxy/server.key"
+
 # ----------------------------------------------------------------------------
 # 3. Client certs — CN must match the "peers" keys in identities.json
 #    (Aegis maps the verified client certificate CN, else first DNS/URI SAN,
@@ -324,7 +335,7 @@ cat > "$OUT_DIR/identities.json" <<EOF
 EOF
 echo "  dev operator identity + 3 reset approvers: $OUT_DIR/identities.json, seeds in $APPROVER_DIR"
 
-for d in aegis aegis-signer cognitive-core execution-motor broker-gateway refdata-bridge aegis-supervisor hitl-backend operator approvers questdb-ilp; do
+for d in aegis aegis-signer cognitive-core execution-motor broker-gateway refdata-bridge aegis-supervisor hitl-backend hitl-proxy operator approvers questdb-ilp; do
     cat > "$OUT_DIR/$d/README.md" <<EOF
 # DEV ONLY - NOT FOR PRODUCTION
 

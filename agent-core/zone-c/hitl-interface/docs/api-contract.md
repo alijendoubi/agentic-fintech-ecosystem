@@ -1,7 +1,7 @@
 # HITL backend REST contract (ASSUMED, PROPOSED)
 
 Status: **PROPOSED**. Implemented by `zone-c/hitl-backend` (ALI-156) for single-approver holds; see its README for
-what is not implemented yet (second approvals, terminal-to-backend TLS). A distress classifier is out of scope (owner decision 2026-09-29). It is the contract the operator terminal
+what is not implemented yet (second approvals). Terminal-to-backend TLS is terminated by `hitl-proxy` (compose). A distress classifier is out of scope (owner decision 2026-09-29). It is the contract the operator terminal
 (`zone-c/hitl-interface`) was built and tested against (`HttpHitlApiClient`, `MockHitlApiClient`).
 The owner of the HITL backend must confirm or change it (`TODO(owner)`).
 
