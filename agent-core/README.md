@@ -19,7 +19,7 @@ execution-motor service, refdata-bridge) has since merged via PRs #5-#8.
 
 | Area | State | Evidence in tree |
 |---|---|---|
-| `zone-a/cognitive-core` (LangGraph Blue/Red/Judge/Compression/Reflector) | **Implemented, unit tests with mocked LLMs; runner service + Dockerfile in tree** (`service.py`, relays approved decisions to execution-motor). LLM access route unresolved (ADR-003 Proposed; code uses Bedrock/IAM). 2026-09-25: container starts and stays healthy in the full dev stack; never called a real LLM | `graph.py`, `service.py`, `sinks.py`, `Dockerfile`, `tests/` |
+| `zone-a/cognitive-core` (LangGraph Blue/Red/Judge/Compression/Reflector) | **Implemented, unit tests with mocked LLMs; runner service + Dockerfile in tree** (`service.py`, relays approved decisions to execution-motor). LLM access via the internal `llm-gateway` (ADR-003 Option 2, accepted 2026-09-29; the direct Bedrock/IAM route remains as a non-production option). 2026-09-25: container starts and stays healthy in the full dev stack; never called a real LLM | `graph.py`, `service.py`, `sinks.py`, `Dockerfile`, `tests/` |
 | `zone-a/regime-detector` (HMM, 5 states) | **Implemented and tested.** `hmm.py` is a thin entrypoint shim over the `regime_detector/` package. Ran: `python -m pytest` = 134 passed. Models persist as HMAC-verified `.npz` (not pickle) and are only saved/loaded when `MODEL_HMAC_KEY` is set. Dockerfile exists; image build not run by PKG-D2 | `hmm.py`, `regime_detector/`, `tests/`, `Dockerfile` |
 | `zone-a/vector-db` | **Implemented (`afe_vector_memory`)**: Chroma memory layer over `HttpClient`, fail-closed store, in-memory fake, contract tests (incl. a real in-process engine). **No seed scenarios** (ALI-157). Compose runs the pinned `chromadb/chroma:1.5.9` server image (the Rust `chroma` binary) | `afe_vector_memory/`, `tests/` |
 | `zone-b/sensory-array` (Rust ingestor, normalizer, ILP/Redis sinks, health) | **Implemented.** No `protoc` or protobuf codegen needed (self-contained crate). Unit + integration tests exist (`tests/ingestor_reconnect.rs`, `tests/live_sinks.rs`). `cargo fmt --check` ran clean; clippy/test results: see PKG-D2 report (crates.io was unreachable at times). Never run against Polygon | `src/*.rs`, `Cargo.lock`, `Dockerfile` |
@@ -111,8 +111,8 @@ Verified: `docker compose config` (base and dev override), and starting `vector-
 alone (all reached healthy; the audit init script created its roles). **Not verified:** starting the whole stack. Known
 blockers for a working end-to-end stack: Aegis needs owner-supplied `limits.json`/`identities.json`, TLS material and an HSM
 (or the dev signer); cognitive-core only speaks plaintext gRPC, so it can reach Aegis only with the dev override
-(`AEGIS_INSECURE_DEV=1`); nothing pushes reference data to Aegis yet; the HITL backend does not exist; cognitive-core needs
-an LLM route (ADR-003, compose adds a proposed `zone-a-llm-egress` network); `execution-motor` has no entrypoint.
+(`AEGIS_INSECURE_DEV=1`); nothing pushes reference data to Aegis yet; the HITL backend does not exist; cognitive-core reaches
+LLMs only through the `llm-gateway` service (ADR-003 Option 2; never exercised against real Bedrock); `execution-motor` has no entrypoint.
 `.gitattributes` forces LF on `*.sh`/`*.sql`/Dockerfiles: a CRLF checkout breaks the Postgres init script inside the container.
 
 ## Latency Budget (targets; none has been measured or validated)
@@ -130,7 +130,7 @@ The earlier stated end-to-end total of < 2,600 ms is not consistent with the ADR
 
 ## Design principles (intent; not all enforced today)
 
-- **Aegis is the only component that may authorise an order** (target). Zone A must hold no trading/signing/broker credentials. Compose no longer injects LLM provider keys: cognitive-core uses AWS Bedrock with IAM-role auth (ADR-002). The route (VPC endpoint vs gateway vs direct API) is still undecided in `docs/adr/ADR-003-zone-a-llm-access.md` (Proposed), and compose carries a proposed `zone-a-llm-egress` network until it is.
+- **Aegis is the only component that may authorise an order** (target). Zone A must hold no trading/signing/broker credentials. Zone A also holds no LLM-provider credentials (ADR-003 Option 2, implemented in compose): cognitive-core calls the internal `llm-gateway` (LiteLLM proxy, `infrastructure/llm-gateway/config.yaml`) over the internal `zone-a-llm-internal` network with a gateway key; only the gateway holds AWS credentials and has egress (`llm-gateway-egress`) to AWS Bedrock. The gateway key is a Zone A secret (it can spend LLM budget, not place orders).
 - Hot path is MCP-free — direct socket connections only.
 - All orders must pass Aegis PTCs before reaching the broker (target; not implemented).
 - Every trade decision should generate a Compliance Manifest (Zone C, 7-year retention; requirement basis requires qualified legal review) (target; not implemented).
@@ -152,7 +152,7 @@ The earlier stated end-to-end total of < 2,600 ms is not consistent with the ADR
 | Step 0: unified-memory | Done (tooling) | n/a | Claude Code memory plugin; unrelated to trading logic |
 | Phase 0: Foundation scaffold | **Done** (merged): directory scaffold, compose, protos, docs, CI | n/a | Compose/proto/CI gaps remain (see status table) |
 | Phase 1: Sensory Array + Regime Detector | **Code implemented; regime-detector tests pass (134); sensory-array never run against Polygon** | `docs/specs/phase_1_sensory_array.md` | Spec updated to the real module maps |
-| Phase 2: Cognitive Core | **Code implemented; unit tests with mocked LLMs**; not integrated with a live Aegis | `docs/specs/phase_2_cognitive_core.md` | LLM access unresolved (ADR-003) |
+| Phase 2: Cognitive Core | **Code implemented; unit tests with mocked LLMs**; not integrated with a live Aegis | `docs/specs/phase_2_cognitive_core.md` | LLM route via `llm-gateway` (ADR-003 Option 2); never run against real Bedrock |
 | Phase 3: Aegis + Execution | **Aegis on branch `pkg-e/aegis` (not in this tree); execution-motor is a library** | `docs/specs/phase_3_aegis_execution.md` | Reference-data feed and broker gateway not wired |
 | Phase 4: Backtesting + Compliance | **Libraries implemented** (backtesting, audit-logger, compliance-manifest, sharp-gate, HITL terminal); no calibrated result exists | `docs/specs/phase_4_backtesting_compliance.md` | Needs real data before any threshold can be called calibrated |
 | Phase 5: Canary + Production | **Not started.** Spec drafted; go-live is an owner decision | `docs/specs/phase_5_canary_production.md` | |
@@ -160,7 +160,7 @@ The earlier stated end-to-end total of < 2,600 ms is not consistent with the ADR
 ## Documentation index
 
 - Specs: `docs/specs/` (phases 1-5)
-- Decisions: `docs/adr/` (ADR-001, ADR-002 Accepted with status notes on open conflicts; ADR-003 **Proposed**; ADR-004 Accepted as Option C, implemented as `zone-b/broker-gateway`, with open verification items)
+- Decisions: `docs/adr/` (ADR-001, ADR-002 Accepted with status notes on open conflicts; ADR-003 Accepted 2026-09-29 as Option 2, implemented as `llm-gateway`, with open items; ADR-004 Accepted as Option C, implemented as `zone-b/broker-gateway`, with open verification items)
 - Process: `docs/processes/sharp-promotion.md`
 - Regulatory drafts: `docs/regulatory/`
 - Runbooks (DRAFT, untested): `docs/runbooks/`

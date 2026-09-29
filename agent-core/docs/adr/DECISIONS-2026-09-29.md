@@ -6,7 +6,7 @@ Regulatory statements here still **require qualified legal review**.
 
 | # | Topic | Decision | Implemented? |
 |---|---|---|---|
-| 1 | Zone A LLM access (ADR-003) | **Option 2**: a key-holding LLM gateway outside Zone A. Zone A holds no provider keys. | No. cognitive-core still calls Bedrock directly over `zone-a-llm-egress`. |
+| 1 | Zone A LLM access (ADR-003) | **Option 2**: a key-holding LLM gateway outside Zone A. Zone A holds no provider keys. | Yes (PR #35): `llm-gateway` (LiteLLM) is the only holder of AWS credentials and the only service with LLM egress; cognitive-core reaches it on the internal `zone-a-llm-internal` network with a gateway key. Never run against real Bedrock; gateway TLS and the production IAM path are TODO(owner). |
 | 2 | Broker credential custody (ADR-004) | **Option C**: a broker gateway in its **own container** is the only holder of broker keys. It verifies the attestation and exact order fields before forwarding. | Yes (PR #37): `zone-b/broker-gateway` is the only holder of `ALPACA_*`; it re-verifies the `afe-attest-v2` attestation and every order field before forwarding; execution-motor refuses to start with `ALPACA_*` set. Not run against the real Alpaca API. |
 | 3 | Production broker | **Alpaca** (live after the paper stage). | Paper client only. |
 | 4 | HITL second approver | A distinct authenticated **OIDC subject** per approval, recorded in the hash-chained audit log. The backend refuses the same subject twice. | No. Holds that need two approvers are refused (`second_approver_signing_unavailable`). Aegis currently expects a signed `afe-hold-v1` second approval (ALI-164), so the two must be reconciled. |

@@ -89,6 +89,17 @@ check_limits() {
 }
 
 check MODEL_HMAC_KEY 32
+check LLM_GATEWAY_MASTER_KEY 32
+check LLM_GATEWAY_AWS_REGION 1
+for role in BLUE RED JUDGE COMPRESSION REFLECTOR; do
+  for kind in RPM TPM; do
+    name="LLM_GATEWAY_${role}_${kind}"
+    value="${VALUES[$name]-}"
+    if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+      fail "$name must be a positive integer (owner-chosen gateway rate limit)"
+    fi
+  done
+done
 check POLYGON_API_KEY 1
 check HITL_JWT_SECRET 32
 check AUDIT_DB_PASSWORD 16
@@ -109,7 +120,7 @@ check QUESTDB_PG_PASSWORD 16
 check QUESTDB_ILP_AUTH_KEY_ID 1 name
 check QUESTDB_ILP_AUTH_TOKEN 43 b64url
 check CHROMA_AUTH_TOKEN 32 hex
-for service in COGNITIVE_CORE REGIME_DETECTOR VECTOR_DB VECTOR_DB_STORE SENSORY_ARRAY AEGIS \
+for service in COGNITIVE_CORE LLM_GATEWAY REGIME_DETECTOR VECTOR_DB VECTOR_DB_STORE SENSORY_ARRAY AEGIS \
   AEGIS_SUPERVISOR EXECUTION_MOTOR BROKER_GATEWAY REFDATA_BRIDGE QUESTDB REDIS POSTGRES_AUDIT HITL_BACKEND \
   HITL_INTERFACE; do
   check_limits "$service"

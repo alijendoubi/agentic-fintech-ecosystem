@@ -1,7 +1,7 @@
 # ADR-003: How Zone A Reaches LLM Providers (and what "Zone A holds zero API keys" means)
 
 **Date:** 2026-09-19
-**Status:** Accepted 2026-09-29: Option 2 (key-holding LLM gateway outside Zone A). Not implemented yet.
+**Status:** Accepted 2026-09-29: Option 2 (key-holding LLM gateway outside Zone A). Implemented as `llm-gateway` (see "Implementation note"); never run against real Bedrock, and the open items below remain.
 **Deciders:** Ali Jendoubi (Lead)
 **Tracks:** ALI-41
 **Related:** ADR-001, ADR-002 (Accepted; see the status note appended to ADR-002)
@@ -92,7 +92,7 @@ Not viable: the container has keys but no route out, and the documents contradic
 
 ## Decision (accepted 2026-09-29)
 
-The owner chose **Option 2**. The gateway is not built yet: today cognitive-core still calls Bedrock directly through `zone-a-llm-egress` (see `docs/adr/DECISIONS-2026-09-29.md`). Until the gateway exists, Zone A's LLM route is the Bedrock/IAM path, and that must be stated wherever the route is described.
+The owner chose **Option 2** (see `docs/adr/DECISIONS-2026-09-29.md`). It is implemented: cognitive-core reaches LLMs only through the `llm-gateway` service on the internal `zone-a-llm-internal` network and has no LLM egress of its own (see "Implementation note").
 
 ## Recommendation as drafted
 
@@ -113,6 +113,21 @@ Independent of the option chosen:
 ## Open items for the owner
 
 - [x] Choose an option and set Status accordingly (Option 2, 2026-09-29).
-- [ ] Build the gateway service and move cognitive-core's egress to it (no provider keys in Zone A).
+- [x] Build the gateway service and move cognitive-core's egress to it (no provider keys in Zone A); see "Implementation note".
 - [ ] TODO(owner): confirm model availability/ids for the chosen route and region.
 - [ ] TODO(owner): confirm what data the prompts contain (market data licensing terms may restrict sending vendor data to third parties; see register TP-005 "redistribution restrictions").
+
+## Implementation note (2026-09-29, branch `adr-003/llm-gateway`)
+
+The owner chose Option 2 on 2026-09-29 (recorded on branch `docs/owner-decisions-2026-09-29`, PR #26, which also updates the Status line above). What exists now:
+
+- **Gateway:** service `llm-gateway` in `infrastructure/docker-compose.yml`, the LiteLLM proxy image `litellm/litellm-non_root:v1.103.0` pinned by digest, configured by `infrastructure/llm-gateway/config.yaml`. It defines one alias per role (`afe-blue`, `afe-red`, `afe-judge`, `afe-compression`, `afe-reflector`) mapped to the Bedrock ids that were already the defaults in `zone-a/cognitive-core/config.py` (placeholders: TODO(owner) verify). Hardening: non-root (65534), read-only root filesystem with a `/tmp` tmpfs, `cap_drop: ALL`, `no-new-privileges`, no admin UI or API docs pages, prompt/response content kept out of its logs, no gateway-side retries.
+- **Credentials:** only the gateway gets AWS credentials. Base compose passes none (a real deployment uses an IAM role; TODO(owner): how that role reaches the container). `docker-compose.dev.yml` passes `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (`${VAR:?}`) to the gateway only.
+- **Networks:** `cognitive-core` lost its egress network. It shares the new `zone-a-llm-internal` (`internal: true`) only with `llm-gateway`, which is also on `llm-gateway-egress` (non-internal; restrict to the Bedrock endpoint at the host firewall, as before). In the dev override cognitive-core is still also on the non-internal `dev-host` network, so the "no egress" property holds for the base file only.
+- **Auth:** cognitive-core sends `LLM_GATEWAY_MASTER_KEY` (`${VAR:?}`, checked by `check-env.sh`; cognitive-core refuses keys under 32 characters or containing placeholder fragments). Because LiteLLM's virtual keys and per-key budgets need its Postgres database, cognitive-core uses the gateway **master** key. A compromised Zone A could therefore use the gateway's admin API as well as spend LLM budget; it still cannot reach AWS credentials or place orders. TODO(owner): decide whether to add the gateway database and issue a scoped virtual key.
+- **Limits:** per-alias `rpm`/`tpm` limits are required env values with no defaults (`LLM_GATEWAY_<ROLE>_RPM/_TPM`, TODO(owner)). No spend budget is enforced: LiteLLM states at startup that a proxy-wide `max_budget` is not enforced without a database.
+- **cognitive-core:** `COGNITIVE_LLM_ROUTE=gateway` (the default) uses a small httpx client for the gateway's OpenAI-compatible `/v1/chat/completions` (no proxy environment variables, no redirects, no retries, per-node timeout = the node's latency budget). A missing gateway URL or key stops startup. `COGNITIVE_LLM_ROUTE=bedrock` keeps the previous direct `ChatBedrockConverse` path for backward compatibility; `ENVIRONMENT=production` refuses it and also refuses a non-https gateway URL. The gateway has no TLS listener configured yet, so a production start is refused until one is set up (TODO(owner)).
+
+Verified on 2026-09-29 (no real provider call succeeded): unit tests; `docker compose config` for the base and dev files; the gateway started from compose, became healthy under the hardening above, answered 401 without a key and refused a wrong key (400 `no_db_connection`, the request is not forwarded); a container on `zone-a-llm-internal` had no DNS or TCP route to the internet; cognitive-core's gateway client, run against a LiteLLM instance whose only deployment was a `mock_response` one, got the mocked reply, and over-limit calls were refused with HTTP 429. One attempt to use a per-request `mock_response` against the real config was not honoured: the gateway tried to reach Bedrock with dummy credentials and failed at TLS (sandbox proxy), so no request reached AWS. The first request after gateway start exceeded the 0.5 s Judge budget in that test; the added hop's latency is unmeasured against the latency budgets (TODO(owner)).
+
+Not done: nothing has run against real Bedrock; the model ids, rate-limit values, the gateway's TLS and the production IAM path are open; ADR-002's status note and the RTS 6 template §5 still describe the earlier route.

@@ -107,10 +107,11 @@ hardcodes the `dev-tls/out/...` paths as bind-mount sources, same idea as the
   and `QUESTDB_ILP_AUTH_TOKEN=<content of ilp-token>` there (and again after every
   re-run of the script, which rotates the key).
 
-You still need to fill in the other `${VAR:?}` secrets in `.env` (Bedrock
-region, `MODEL_HMAC_KEY`, `POLYGON_API_KEY`, audit DB passwords, HITL secret,
-QuestDB HTTP/PG credentials, `CHROMA_AUTH_TOKEN`, etc. — see `.env.example`);
-TLS and the QuestDB ILP key are the only pieces this directory solves.
+You still need to fill in the other `${VAR:?}` secrets in `.env` (LLM gateway
+key, region, rate limits and dev AWS credentials, `MODEL_HMAC_KEY`, `POLYGON_API_KEY`,
+audit DB passwords, HITL secret, QuestDB HTTP/PG credentials, `CHROMA_AUTH_TOKEN`,
+etc. — see `.env.example`); TLS and the QuestDB ILP key are the only pieces this
+directory solves.
 
 ## Do not
 

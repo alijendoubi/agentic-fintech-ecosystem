@@ -29,6 +29,24 @@ Full detail (parsing, defaults, validation) lives in the module docstrings of `c
 invalid value raises `ConfigError` at startup: nothing here runs with a silently-guessed
 default for a safety-relevant setting.
 
+### LLM route (ADR-003 Option 2)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `COGNITIVE_LLM_ROUTE` | `gateway` | `gateway` or `bedrock`. `ENVIRONMENT=production` refuses `bedrock` |
+| `COGNITIVE_LLM_GATEWAY_URL` | unset | Base URL of the LLM gateway, e.g. `http://llm-gateway:4000` (no path; the client appends `/v1/chat/completions`). `ENVIRONMENT=production` requires `https://` |
+| `COGNITIVE_LLM_GATEWAY_KEY` | unset | Gateway bearer key (compose passes `LLM_GATEWAY_MASTER_KEY`). >= 32 chars, placeholder fragments refused; never logged |
+| `COGNITIVE_BEDROCK_REGION` / `_ENDPOINT_URL`, `COGNITIVE_*_MODEL` | see `config.py` | Used by the `bedrock` route only. On the `gateway` route the request names a role alias (`afe-blue`, `afe-red`, `afe-judge`, `afe-compression`, `afe-reflector`) and `infrastructure/llm-gateway/config.yaml` maps it to a Bedrock id |
+
+On the `gateway` route the container holds no provider credentials and, in the base compose file,
+has no egress: it shares the internal `zone-a-llm-internal` network only with `llm-gateway`
+(LiteLLM proxy), which alone holds AWS credentials. A missing gateway URL or key stops startup
+(`EXIT_CONFIG`). The client (`llm_clients.GatewayChatClient`, httpx) ignores proxy environment
+variables, follows no redirects and does not retry; its timeout is the node's latency budget.
+A gateway error (401/429/5xx) degrades that node to abstain like any other node failure. Only the
+error's short `type` field is kept in the exception, never the body. Tested against fakes and, once,
+against a LiteLLM instance with a mock deployment; never against real Bedrock.
+
 ### Aegis sink (existing)
 
 | Variable | Default | Notes |
@@ -103,5 +121,5 @@ it is a strategy/risk decision, not something an LLM debate should decide unilat
 - Nothing in this package talks to a real Aegis or execution-motor process; both legs are
   exercised only against fakes/mocks in the test suite (`tests/test_sinks.py`,
   `tests/test_aegis_tls.py`, `tests/test_health_main.py`).
-- Bedrock model IDs in `config.py` are placeholders (see its module docstring); verify against
-  the Bedrock console before any live use.
+- Bedrock model IDs in `config.py` and `infrastructure/llm-gateway/config.yaml` are placeholders
+  (a unit test keeps the two in sync); verify against the Bedrock console before any live use.
