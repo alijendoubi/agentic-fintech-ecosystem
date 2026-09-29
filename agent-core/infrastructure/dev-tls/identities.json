@@ -3,7 +3,8 @@
     "cognitive-core": ["signal-submitter"],
     "execution-motor": ["state-reader", "execution-reporter"],
     "refdata-bridge": ["market-data-writer"],
-    "aegis-supervisor": ["state-reader", "kill-trigger"]
+    "aegis-supervisor": ["state-reader", "kill-trigger"],
+    "hitl-backend": ["hold-resolver"]
   },
   "approvers": {}
 }

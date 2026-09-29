@@ -208,6 +208,7 @@ issue_cert client cognitive-core     cognitive-core     ""
 issue_cert client execution-motor    execution-motor    ""
 issue_cert client refdata-bridge     refdata-bridge     ""
 issue_cert client aegis-supervisor   aegis-supervisor   ""
+issue_cert client hitl-backend       hitl-backend       ""
 
 # ----------------------------------------------------------------------------
 # 3b. DEV ONLY attestation signing key (ALI-167)
@@ -277,6 +278,7 @@ cat > "$OUT_DIR/identities.json" <<EOF
     "execution-motor": ["state-reader", "execution-reporter"],
     "refdata-bridge": ["market-data-writer"],
     "aegis-supervisor": ["state-reader", "kill-trigger"],
+    "hitl-backend": ["hold-resolver"],
     "operator": ["state-reader", "kill-trigger", "kill-reset"]
   },
   "approvers": {$approver_json}
@@ -284,7 +286,7 @@ cat > "$OUT_DIR/identities.json" <<EOF
 EOF
 echo "  dev operator identity + 3 reset approvers: $OUT_DIR/identities.json, seeds in $APPROVER_DIR"
 
-for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor operator approvers; do
+for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor hitl-backend operator approvers; do
     cat > "$OUT_DIR/$d/README.md" <<EOF
 # DEV ONLY - NOT FOR PRODUCTION
 

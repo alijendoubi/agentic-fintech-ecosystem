@@ -462,6 +462,56 @@ services:
       timeout: 5s
       retries: 5
 
+  # hitl-backend (agent-core/zone-c/hitl-backend, ALI-156): REST contract behind the operator terminal;
+  # fronts Aegis holds (ListHolds/GetHold/ResolveHold as CN hitl-backend, role hold-resolver), relays
+  # released decisions to execution-motor, audits every attempt as afe_audit_app. Behind a profile:
+  # TODO(owner): TLS between the terminal and this service (the terminal refuses plain http to a
+  # non-loopback host in production), and a distress classifier before approvals work in production.
+  hitl-backend:
+    profiles: ["hitl-backend"]
+    build:
+      context: ..
+      dockerfile: zone-c/hitl-backend/Dockerfile
+    container_name: afe-hitl-backend
+    environment:
+      HITL_ENV: production
+      HITL_BACKEND_LISTEN: 0.0.0.0:8090
+      HITL_JWT_SECRET: ${HITL_JWT_SECRET:?set HITL_JWT_SECRET (>= 32 chars, same as the terminal)}
+      HITL_JWT_ISSUER: ${HITL_JWT_ISSUER:?set HITL_JWT_ISSUER}
+      HITL_JWT_AUDIENCE: ${HITL_JWT_AUDIENCE:?set HITL_JWT_AUDIENCE}
+      HITL_API_TOKEN: ${HITL_API_TOKEN:-}
+      AEGIS_TARGET: aegis:50051
+      HITL_AEGIS_IDENTITY: hitl-backend
+      HITL_AEGIS_TLS_CA: /aegis-tls/ca.pem
+      HITL_AEGIS_TLS_CERT: /aegis-tls/client.pem
+      HITL_AEGIS_TLS_KEY: /aegis-tls/client.key
+      MOTOR_TARGET: execution-motor:50052
+      HITL_MOTOR_TLS_CA: /aegis-tls/ca.pem
+      HITL_MOTOR_TLS_CERT: /aegis-tls/client.pem
+      HITL_MOTOR_TLS_KEY: /aegis-tls/client.key
+      HITL_FOUR_EYES_QUANTITY_THRESHOLD: ${HITL_FOUR_EYES_QUANTITY_THRESHOLD:?set HITL_FOUR_EYES_QUANTITY_THRESHOLD (shares)}
+      POSTGRES_HOST: postgres-audit
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${AUDIT_DB_NAME:-trading_audit}
+      POSTGRES_USER: afe_audit_app
+      POSTGRES_PASSWORD: ${AFE_AUDIT_APP_PASSWORD:?set AFE_AUDIT_APP_PASSWORD}
+    volumes:
+      - ${HITL_BACKEND_TLS_DIR:-./secrets/hitl-backend-tls}:/aegis-tls:ro
+    depends_on:
+      aegis:
+        condition: service_healthy
+      postgres-audit:
+        condition: service_healthy
+    networks:
+      - zone-ab-grpc
+      - zone-bc-audit
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   hitl-interface:
     build:
       context: ../zone-c/hitl-interface

@@ -583,6 +583,41 @@ fn cold_start_holds_and_a_human_release_approves_with_an_attestation() {
 }
 
 #[test]
+fn list_and_get_holds_show_the_held_decision_until_it_is_resolved_or_expires() {
+    let rig = Rig::build(RigOptions {
+        cold_start: true,
+        ..RigOptions::default()
+    });
+    assert!(rig.engine.list_holds().unwrap().is_empty());
+    let h = held(&rig, 1);
+    let holds = rig.engine.list_holds().unwrap();
+    assert_eq!(holds.len(), 1);
+    let view = rig.engine.get_hold(&h.hold_id).unwrap();
+    assert_eq!(holds[0], view);
+    // exactly what the submitter received, with every control result
+    assert_eq!(view.decision.as_ref(), Some(&h));
+    assert!(!h.results.is_empty());
+    assert_eq!(view.signal.unwrap(), rig.signal(1, 10));
+    assert!(matches!(
+        rig.engine.get_hold("nope"),
+        Err(super::HoldError::NotFound)
+    ));
+    resolve(&rig, &h.hold_id, false).unwrap();
+    assert!(rig.engine.list_holds().unwrap().is_empty());
+
+    // an expired hold disappears from the list (and is recorded as a reject)
+    rig.clock.advance_ms(1_000);
+    rig.refresh_market();
+    let h2 = held(&rig, 2);
+    rig.clock.advance_ms(61_000);
+    assert!(rig.engine.list_holds().unwrap().is_empty());
+    assert!(matches!(
+        rig.engine.get_hold(&h2.hold_id),
+        Err(super::HoldError::NotFound)
+    ));
+}
+
+#[test]
 fn operator_rejection_expiry_and_unknown_holds() {
     let rig = Rig::build(RigOptions {
         cold_start: true,

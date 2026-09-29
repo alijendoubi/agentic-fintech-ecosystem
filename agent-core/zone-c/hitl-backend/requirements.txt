@@ -1,0 +1,8 @@
+# HITL backend (ALI-156). Ranges match the other Zone B/C Python services.
+grpcio>=1.67,<2
+protobuf>=5.28
+structlog>=24.4,<27
+PyJWT>=2.9,<3
+# afe_audit (copied into the image) needs these
+psycopg2-binary>=2.9.9
+numpy>=2.0.0

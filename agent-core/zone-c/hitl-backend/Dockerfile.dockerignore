@@ -1,0 +1,10 @@
+# Build context is agent-core/; allow-list only what the image needs.
+*
+!shared/proto/*.proto
+!shared/proto/generate.sh
+!zone-c/hitl-backend/requirements.txt
+!zone-c/hitl-backend/hitl_backend
+!zone-c/hitl-backend/hitl_backend/**
+!zone-c/audit-logger/afe_audit
+!zone-c/audit-logger/afe_audit/**
+**/__pycache__

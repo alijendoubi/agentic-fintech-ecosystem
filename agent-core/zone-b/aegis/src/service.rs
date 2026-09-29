@@ -295,6 +295,38 @@ impl pb::Aegis for AegisService {
         }
     }
 
+    async fn list_holds(
+        &self,
+        request: Request<pb::Empty>,
+    ) -> Result<Response<pb::ListHoldsResponse>, Status> {
+        self.authorize(&request, PeerRole::HoldResolver)?;
+        let engine = self.engine.clone();
+        match self
+            .run(self.opts.rpc_timeout, move || engine.list_holds())
+            .await?
+        {
+            Ok(holds) => Ok(Response::new(pb::ListHoldsResponse { holds })),
+            Err(_) => Err(Status::internal("internal error")),
+        }
+    }
+
+    async fn get_hold(
+        &self,
+        request: Request<pb::GetHoldRequest>,
+    ) -> Result<Response<pb::HeldSignal>, Status> {
+        self.authorize(&request, PeerRole::HoldResolver)?;
+        let hold_id = request.into_inner().hold_id;
+        let engine = self.engine.clone();
+        match self
+            .run(self.opts.rpc_timeout, move || engine.get_hold(&hold_id))
+            .await?
+        {
+            Ok(h) => Ok(Response::new(h)),
+            Err(HoldError::NotFound) => Err(Status::not_found("unknown or expired hold_id")),
+            Err(_) => Err(Status::internal("internal error")),
+        }
+    }
+
     async fn trigger_kill_switch(
         &self,
         request: Request<pb::TriggerKillSwitchRequest>,
