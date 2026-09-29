@@ -74,11 +74,12 @@ bash agent-core/shared/proto/generate.sh
 ## Compliance gates (ALI-161, `compliance.py`)
 
 Order of checks for `ExecuteWithContext`: decision checks -> the context must name the signed
-order (`signal_id` and `symbol` equal to the attested order, non-empty `strategy_id`, else
-`context_mismatch`) -> **SHARP gate** -> the normal pipeline, whose last step before the broker
+order (`signal_id` and `symbol` equal to the attested order, `strategy_id` equal to the signed
+`Attestation.strategy_id`, else `context_mismatch`) -> **SHARP gate** -> the normal pipeline, whose last step before the broker
 is the **Compliance Manifest**.
 
-* **SHARP gate.** `TradeSignal.strategy_id` must map (owner-supplied
+* **SHARP gate.** The strategy Aegis signed (`Attestation.strategy_id`, part of `afe-attest-v2`;
+  the context's `TradeSignal.strategy_id` must equal it, else `context_mismatch`) must map (owner-supplied
   `MOTOR_SHARP_STRATEGY_MAP`, JSON `{"<strategy_id>": "<proposal_id>"}`) to a SHARP proposal whose
   state, re-verified against the audit log (`afe_sharp` `fold`), is `PROMOTED` (`CANARY` too with
   `MOTOR_SHARP_ALLOW_CANARY=true`). Anything else — unmapped, unknown, unverifiable, not promoted —
@@ -90,10 +91,10 @@ is the **Compliance Manifest**.
   audit) refuses the order with `manifest_failed`; the claim stays consumed (no silent retry).
   A soft-block approval without an approved `hitl_override` in the context is refused by the
   builder: that path needs the HITL backend (ALI-156) to relay the operator's record.
-* **Trust.** The context is not signed. It is bound to the attestation only by `signal_id`/`symbol`;
-  `strategy_id` and the texts are trusted because the caller authenticated over mTLS.
-  TODO(owner): sign `strategy_id` into `afe-attest-v1` if a compromised Zone A must not relabel a
-  strategy. Manifests of held or rejected decisions are not written here (they never reach the motor).
+* **Trust.** The context is not signed. It is bound to the attestation by `signal_id`, `symbol` and
+  `strategy_id`, which Aegis signs into `afe-attest-v2` (owner decision; `afe-attest-v1` is refused),
+  so a compromised Zone A cannot relabel the strategy. The texts, model versions and snapshot are
+  trusted because the caller authenticated over mTLS. Manifests of held or rejected decisions are not written here (they never reach the motor).
 * **What a manifest proves.** It records the decision to release, written before the final halt check
   and the broker call: a kill-switch trip in between, or a broker rejection, leaves a manifest for an
   order that never filled. Fills are in the execution report sent to Aegis, not in the manifest.

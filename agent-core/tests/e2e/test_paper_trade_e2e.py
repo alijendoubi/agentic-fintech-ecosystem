@@ -116,6 +116,7 @@ class Rig:
             expires_at_ns=a["expires_at_ns"],
             aegis_state_seq=a["aegis_state_seq"],
             limits_config_sha256=a["limits_config_sha256"],
+            strategy_id=a["strategy_id"],
         )
         return self.pb2["aegis"].AegisDecision(
             signal_id=o["signal_id"], decision=1, attestation=att, order=order
@@ -214,6 +215,10 @@ def _tamper_limits_sha(d: Any) -> None:
     d.attestation.limits_config_sha256 = "cd" * 32
 
 
+def _tamper_strategy_id(d: Any) -> None:
+    d.attestation.strategy_id = "AFE-STRATEGY-RELABELLED"  # signed since afe-attest-v2
+
+
 def _tamper_signal_id(d: Any) -> None:
     d.order.signal_id = d.order.order_id = "11111111-1111-4111-8111-111111111111"
 
@@ -233,6 +238,7 @@ def _tamper_signature(d: Any) -> None:
         _tamper_stop,
         _tamper_state_seq,
         _tamper_limits_sha,
+        _tamper_strategy_id,
         _tamper_signal_id,
         _tamper_signature,
     ],
@@ -256,6 +262,7 @@ def test_attacker_who_recomputes_the_digest_still_fails_the_signature(rig: Rig) 
     o.quantity_nanos *= 100
     forged_text = build_canonical_text(
         signal_id=o.signal_id,
+        strategy_id=a.strategy_id,
         symbol=o.symbol,
         side="BUY",
         order_type="LIMIT",
@@ -279,6 +286,7 @@ def test_attestation_signed_by_an_attacker_key_under_the_real_key_id_is_denied(r
     o.quantity_nanos *= 100
     text = build_canonical_text(
         signal_id=o.signal_id,
+        strategy_id=a.strategy_id,
         symbol=o.symbol,
         side="BUY",
         order_type="LIMIT",

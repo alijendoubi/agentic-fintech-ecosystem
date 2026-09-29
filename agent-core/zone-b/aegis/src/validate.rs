@@ -89,8 +89,15 @@ fn validate_scalars(s: &TradeSignal, problems: &mut Vec<String>) {
     if !is_unit_interval(s.regime_confidence) {
         problems.push("regime_confidence must be finite and in [0, 1]".into());
     }
-    if s.strategy_id.len() > MAX_STRATEGY_ID_LEN {
+    // `strategy_id` is signed into `afe-attest-v2`: it must pass the canonical
+    // text guard (non-empty, no control character, no `=`), or the signal is
+    // refused here instead of failing later at signing time.
+    if s.strategy_id.trim().is_empty() {
+        problems.push("strategy_id is required".into());
+    } else if s.strategy_id.len() > MAX_STRATEGY_ID_LEN {
         problems.push("strategy_id too long".into());
+    } else if s.strategy_id.chars().any(|c| c.is_control() || c == '=') {
+        problems.push("strategy_id has forbidden characters".into());
     }
 }
 
@@ -198,6 +205,11 @@ mod tests {
             |s| s.symbol = "TOOLONGSYMBOL1".into(),
             |s| s.created_at_ns = 0,
             |s| s.created_at_ns = -5,
+            |s| s.strategy_id = String::new(),
+            |s| s.strategy_id = "   ".into(),
+            |s| s.strategy_id = "A=B".into(),
+            |s| s.strategy_id = "A\nsymbol=MSFT".into(),
+            |s| s.strategy_id = "S".repeat(129),
         ] {
             let mut s = sample_signal();
             f(&mut s);

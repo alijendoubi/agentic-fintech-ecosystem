@@ -312,6 +312,7 @@ fn signal(n: u64, now: i64) -> pb::TradeSignal {
         valid_until_ns: now + 4_000_000_000,
         quantity_nanos: SHARE,
         price_limit_nanos: 150 * SHARE,
+        strategy_id: "AFE-STRATEGY-001".into(),
         ..pb::TradeSignal::default()
     }
 }

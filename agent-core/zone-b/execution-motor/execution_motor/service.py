@@ -132,7 +132,8 @@ def handle_request(
 ) -> ExecutionReport:
     """Execute an ``ExecuteRequest`` (decision + context), ALI-161.
 
-    Order: decision checks -> context bound to the signed order -> SHARP gate (before any
+    Order: decision checks -> context bound to the signed order (signal_id, symbol and the
+    attested strategy_id) -> SHARP gate on the attested strategy_id (before any
     idempotency claim) -> motor pipeline, whose last step before the broker stores the
     Compliance Manifest. A refusal before the motor is never reported to Aegis.
     """
@@ -148,7 +149,7 @@ def handle_request(
     refusal = bind_context(decision, context)
     if refusal is not None:
         return _invalid_report(decision, refusal.detail, now_ns, refusal.reason)
-    blocked = compliance.check_strategy(context)
+    blocked = compliance.check_strategy(attested.attestation.strategy_id)
     if blocked is not None:
         return _invalid_report(decision, blocked, now_ns, RejectReason.STRATEGY_NOT_PROMOTED)
     check = compliance.release_check(decision, context)

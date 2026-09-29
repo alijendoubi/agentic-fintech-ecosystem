@@ -49,17 +49,19 @@ def to_messages(pb2: dict[str, ModuleType], case: dict[str, Any]) -> tuple[Any, 
         expires_at_ns=a["expires_at_ns"],
         aegis_state_seq=a["aegis_state_seq"],
         limits_config_sha256=a["limits_config_sha256"],
+        strategy_id=a["strategy_id"],
     )
     return order, att
 
 
-def test_fixture_declares_the_v1_text_without_order_id() -> None:
+def test_fixture_declares_the_v2_text_without_order_id() -> None:
     for case in load_fixture()["cases"].values():
         lines = case["text"].split("\n")
         assert lines[0] == CANONICAL_VERSION
         assert not any(line.startswith("order_id=") for line in lines)
         assert [line.split("=")[0] for line in lines[1:-1]] == [
             "signal_id",
+            "strategy_id",
             "symbol",
             "side",
             "order_type",
@@ -73,6 +75,7 @@ def test_fixture_declares_the_v1_text_without_order_id() -> None:
             "key_id",
         ]
         assert lines[-1] == ""  # every line, including the last, is newline-terminated
+        assert lines[2] == f"strategy_id={case['attestation']['strategy_id']}"
 
 
 @pytest.mark.parametrize(
@@ -92,6 +95,7 @@ def test_builder_matches_the_aegis_golden_vector() -> None:
     """Same inputs as aegis/src/signing/canonical.rs::golden_vector_text_and_digest."""
     text = build_canonical_text(
         signal_id="0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11",
+        strategy_id="AFE-STRATEGY-001",
         symbol="AAPL",
         side="BUY",
         order_type="LIMIT",
@@ -105,7 +109,8 @@ def test_builder_matches_the_aegis_golden_vector() -> None:
         key_id="dev-ed25519-1234abcd",
     )
     assert text.decode() == (
-        "afe-attest-v1\nsignal_id=0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11\nsymbol=AAPL\nside=BUY\n"
+        "afe-attest-v2\nsignal_id=0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11\n"
+        "strategy_id=AFE-STRATEGY-001\nsymbol=AAPL\nside=BUY\n"
         "order_type=LIMIT\nqty_nanos=10000000000\nlimit_price_nanos=150000000000\n"
         "stop_price_nanos=0\ndecided_at_ns=1790000000000000000\n"
         "expires_at_ns=1790000005000000000\naegis_state_seq=7\n"
@@ -113,12 +118,15 @@ def test_builder_matches_the_aegis_golden_vector() -> None:
     )
 
 
+@pytest.mark.parametrize("field", ["symbol", "strategy_id"])
 @pytest.mark.parametrize("bad", ["A\nqty_nanos=1", "A=B", "", "A\r", "A\x85"])
-def test_builder_refuses_injection_like_aegis(bad: str) -> None:
+def test_builder_refuses_injection_like_aegis(bad: str, field: str) -> None:
+    fields = {"symbol": "AAPL", "strategy_id": "S"}
+    fields[field] = bad
     with pytest.raises(OrderValidationError):
         build_canonical_text(
             signal_id="s",
-            symbol=bad,
+            **fields,
             side="BUY",
             order_type="LIMIT",
             qty_nanos=1,
