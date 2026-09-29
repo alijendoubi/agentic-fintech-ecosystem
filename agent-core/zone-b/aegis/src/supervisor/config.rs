@@ -13,6 +13,7 @@
 //! | `AEGIS_SUPERVISOR_TRIP_AFTER_MS` | no | default 60000; must be within [10000, 60000] |
 //! | `AEGIS_SUPERVISOR_PROBE_INTERVAL_MS` | no | default 1000; within [100, trip/4] |
 //! | `AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS` | no | default 2000; within [100, trip/4] |
+//! | `AEGIS_SUPERVISOR_HEARTBEAT_FILE` | no (recommended) | written after every step; checked by `aegis supervisor-healthcheck` (ALI-163) |
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -55,6 +56,8 @@ pub struct SupervisorConfig {
     pub trip_after_ms: u64,
     pub probe_interval: Duration,
     pub probe_timeout: Duration,
+    /// Liveness heartbeat for `aegis supervisor-healthcheck`; `None` = disabled.
+    pub heartbeat_file: Option<PathBuf>,
 }
 
 fn millis_in(
@@ -145,6 +148,10 @@ impl SupervisorConfig {
             trip_after_ms,
             probe_interval: Duration::from_millis(interval),
             probe_timeout: Duration::from_millis(timeout),
+            heartbeat_file: get(super::heartbeat::FILE_ENV)
+                .map(|p| p.trim().to_owned())
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from),
         })
     }
 

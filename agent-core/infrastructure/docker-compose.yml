@@ -213,12 +213,23 @@ services:
       AEGIS_SUPERVISOR_TRIP_AFTER_MS: ${AEGIS_SUPERVISOR_TRIP_AFTER_MS:-60000} # allowed 10000-60000
       AEGIS_SUPERVISOR_PROBE_INTERVAL_MS: ${AEGIS_SUPERVISOR_PROBE_INTERVAL_MS:-1000}
       AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS: ${AEGIS_SUPERVISOR_PROBE_TIMEOUT_MS:-2000}
+      # ALI-163: written after every probe step; the healthcheck below fails when it goes stale, so a hung
+      # Supervisor turns unhealthy instead of silently disabling the liveness backstop. Alert on unhealthy.
+      AEGIS_SUPERVISOR_HEARTBEAT_FILE: /run/aegis-supervisor/heartbeat
+      AEGIS_SUPERVISOR_HEARTBEAT_MAX_AGE_MS: ${AEGIS_SUPERVISOR_HEARTBEAT_MAX_AGE_MS:-10000}
     volumes:
       - ${AEGIS_SUPERVISOR_TLS_DIR:-./secrets/supervisor-tls}:/tls:ro
+    tmpfs:
+      - /run/aegis-supervisor:uid=65532,gid=65532,mode=0700
     depends_on:
       - aegis # started, not healthy: the Supervisor must keep running (and trip) while Aegis is down
     healthcheck:
-      disable: true # the image's TCP check targets the Aegis listen port, which does not apply here
+      # Replaces the image's TCP check (which targets the Aegis listen port and does not apply here).
+      test: ["CMD", "/usr/local/bin/aegis", "supervisor-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
     networks:
       - zone-ab-grpc
     security_opt:
