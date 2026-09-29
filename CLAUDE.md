@@ -66,7 +66,7 @@ Implemented (see the README status table for what was and was not re-run):
 All specs are in `agent-core/docs/specs/`; open decisions are in `agent-core/docs/adr/` (ADR-003, ADR-004 are Proposed).
 
 ## Conventions
-- Intended: Zone A holds no trading/signing/broker credentials — only Aegis authorises orders. Compose no longer injects LLM provider keys (cognitive-core uses Bedrock/IAM, ADR-002); the LLM egress route is still open in ADR-003 (Proposed).
+- Intended: Zone A holds no trading/signing/broker credentials — only Aegis authorises orders. LLM route (ADR-003 Option 2): cognitive-core calls the internal `llm-gateway` (LiteLLM, `infrastructure/llm-gateway/config.yaml`) with a gateway key and has no LLM egress; only the gateway holds AWS/provider credentials. Never exercised against real Bedrock.
 - Hot path is MCP-free — direct socket connections only
 - All orders must carry a valid Aegis attestation: execution-motor verifies it before the broker (a separate broker gateway, ADR-004, is not implemented)
 - Every order execution-motor releases gets a write-once Compliance Manifest first, and its strategy must be SHARP-`PROMOTED` (ALI-161, `execution_motor/compliance.py`; the SHARP gate is off in dev compose). Held/rejected decisions get no manifest; a soft-block approval needs the HITL backend (ALI-156)

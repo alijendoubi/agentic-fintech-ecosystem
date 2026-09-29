@@ -10,8 +10,9 @@
 | Claim | Evidence in repo? | Note |
 |---|---|---|
 | All providers registered and reviewed | Rows exist; no review has been done | TODO(owner) per row |
-| TP-003 Anthropic "via AWS Bedrock" | No: `llm_clients.py` uses the direct Anthropic SDK; compose injects `ANTHROPIC_API_KEY` | ADR-003 (Proposed) |
-| TP-004 Mistral direct commercial API | Consistent with code, but ADR-002 says all models go via Bedrock | ADR-003 (Proposed) |
+| TP-003 Anthropic "via AWS Bedrock" | Code/config only: the Claude model ids are routed to AWS Bedrock by the self-hosted LLM gateway (`infrastructure/llm-gateway/config.yaml`); no Anthropic key exists anywhere. Never exercised against real Bedrock; ids are placeholders (TODO(owner)) | ADR-003 Option 2 |
+| TP-004 Mistral direct commercial API | No: the gateway config routes Mistral Large 2 through AWS Bedrock, not Mistral's own API. The row's contract type and data residency must be revisited (requires qualified legal review) | ADR-003 Option 2 |
+| LLM gateway (LiteLLM proxy) | Open-source software run as a self-hosted container (image `litellm/litellm-non_root`, pinned by digest, pulled from Docker Hub, TP-008); not a contracted provider. It is a new dependency of the signal path (no gateway, no LLM reply, every debate abstains) | TODO(owner): add to the DORA asset inventory |
 | TP-002 CloudHSM in use | No: no production HSM exists | Phase 5 §6 |
 | TP-007 Alpaca as broker | Working choice for paper trading; production broker undecided (DORA doc) | Phase 5 go/no-go item 2 |
 | Failover procedures documented for Critical providers (Notes below) | Only DRAFT `docs/runbooks/dr-failover.md`; no second provider exists | TODO(owner) |
@@ -29,7 +30,7 @@ All providers below are **candidate/working choices** unless a contract exists (
 | TP-005 | Polygon.io | Polygon.io Inc. | USA | Level 2 order book, trade prints, fundamentals (US equities) | Critical | Data License Agreement | USA | Data redistribution restrictions; no onward sale of raw data | TODO(owner): date |
 | TP-006 | Alpha Vantage | Alpha Vantage Inc. | USA | News sentiment (cold path fallback) | Medium | API License | USA | Standard API terms | TODO(owner): date |
 | TP-007 | Alpaca Markets | Alpaca Securities LLC | USA | Commission-free US equities execution broker (paper + live) | Critical | Broker-Dealer Agreement | USA | FINRA member; API SLA; paper trading sandbox available | TODO(owner): date |
-| TP-008 | Docker Hub | Docker Inc. | USA | Container base images (postgres, redis, questdb, chroma) | Medium | Docker Business | USA | Terms of Service | TODO(owner): date |
+| TP-008 | Docker Hub | Docker Inc. | USA | Container base images (postgres, redis, questdb, chroma, litellm) | Medium | Docker Business | USA | Terms of Service | TODO(owner): date |
 
 **Notes:**
 - Criticality ratings: Critical (trading halts if unavailable), High (degraded operations), Medium (workaround available)

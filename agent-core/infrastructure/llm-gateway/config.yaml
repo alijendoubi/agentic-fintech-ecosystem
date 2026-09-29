@@ -1,0 +1,73 @@
+# LLM gateway (ADR-003 Option 2): LiteLLM proxy, the ONLY holder of LLM-provider credentials.
+#
+# cognitive-core (Zone A) calls this gateway's OpenAI-compatible /v1/chat/completions with the
+# role aliases below and the gateway key; it holds no AWS/provider credentials and has no egress.
+# The gateway reaches AWS Bedrock with the credentials in ITS environment only (IAM role in a real
+# deployment, static dev credentials via docker-compose.dev.yml).
+#
+# Image: pinned by digest in docker-compose.yml (litellm/litellm-non_root v1.103.0).
+# Values `os.environ/NAME` are resolved by LiteLLM from the gateway container's environment;
+# compose passes every one of them as ${VAR:?} (no defaults).
+#
+# Model ids are the same PLACEHOLDER Bedrock ids as the defaults in
+# zone-a/cognitive-core/config.py (a unit test keeps the two in sync).
+# TODO(owner): verify every id against the Bedrock console for the chosen region/account; newer
+# Anthropic models on Bedrock may need a cross-region inference-profile id instead.
+# `bedrock/converse/` selects Bedrock's Converse API, the same API the previous direct client
+# (langchain_aws.ChatBedrockConverse) used.
+#
+# Rate limits: `rpm`/`tpm` per alias are enforced in memory by the router with
+# `usage-based-routing-v2` (checked on v1.103.0 with a mock deployment: over-limit requests get
+# HTTP 429 without a provider call; with rpm=N only N-1 requests per minute were accepted, so
+# set N one above the intended rate). Values are owner decisions (no defaults).
+# Spend budgets are NOT configured: LiteLLM logs at startup that a proxy-wide `max_budget` is not
+# enforced without a database, and per-key budgets need its Postgres-backed virtual keys.
+# TODO(owner): decide whether to add that database (then give cognitive-core a virtual key with a
+# budget instead of the master key).
+
+model_list:
+  - model_name: afe-blue
+    litellm_params:
+      model: bedrock/converse/mistral.mistral-large-2407-v1:0 # TODO(owner): verify id
+      aws_region_name: os.environ/LLM_GATEWAY_AWS_REGION
+      rpm: os.environ/LLM_GATEWAY_BLUE_RPM
+      tpm: os.environ/LLM_GATEWAY_BLUE_TPM
+  - model_name: afe-red
+    litellm_params:
+      model: bedrock/converse/mistral.mistral-large-2407-v1:0 # TODO(owner): verify id
+      aws_region_name: os.environ/LLM_GATEWAY_AWS_REGION
+      rpm: os.environ/LLM_GATEWAY_RED_RPM
+      tpm: os.environ/LLM_GATEWAY_RED_TPM
+  - model_name: afe-judge
+    litellm_params:
+      model: bedrock/converse/anthropic.claude-sonnet-4-6 # TODO(owner): verify id
+      aws_region_name: os.environ/LLM_GATEWAY_AWS_REGION
+      rpm: os.environ/LLM_GATEWAY_JUDGE_RPM
+      tpm: os.environ/LLM_GATEWAY_JUDGE_TPM
+  - model_name: afe-compression
+    litellm_params:
+      model: bedrock/converse/anthropic.claude-haiku-4-5-20251001-v1:0 # TODO(owner): verify id
+      aws_region_name: os.environ/LLM_GATEWAY_AWS_REGION
+      rpm: os.environ/LLM_GATEWAY_COMPRESSION_RPM
+      tpm: os.environ/LLM_GATEWAY_COMPRESSION_TPM
+  - model_name: afe-reflector
+    litellm_params:
+      model: bedrock/converse/anthropic.claude-haiku-4-5-20251001-v1:0 # TODO(owner): verify id
+      aws_region_name: os.environ/LLM_GATEWAY_AWS_REGION
+      rpm: os.environ/LLM_GATEWAY_REFLECTOR_RPM
+      tpm: os.environ/LLM_GATEWAY_REFLECTOR_TPM
+
+litellm_settings:
+  # Do not write prompt/response content into the gateway's logs or callbacks.
+  turn_off_message_logging: true
+
+router_settings:
+  # Enforces the per-alias rpm/tpm above.
+  routing_strategy: usage-based-routing-v2
+  # No gateway-side retries: cognitive-core has hard per-node latency budgets and degrades to
+  # abstain on any failure, so a retry could only overrun the budget.
+  num_retries: 0
+
+general_settings:
+  # Every request must carry this key (Authorization: Bearer ...). Requests without it get 401.
+  master_key: os.environ/LLM_GATEWAY_MASTER_KEY

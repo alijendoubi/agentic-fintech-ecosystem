@@ -63,6 +63,17 @@ check() {
 }
 
 check MODEL_HMAC_KEY 32
+check LLM_GATEWAY_MASTER_KEY 32
+check LLM_GATEWAY_AWS_REGION 1
+for role in BLUE RED JUDGE COMPRESSION REFLECTOR; do
+  for kind in RPM TPM; do
+    name="LLM_GATEWAY_${role}_${kind}"
+    value="${VALUES[$name]-}"
+    if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+      fail "$name must be a positive integer (owner-chosen gateway rate limit)"
+    fi
+  done
+done
 check POLYGON_API_KEY 1
 check HITL_JWT_SECRET 32
 check AUDIT_DB_PASSWORD 16

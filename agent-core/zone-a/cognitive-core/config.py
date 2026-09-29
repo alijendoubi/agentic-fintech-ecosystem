@@ -6,11 +6,25 @@ Nothing here touches the environment or the filesystem at import time. Call
 negative latency budget or omega threshold must never silently disable a safety
 control.
 
+LLM route (ADR-003, Option 2 accepted 2026-09-29): `COGNITIVE_LLM_ROUTE` selects
+`gateway` (default) or `bedrock`.
+
+* `gateway`: the debate nodes call the internal LLM gateway (LiteLLM proxy,
+  `infrastructure/llm-gateway/config.yaml`) at `COGNITIVE_LLM_GATEWAY_URL` with the
+  bearer key `COGNITIVE_LLM_GATEWAY_KEY`. Zone A then holds no provider credentials;
+  the gateway maps fixed role aliases to Bedrock model ids, so `COGNITIVE_*_MODEL` are
+  NOT used on this route. A missing URL or key makes the client factories raise
+  `ConfigError`, which the runner hits at startup (the graph is built before the loop).
+* `bedrock`: the previous direct `ChatBedrockConverse` path (IAM role, no API keys),
+  kept for backward compatibility and tests. `ENVIRONMENT=production` refuses it, and
+  also refuses a non-https gateway URL (the key would cross the network in clear).
+
 Bedrock model IDs below are PLACEHOLDER defaults: ADR-002 names the model
 families (Mistral Large 2, Claude Sonnet 4.6, Claude Haiku 4.5) but the exact
 Bedrock model IDs / inference-profile prefixes differ per region and account.
 Verify against the Bedrock console and override through the COGNITIVE_*_MODEL
-environment variables before any live use.
+environment variables (bedrock route) or the gateway config.yaml (gateway route)
+before any live use.
 """
 
 from __future__ import annotations
@@ -19,10 +33,18 @@ import math
 import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    model_validator,
+)
 
 # --- Spec ceilings (docs/specs/phase_2_cognitive_core.md, ADR-002) ---------------------
 BLUE_RED_COMBINED_CEILING_S = 1.5  # spec: Blue + Red < 1,500 ms
@@ -37,6 +59,26 @@ _FLOAT_EPS = 1e-9
 _DEFAULT_MISTRAL_LARGE_ID = "mistral.mistral-large-2407-v1:0"  # verify against the Bedrock console
 _DEFAULT_SONNET_ID = "anthropic.claude-sonnet-4-6"  # verify against the Bedrock console
 _DEFAULT_HAIKU_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"  # verify against the Bedrock console
+
+# --- LLM gateway (ADR-003 Option 2) ------------------------------------------------------
+LLMRoute = Literal["gateway", "bedrock"]
+ENVIRONMENT_VAR = "ENVIRONMENT"
+# Same minimum as the repo's other shared secrets (check-env.sh, regime-detector HMAC key).
+MIN_GATEWAY_KEY_CHARS = 32
+# Same list as regime_detector/config.py and zone-c/hitl-interface/src/lib/config.ts (ALI-21).
+PLACEHOLDER_FRAGMENTS = (
+    "change-me",
+    "change_me",
+    "changeme",
+    "replace-me",
+    "replaceme",
+    "placeholder",
+    "your-secret",
+    "yoursecret",
+    "example",
+    "default",
+    "password",
+)
 
 ModelId = Annotated[str, Field(min_length=1, max_length=256)]
 PositiveSeconds = Annotated[float, Field(gt=0.0, le=30.0, allow_inf_nan=False)]
@@ -60,6 +102,11 @@ class CognitiveSettings(BaseModel):
     bedrock_region: str | None = None
     # Interface VPC endpoint URL for bedrock-runtime, if not resolved by private DNS.
     bedrock_endpoint_url: str | None = None
+
+    # LLM route (ADR-003). Gateway URL/key are required by the gateway client factories.
+    llm_route: LLMRoute = "gateway"
+    llm_gateway_url: str | None = None
+    llm_gateway_key: SecretStr | None = None
 
     # Latency budgets in seconds.
     blue_latency_budget_s: PositiveSeconds
@@ -93,12 +140,40 @@ class CognitiveSettings(BaseModel):
             "https://"
         ):
             raise ValueError("bedrock_endpoint_url must be an https:// URL")
+        if self.llm_gateway_url is not None:
+            _check_gateway_url(self.llm_gateway_url)
+        if self.llm_gateway_key is not None:
+            _check_gateway_key(self.llm_gateway_key.get_secret_value())
         return self
 
     @property
     def summary_char_cap(self) -> int:
         """Approximation used across the package: ~4 characters per token."""
         return self.compression_max_tokens * 4
+
+
+def _check_gateway_url(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError("llm_gateway_url must be an http:// or https:// URL")
+    if not parts.hostname:
+        raise ValueError("llm_gateway_url has no host")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("llm_gateway_url must not carry credentials")
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        raise ValueError(
+            "llm_gateway_url must be a bare base URL such as http://llm-gateway:4000 "
+            "(the client appends /v1/chat/completions)"
+        )
+
+
+def _check_gateway_key(key: str) -> None:
+    # Messages never include the key itself.
+    if len(key) < MIN_GATEWAY_KEY_CHARS:
+        raise ValueError(f"llm_gateway_key must be at least {MIN_GATEWAY_KEY_CHARS} characters")
+    lowered = key.lower()
+    if any(fragment in lowered for fragment in PLACEHOLDER_FRAGMENTS):
+        raise ValueError("llm_gateway_key looks like a placeholder; set a random key")
 
 
 def _str(raw: str) -> str:
@@ -108,6 +183,20 @@ def _str(raw: str) -> str:
 def _optional_str(raw: str) -> str | None:
     stripped = raw.strip()
     return stripped or None
+
+
+def _optional_secret(raw: str) -> SecretStr | None:
+    stripped = raw.strip()
+    return SecretStr(stripped) if stripped else None
+
+
+def _route(raw: str) -> LLMRoute:
+    value = raw.strip().lower()
+    if value == "gateway":
+        return "gateway"
+    if value == "bedrock":
+        return "bedrock"
+    raise ValueError("must be 'gateway' or 'bedrock'")
 
 
 def _float(raw: str) -> float:
@@ -126,6 +215,9 @@ _SPEC: dict[str, tuple[str, Callable[[str], Any], str | None]] = {
     "reflector_model": ("COGNITIVE_REFLECTOR_MODEL", _str, _DEFAULT_HAIKU_ID),
     "bedrock_region": ("COGNITIVE_BEDROCK_REGION", _optional_str, None),
     "bedrock_endpoint_url": ("COGNITIVE_BEDROCK_ENDPOINT_URL", _optional_str, None),
+    "llm_route": ("COGNITIVE_LLM_ROUTE", _route, "gateway"),
+    "llm_gateway_url": ("COGNITIVE_LLM_GATEWAY_URL", _optional_str, None),
+    "llm_gateway_key": ("COGNITIVE_LLM_GATEWAY_KEY", _optional_secret, None),
     # 0.75 + 0.75 = 1.5 s keeps Blue+Red inside the spec ceiling (ADR-002 lists 0.8 s each,
     # which sums to 1.6 s and contradicts the phase-2 spec; the spec wins, owner to reconcile).
     "blue_latency_budget_s": ("COGNITIVE_BLUE_LATENCY_BUDGET_S", _float, "0.75"),
@@ -175,8 +267,37 @@ def load_settings(
         try:
             values[field] = parse(raw)
         except ValueError as exc:
-            raise ConfigError(f"{var}={raw!r} is not valid: {exc}") from exc
+            shown = "<redacted>" if field == "llm_gateway_key" else repr(raw)
+            raise ConfigError(f"{var}={shown} is not valid: {exc}") from exc
     try:
-        return CognitiveSettings(**values)
+        settings = CognitiveSettings(**values)
     except ValidationError as exc:
-        raise ConfigError(f"invalid cognitive-core settings: {exc}") from exc
+        # Pydantic echoes input values; the gateway key must never reach a log line.
+        details = "; ".join(
+            f"{'.'.join(str(p) for p in err['loc']) or 'settings'}: {err['msg']}"
+            for err in exc.errors(include_input=False, include_url=False)
+        )
+        raise ConfigError(f"invalid cognitive-core settings: {details}") from None
+    if source.get(ENVIRONMENT_VAR, "").strip().lower() == "production":
+        _check_production_route(settings)
+    return settings
+
+
+def _check_production_route(settings: CognitiveSettings) -> None:
+    """ADR-003 Option 2 is the accepted route: production must use the gateway over TLS."""
+    if settings.llm_route != "gateway":
+        raise ConfigError(
+            "ENVIRONMENT=production requires COGNITIVE_LLM_ROUTE=gateway (ADR-003 Option 2); "
+            "the direct Bedrock route would need an ADR amendment"
+        )
+    url = settings.llm_gateway_url
+    if url is None or settings.llm_gateway_key is None:
+        raise ConfigError(
+            "ENVIRONMENT=production requires COGNITIVE_LLM_GATEWAY_URL and "
+            "COGNITIVE_LLM_GATEWAY_KEY"
+        )
+    if not url.startswith("https://"):
+        raise ConfigError(
+            "ENVIRONMENT=production requires an https:// COGNITIVE_LLM_GATEWAY_URL "
+            "(the gateway key must not cross the network in clear)"
+        )

@@ -225,7 +225,7 @@ def build_debate_graph(
     judge_client: LLMClient | None = None,
     compression_client: LLMClient | None = None,
 ) -> Any:
-    """Wire the graph. Clients are injectable for tests; default to the Bedrock factories."""
+    """Wire the graph. Clients are injectable for tests; default to the llm_clients factories."""
     cfg = settings or load_settings()
     blue = blue_client or get_blue_client(cfg)
     red = red_client or get_red_client(cfg)

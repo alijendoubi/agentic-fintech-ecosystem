@@ -1,6 +1,8 @@
 langchain>=0.3.0,<2
 langchain-core>=0.3.0,<2
-# ADR-002: all LLM calls via Bedrock (IAM role auth); no provider API-key SDKs in Zone A
+# ADR-003 Option 2: LLM calls via the internal LLM gateway (httpx); no provider API-key SDKs in
+# Zone A. langchain-aws/boto3 only for the legacy COGNITIVE_LLM_ROUTE=bedrock path.
+httpx>=0.27.0,<1
 langchain-aws>=0.2.0,<2
 boto3>=1.35.0,<2
 langgraph>=0.2.0
