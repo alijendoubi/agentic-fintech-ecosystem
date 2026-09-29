@@ -17,6 +17,21 @@ from pathlib import Path
 SYMBOL_PATTERN = re.compile(r"[A-Z.\-]{1,10}")
 _IDENTIFIER_PATTERN = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 MIN_HMAC_KEY_CHARS = 32
+MIN_HMAC_KEY_DISTINCT_CHARS = 8
+#: Same list as the HITL terminal (zone-c/hitl-interface/src/lib/config.ts), ALI-21.
+PLACEHOLDER_FRAGMENTS = (
+    "change-me",
+    "change_me",
+    "changeme",
+    "replace-me",
+    "replaceme",
+    "placeholder",
+    "your-secret",
+    "yoursecret",
+    "example",
+    "default",
+    "password",
+)
 DEFAULT_MODEL_DIR = "/app/models"
 DEFAULT_HEARTBEAT_PATH = "/tmp/regime-detector.heartbeat"  # noqa: S108 - container-local file
 
@@ -135,4 +150,11 @@ def _hmac_key(env: Mapping[str, str]) -> bytes | None:
         return None
     if len(raw) < MIN_HMAC_KEY_CHARS:
         raise ConfigError(f"MODEL_HMAC_KEY must be at least {MIN_HMAC_KEY_CHARS} characters")
+    lowered = raw.lower()
+    if any(fragment in lowered for fragment in PLACEHOLDER_FRAGMENTS):
+        raise ConfigError("MODEL_HMAC_KEY looks like a placeholder; set a random key")
+    if len(set(raw)) < MIN_HMAC_KEY_DISTINCT_CHARS:
+        raise ConfigError(
+            f"MODEL_HMAC_KEY must contain at least {MIN_HMAC_KEY_DISTINCT_CHARS} distinct chars"
+        )
     return raw.encode("utf-8")

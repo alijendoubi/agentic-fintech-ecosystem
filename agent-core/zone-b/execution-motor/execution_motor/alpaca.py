@@ -65,6 +65,23 @@ _OPEN_ORDERS_PAGE: Final = 500  # Alpaca's documented maximum for GET /v2/orders
 _log = structlog.get_logger("execution_motor.alpaca")
 
 
+#: Values copied from docs or templates (ALI-21). Based on the HITL terminal's list, minus
+#: "default"/"password" (not key-shaped) plus "your-key".
+_PLACEHOLDER_FRAGMENTS: Final = (
+    "change-me",
+    "change_me",
+    "changeme",
+    "replace-me",
+    "replaceme",
+    "placeholder",
+    "your-secret",
+    "yoursecret",
+    "your-key",
+    "yourkey",
+    "example",
+)
+
+
 @dataclass(frozen=True)
 class AlpacaCredentials:
     api_key: str = field(repr=False)
@@ -73,6 +90,10 @@ class AlpacaCredentials:
     def __post_init__(self) -> None:
         if not self.api_key.strip() or not self.secret_key.strip():
             raise ConfigError("Alpaca credentials must be non-empty")
+        for value in (self.api_key, self.secret_key):
+            lowered = value.lower()
+            if any(fragment in lowered for fragment in _PLACEHOLDER_FRAGMENTS):
+                raise ConfigError("Alpaca credentials look like a placeholder; set real keys")
 
     def __repr__(self) -> str:
         return "AlpacaCredentials(<redacted>)"
