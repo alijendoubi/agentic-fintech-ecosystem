@@ -23,7 +23,6 @@ PLACEHOLDER_FRAGMENTS = (
     "default",
     "password",
 )
-_TRUE = frozenset({"1", "true", "yes"})
 
 
 class ConfigError(ValueError):
@@ -56,8 +55,9 @@ class Settings:
     four_eyes_quantity_threshold: Decimal
     four_eyes_notional_threshold_usd: Decimal | None
     cooling_period_s: float
-    unscored_dev: bool
     audit_actor: str
+    attestor_id: str | None = None
+    attestor_key_file: Path | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -87,9 +87,20 @@ class Settings:
             raise ConfigError(
                 "MOTOR_TARGET is required in production (released holds must execute)"
             )
-        unscored = env.get("HITL_UNSCORED_DEV", "").strip().lower() in _TRUE
-        if production and unscored:
-            raise ConfigError("HITL_UNSCORED_DEV is refused in production")
+        # DECISIONS row 4: the key that attests each OIDC-authenticated approval to Aegis
+        # (identities.json "hold_attestors"). Without it, two-approver releases cannot pass an
+        # Aegis that requires a second approver, so production refuses to start without it.
+        attestor_id = env.get("HITL_APPROVAL_ATTESTOR_ID", "").strip() or None
+        attestor_raw = env.get("HITL_APPROVAL_ATTESTOR_KEY_FILE", "").strip()
+        attestor_key = Path(attestor_raw) if attestor_raw else None
+        if (attestor_id is None) != (attestor_key is None):
+            raise ConfigError(
+                "set HITL_APPROVAL_ATTESTOR_ID and HITL_APPROVAL_ATTESTOR_KEY_FILE together"
+            )
+        if production and attestor_id is None:
+            raise ConfigError(
+                "production requires HITL_APPROVAL_ATTESTOR_ID and HITL_APPROVAL_ATTESTOR_KEY_FILE"
+            )
         token = env.get("HITL_API_TOKEN", "").strip() or None
         if token is not None and len(token) < 16:
             raise ConfigError("HITL_API_TOKEN must be at least 16 characters when set")
@@ -113,8 +124,9 @@ class Settings:
                 env, "HITL_FOUR_EYES_NOTIONAL_THRESHOLD_USD"
             ),
             cooling_period_s=_non_negative(env, "HITL_COOLING_PERIOD_S", "0"),
-            unscored_dev=unscored,
             audit_actor=env.get("HITL_AUDIT_ACTOR", "hitl-backend").strip() or "hitl-backend",
+            attestor_id=attestor_id,
+            attestor_key_file=attestor_key,
         )
 
 

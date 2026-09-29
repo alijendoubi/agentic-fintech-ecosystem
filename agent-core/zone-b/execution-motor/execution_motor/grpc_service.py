@@ -1,4 +1,5 @@
-"""gRPC servicer for ``ExecutionMotor.Execute``/``Health`` (execution_motor.proto).
+"""gRPC servicer for ``ExecutionMotor`` (execution_motor.proto): Execute, ExecuteWithContext,
+RetainHeldContext and Health.
 
 Duck-typed on purpose (no import of the generated ``execution_motor_pb2_grpc`` module):
 grpc dispatches an RPC by looking up the method name on whatever object was registered
@@ -26,6 +27,7 @@ from .compliance import DISABLED, ComplianceGates
 from .halt import KillSwitch
 from .models import ExecutionReport, ExecutionStatus
 from .motor import ExecutionMotor
+from .retention import HeldContextRetainer, RetainResult
 from .service import ExecutionReporter, handle_decision, handle_request
 
 _log = structlog.get_logger("execution_motor.grpc_service")
@@ -47,10 +49,12 @@ class ExecutionMotorServicer:
         kill_switch: KillSwitch,
         reporter: ExecutionReporter | None = None,
         compliance: ComplianceGates = DISABLED,
+        retainer: HeldContextRetainer | None = None,
         clock_ns: Callable[[], int] = time.time_ns,
     ) -> None:
         self._motor = motor
         self._compliance = compliance
+        self._retainer = retainer
         self._pb2 = pb2
         self._kill = kill_switch
         self._reporter = reporter
@@ -75,6 +79,25 @@ class ExecutionMotorServicer:
             compliance=self._compliance,
         )
         return self._ack(report)
+
+    def RetainHeldContext(self, request: Any, context: Any) -> Any:  # noqa: N802 - grpc name
+        """Store a HELD decision's context in the audit log (``retention.py``). Executes nothing."""
+        if self._retainer is None:
+            result = RetainResult(False, detail="held-context retention is not configured")
+        else:
+            result = self._retainer.retain(request)
+        _log.info(
+            "retain_held_context_rpc",
+            hold_id=request.decision.hold_id,
+            retained=result.retained,
+            detail=result.detail or None,
+        )
+        return self._pb2.RetainAck(
+            retained=result.retained,
+            audit_seq=result.audit_seq,
+            record_hash=result.record_hash,
+            detail=result.detail,
+        )
 
     def _ack(self, report: ExecutionReport) -> Any:
         _log.info(

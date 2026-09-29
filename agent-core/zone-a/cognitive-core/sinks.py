@@ -7,9 +7,13 @@
   module needs no grpc and no generated code.
 * `AegisRelaySink`: `AegisGrpcSink` plus the execution-motor relay (phase_3_aegis_execution.md
   section 5): `cognitive-core --SubmitSignal(TradeSignal)--> AEGIS --AegisDecision(+attestation)
-  --> execution-motor`. Only an APPROVED decision carrying an `Attestation` is forwarded; a
-  held or rejected decision is logged and stops here, by design (Aegis is the only authority
-  that may let a signal reach execution).
+  --> execution-motor`. Only an APPROVED decision carrying an `Attestation` is forwarded for
+  execution; a held or rejected decision is logged and stops here, by design (Aegis is the only
+  authority that may let a signal reach execution). A HELD decision's debate context is sent to
+  `ExecutionMotor.RetainHeldContext` (owner decision 2026-09-29, DECISIONS row 7), which stores it
+  in the Zone C audit log for hitl-backend and executes nothing. A failed retention is logged,
+  never raised: the hold exists either way, and hitl-backend then labels the released context
+  `hold-signal-only`.
 * `MotorGrpcSink` / `InMemoryMotorSink`: the execution-motor leg, mirroring the Aegis sink
   shapes above. With a `DecisionContext` and a request builder (`build_execute_request`) the
   relay calls `ExecuteWithContext`, which execution-motor needs for the per-trade Compliance
@@ -227,6 +231,12 @@ class MotorSink(Protocol):
         context: DecisionContext | None = None,
     ) -> SinkReceipt: ...
 
+    async def retain_held(
+        self, decision: Any, *, signal_message: Any, context: DecisionContext
+    ) -> SinkReceipt:
+        """Hand a HELD decision's context to Zone C for retention (executes nothing)."""
+        ...
+
 
 @dataclass
 class InMemoryMotorSink:
@@ -235,7 +245,17 @@ class InMemoryMotorSink:
     sent: list[Any] = field(default_factory=list)
     signals: list[Any] = field(default_factory=list)
     contexts: list[DecisionContext | None] = field(default_factory=list)
+    retained: list[tuple[Any, Any, DecisionContext]] = field(default_factory=list)
     fail_with: Exception | None = None
+    retain_fail_with: Exception | None = None
+
+    async def retain_held(
+        self, decision: Any, *, signal_message: Any, context: DecisionContext
+    ) -> SinkReceipt:
+        if self.retain_fail_with is not None:
+            raise SinkError(str(self.retain_fail_with)) from self.retain_fail_with
+        self.retained.append((decision, signal_message, context))
+        return SinkReceipt(True, "in-memory")
 
     async def send(
         self,
@@ -256,11 +276,13 @@ DEFAULT_MOTOR_TIMEOUT_S = 1.0
 
 
 class MotorStub(Protocol):
-    """The two RPCs of the generated `execution_motor_pb2_grpc.ExecutionMotorStub` used here."""
+    """The RPCs of the generated `execution_motor_pb2_grpc.ExecutionMotorStub` used here."""
 
     async def Execute(self, decision: Any, *, timeout: float) -> Any: ...  # noqa: N802
 
     async def ExecuteWithContext(self, request: Any, *, timeout: float) -> Any: ...  # noqa: N802
+
+    async def RetainHeldContext(self, request: Any, *, timeout: float) -> Any: ...  # noqa: N802
 
 
 RequestBuilder = Callable[[Any, Any, DecisionContext], Any]
@@ -334,6 +356,24 @@ class MotorGrpcSink:
         )
         return SinkReceipt(True, detail)
 
+    async def retain_held(
+        self, decision: Any, *, signal_message: Any, context: DecisionContext
+    ) -> SinkReceipt:
+        """`RetainHeldContext` with the same request `ExecuteWithContext` would get. Raises
+        `SinkError` on a transport failure; a refusal by the motor is a non-accepted receipt."""
+        if self._build is None:
+            return SinkReceipt(False, "no request builder: context not retained")
+        try:
+            request = self._build(decision, signal_message, context)
+            ack = await self._stub.RetainHeldContext(request, timeout=self._timeout_s)
+        except Exception as exc:  # noqa: BLE001 - any transport/encoding failure is a SinkError
+            raise SinkError(f"RetainHeldContext failed: {type(exc).__name__}: {exc}") from exc
+        retained = bool(getattr(ack, "retained", False))
+        detail = f"retained={retained} seq={getattr(ack, 'audit_seq', 0)}"
+        if not retained:
+            detail += f" detail={getattr(ack, 'detail', '')!r}"
+        return SinkReceipt(retained, detail)
+
 
 def _describe_ack(ack: Any) -> str:
     accepted = getattr(ack, "accepted", None)
@@ -384,11 +424,10 @@ class AegisRelaySink:
         detail = _describe_decision(decision)
         log.info("signal_submitted", signal_id=signal.signal_id, aegis=detail)
         if not _decision_is_approved_with_attestation(decision):
-            log.info(
-                "motor_relay_skipped",
-                signal_id=signal.signal_id,
-                aegis_decision=_decision_status_name(decision) or "UNKNOWN",
-            )
+            status = _decision_status_name(decision) or "UNKNOWN"
+            log.info("motor_relay_skipped", signal_id=signal.signal_id, aegis_decision=status)
+            if status == "DECISION_HELD_FOR_HUMAN" and context is not None:
+                await self._retain_held(decision, message, context)
             return SinkReceipt(True, detail)
         try:
             await self._motor.send(decision, signal_message=message, context=context)
@@ -401,6 +440,25 @@ class AegisRelaySink:
             )
             raise SinkError(f"motor relay failed after aegis approval: {exc}") from exc
         return SinkReceipt(True, detail)
+
+    async def _retain_held(self, decision: Any, message: Any, context: DecisionContext) -> None:
+        """DECISIONS row 7: keep the debate context with the hold in Zone C. Never raises."""
+        hold_id = getattr(decision, "hold_id", "")
+        try:
+            receipt = await self._motor.retain_held(
+                decision, signal_message=message, context=context
+            )
+        except SinkError as exc:
+            log.error(
+                "held_context_not_retained",
+                hold_id=hold_id,
+                error=str(exc)[:_ERROR_LOG_CHARS],
+            )
+            return
+        if receipt.accepted:
+            log.info("held_context_retained", hold_id=hold_id, motor=receipt.detail)
+        else:
+            log.error("held_context_not_retained", hold_id=hold_id, motor=receipt.detail)
 
 
 ENVIRONMENT_VAR = "ENVIRONMENT"

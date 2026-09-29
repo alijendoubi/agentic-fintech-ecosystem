@@ -207,3 +207,236 @@ fn a_hold_approval_signed_by_the_wrong_key_or_stale_is_refused() {
         .verify_hold_approval("hold-1", true, &stale, NOW, MAX_AGE_MS)
         .is_err());
 }
+
+// ---- Owner decision 2026-09-29 (DECISIONS row 4): OIDC-attested hold approvals ----
+
+const ATTESTOR_SEED: u8 = 7;
+const HITL: &str = "hitl-backend";
+
+fn attested_ids() -> Identities {
+    let pk = |s: u8| hex::encode(key(s).verifying_key().as_bytes());
+    let json = format!(
+        r#"{{"peers": {{"hitl-backend": ["hold-resolver"], "operator-console": ["hold-resolver"]}},
+            "approvers": {{"bob": {{"roles": ["operator"], "ed25519_pubkey_hex": "{}"}}}},
+            "hold_attestors": {{"hitl-oidc": {{"peer": "hitl-backend", "roles": ["operator"],
+                                "ed25519_pubkey_hex": "{}", "idp_issuer": "https://idp.test"}}}}}}"#,
+        pk(2),
+        pk(ATTESTOR_SEED)
+    );
+    Identities::from_bytes(json.as_bytes()).unwrap()
+}
+
+fn attested(seed: u8, attestor: &str, hold: &str, approve: bool, sub: &str) -> pb::Authorization {
+    let at = NOW - 1_000_000_000;
+    let text = hold_approval_text(hold, approve, sub, "operator", at);
+    let sig = hex::encode(&key(seed).sign(text.as_bytes()).to_bytes());
+    pb::Authorization {
+        approver_id: sub.into(),
+        role: "operator".into(),
+        approved_at_ns: at,
+        credential_ref: format!("{ATTESTED_PREFIX}{attestor}:{sig}"),
+    }
+}
+
+fn release(
+    first: Option<pb::Authorization>,
+    second: Option<pb::Authorization>,
+) -> pb::ResolveHoldRequest {
+    pb::ResolveHoldRequest {
+        hold_id: "hold-1".into(),
+        operator_id: HITL.into(),
+        second_approver_id: second
+            .as_ref()
+            .map(|a| a.approver_id.clone())
+            .unwrap_or_default(),
+        approve: true,
+        second_approval: second,
+        first_approval: first,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn an_attested_hold_approval_verifies_only_for_its_bound_peer() {
+    let i = attested_ids();
+    let a = attested(ATTESTOR_SEED, "hitl-oidc", "hold-1", true, "oidc|alice");
+    let v = i
+        .verify_hold_authorization(HITL, "hold-1", true, &a, NOW, MAX_AGE_MS)
+        .unwrap();
+    assert_eq!(v.approver_id, "oidc|alice");
+    assert_eq!(v.role, Role::Operator);
+    assert_eq!(v.attestor.as_deref(), Some("hitl-oidc"));
+    assert!(
+        i.verify_hold_authorization("operator-console", "hold-1", true, &a, NOW, MAX_AGE_MS)
+            .is_err(),
+        "another hold-resolver peer must not present the attestor's approvals"
+    );
+}
+
+#[test]
+fn attested_approvals_are_refused_when_forged_stale_replayed_or_malformed() {
+    let i = attested_ids();
+    let check = |a: &pb::Authorization, hold: &str, approve: bool| {
+        i.verify_hold_authorization(HITL, hold, approve, a, NOW, MAX_AGE_MS)
+    };
+    let good = attested(ATTESTOR_SEED, "hitl-oidc", "hold-1", true, "oidc|alice");
+    assert!(check(&good, "hold-2", true).is_err(), "other hold");
+    assert!(check(&good, "hold-1", false).is_err(), "flipped decision");
+    let forged = attested(9, "hitl-oidc", "hold-1", true, "oidc|alice");
+    assert!(check(&forged, "hold-1", true).is_err(), "wrong key");
+    let unknown = attested(ATTESTOR_SEED, "other-idp", "hold-1", true, "oidc|alice");
+    assert!(check(&unknown, "hold-1", true).is_err(), "unknown attestor");
+    let mut stale = good.clone();
+    stale.approved_at_ns = NOW - 301_000_000_000;
+    assert!(check(&stale, "hold-1", true).is_err(), "stale");
+    let mut renamed = good.clone();
+    renamed.approver_id = "oidc|mallory".into();
+    assert!(
+        check(&renamed, "hold-1", true).is_err(),
+        "subject not signed"
+    );
+    let mut no_sep = good.clone();
+    no_sep.credential_ref = format!("{ATTESTED_PREFIX}hitl-oidc");
+    assert!(
+        check(&no_sep, "hold-1", true).is_err(),
+        "malformed credential"
+    );
+    let injected = attested(
+        ATTESTOR_SEED,
+        "hitl-oidc",
+        "hold-1",
+        true,
+        "a\nrole=operator",
+    );
+    assert!(
+        check(&injected, "hold-1", true).is_err(),
+        "control characters in the subject"
+    );
+    let mut compliance = good.clone();
+    compliance.role = "compliance".into();
+    assert!(
+        check(&compliance, "hold-1", true).is_err(),
+        "role not held by the attestor"
+    );
+}
+
+#[test]
+fn an_attested_approval_never_counts_for_a_kill_switch_reset() {
+    let i = attested_ids();
+    let a = attested(ATTESTOR_SEED, "hitl-oidc", "t-1", true, "bob");
+    assert!(i.verify_approval("t-1", &a, NOW, MAX_AGE_MS).is_err());
+}
+
+#[test]
+fn a_release_with_two_distinct_attested_subjects_passes() {
+    let i = attested_ids();
+    let first = attested(ATTESTOR_SEED, "hitl-oidc", "hold-1", true, "oidc|alice");
+    let second = attested(ATTESTOR_SEED, "hitl-oidc", "hold-1", true, "oidc|bob");
+    let req = release(Some(first), Some(second));
+    assert_eq!(
+        i.verify_hold_release(HITL, &req, true, NOW, MAX_AGE_MS),
+        Ok(())
+    );
+    assert_eq!(
+        i.verify_hold_release(HITL, &req, false, NOW, MAX_AGE_MS),
+        Ok(())
+    );
+}
+
+#[test]
+fn a_release_refuses_the_same_subject_twice_and_missing_approvals() {
+    use HoldApprovalRefusal::{Denied, Precondition};
+    let i = attested_ids();
+    let alice = || attested(ATTESTOR_SEED, "hitl-oidc", "hold-1", true, "oidc|alice");
+    let bob = || attested(ATTESTOR_SEED, "hitl-oidc", "hold-1", true, "oidc|bob");
+    let run =
+        |req: &pb::ResolveHoldRequest| i.verify_hold_release(HITL, req, true, NOW, MAX_AGE_MS);
+
+    assert!(matches!(
+        run(&release(Some(alice()), Some(alice()))),
+        Err(Precondition(_))
+    ));
+    assert!(matches!(
+        run(&release(None, Some(bob()))),
+        Err(Precondition(_))
+    ));
+    assert!(matches!(run(&release(None, None)), Err(Precondition(_))));
+    assert!(matches!(
+        run(&release(Some(alice()), None)),
+        Err(Precondition(_))
+    ));
+
+    let mut named_other = release(Some(alice()), Some(bob()));
+    named_other.second_approver_id = "oidc|carol".into();
+    assert!(matches!(run(&named_other), Err(Precondition(_))));
+
+    let other_hold = attested(ATTESTOR_SEED, "hitl-oidc", "hold-9", true, "oidc|alice");
+    assert!(matches!(
+        run(&release(Some(other_hold), Some(bob()))),
+        Err(Denied(_))
+    ));
+    let forged_first = attested(9, "hitl-oidc", "hold-1", true, "oidc|alice");
+    assert!(matches!(
+        run(&release(Some(forged_first), Some(bob()))),
+        Err(Denied(_))
+    ));
+
+    let mut reject = release(None, None);
+    reject.approve = false;
+    assert_eq!(run(&reject), Ok(()), "a rejection needs no approvals");
+}
+
+#[test]
+fn a_registered_approver_still_releases_without_an_attested_first_approval() {
+    let i = attested_ids();
+    let bob = hold_signed(2, "hold-1", true, "bob", NOW - 1_000_000_000);
+    let mut req = release(None, Some(bob));
+    req.operator_id = "operator-console".into();
+    assert_eq!(
+        i.verify_hold_release("operator-console", &req, true, NOW, MAX_AGE_MS),
+        Ok(())
+    );
+}
+
+#[test]
+fn hold_attestor_entries_are_validated() {
+    let pk = hex::encode(key(ATTESTOR_SEED).verifying_key().as_bytes());
+    let file = |attestor: &str| {
+        format!(r#"{{"peers": {{}}, "approvers": {{}}, "hold_attestors": {{{attestor}}}}}"#)
+    };
+    let ok = file(&format!(
+        r#""a": {{"peer": "hitl-backend", "roles": ["operator"], "ed25519_pubkey_hex": "{pk}", "idp_issuer": "https://idp"}}"#
+    ));
+    assert!(Identities::from_bytes(ok.as_bytes()).is_ok());
+    for bad in [
+        format!(r#""a:b": {{"peer": "p", "roles": ["operator"], "ed25519_pubkey_hex": "{pk}", "idp_issuer": "i"}}"#),
+        format!(r#""a": {{"peer": "", "roles": ["operator"], "ed25519_pubkey_hex": "{pk}", "idp_issuer": "i"}}"#),
+        format!(r#""a": {{"peer": "p", "roles": ["operator"], "ed25519_pubkey_hex": "{pk}", "idp_issuer": ""}}"#),
+        format!(r#""a": {{"peer": "p", "roles": [], "ed25519_pubkey_hex": "{pk}", "idp_issuer": "i"}}"#),
+        r#""a": {"peer": "p", "roles": ["operator"], "ed25519_pubkey_hex": "00", "idp_issuer": "i"}"#.to_owned(),
+        format!(r#""a": {{"peer": "p", "roles": ["operator"], "ed25519_pubkey_hex": "{pk}", "idp_issuer": "i", "x": 1}}"#),
+    ] {
+        assert!(Identities::from_bytes(file(&bad).as_bytes()).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn an_attestation_made_by_hitl_backend_verifies() {
+    // Test vector from hitl-backend (Python `ApprovalAttestor`, seed = bytes 0..32), so the two
+    // implementations of the afe-hold-v1 text and the credential format cannot drift apart.
+    let json = r#"{"peers": {"hitl-backend": ["hold-resolver"]}, "approvers": {},
+        "hold_attestors": {"hitl-oidc": {"peer": "hitl-backend", "roles": ["operator"],
+            "ed25519_pubkey_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+            "idp_issuer": "https://idp.test"}}}"#;
+    let i = Identities::from_bytes(json.as_bytes()).unwrap();
+    let a = pb::Authorization {
+        approver_id: "oidc|alice".into(),
+        role: "operator".into(),
+        approved_at_ns: NOW - 1_000_000_000,
+        credential_ref: "oidc-attested:hitl-oidc:f7555c90334453d46ee8a5dc766ed6973fccdbb4e9b19cb1a81eeaa8d55f00937ec19cd3a92cf392f9d3c4dee76f6f9a2314c5a3e0e28afdcbbdba217afc380a".into(),
+    };
+    let v = i
+        .verify_hold_authorization(HITL, "hold-1", true, &a, NOW, MAX_AGE_MS)
+        .unwrap();
+    assert_eq!(v.approver_id, "oidc|alice");
+}

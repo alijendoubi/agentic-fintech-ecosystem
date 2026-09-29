@@ -60,15 +60,15 @@ Implemented (see the README status table for what was and was not re-run):
 - `agent-core/zone-b/refdata-bridge/` - Redis -> `Aegis.PushReferenceData` over mTLS
 - `agent-core/zone-c/audit-logger|compliance-manifest|sharp-gate/` - Python libraries (`afe_audit`, `afe_manifest`, `afe_sharp`)
 - `agent-core/zone-c/hitl-interface/` - Next.js terminal (`docs/api-contract.md` PROPOSED)
-- `agent-core/zone-c/hitl-backend/` - REST backend for the terminal (ALI-156): Aegis ListHolds/GetHold/ResolveHold, relay to execution-motor, audited; single-approver holds only, no distress classifier (compose profile `hitl-backend`)
+- `agent-core/zone-c/hitl-backend/` - REST backend for the terminal (ALI-156): Aegis ListHolds/GetHold/ResolveHold, relay to execution-motor, audited; four-eyes holds take two distinct OIDC subjects (JWT `sub`), attested to Aegis with a hitl-backend key (`hold_attestors`, trusts hitl-backend + IdP, not per-person keys); released holds carry the debate context retained in the audit DB (`hold.context.retained`); no distress classifier (compose profile `hitl-backend`)
 - `agent-core/backtesting/` - engine, WFA, Monte Carlo, calibration machinery; synthetic data only, no calibrated result
 
-All specs are in `agent-core/docs/specs/`; open decisions are in `agent-core/docs/adr/` (ADR-003, ADR-004 are Proposed).
+All specs are in `agent-core/docs/specs/`; decisions are in `agent-core/docs/adr/` (ADR-003 and ADR-004 were accepted 2026-09-29 but are not yet implemented; see `DECISIONS-2026-09-29.md`).
 
 ## Conventions
-- Intended: Zone A holds no trading/signing/broker credentials — only Aegis authorises orders. Compose no longer injects LLM provider keys (cognitive-core uses Bedrock/IAM, ADR-002); the LLM egress route is still open in ADR-003 (Proposed).
+- Intended: Zone A holds no trading/signing/broker credentials — only Aegis authorises orders. Compose no longer injects LLM provider keys (cognitive-core uses Bedrock/IAM, ADR-002); ADR-003 (accepted) moves it behind a key-holding LLM gateway outside Zone A, which is not built yet.
 - Hot path is MCP-free — direct socket connections only
-- All orders must carry a valid Aegis attestation: execution-motor verifies it before the broker (a separate broker gateway, ADR-004, is not implemented)
+- All orders must carry a valid Aegis attestation: execution-motor verifies it before the broker (ADR-004 accepted a separate broker-gateway container; it is not implemented, so the motor still holds the paper key)
 - Every order execution-motor releases gets a write-once Compliance Manifest first, and its strategy must be SHARP-`PROMOTED` (ALI-161, `execution_motor/compliance.py`; the SHARP gate is off in dev compose). Held/rejected decisions get no manifest; a soft-block approval needs the HITL backend (ALI-156)
 - Compose/CI: secrets only via `${VAR:?}` env (`agent-core/infrastructure/.env.example` has blanks); zone networks are `internal: true`; `*.sh`/`*.sql`/Dockerfiles must be LF (`.gitattributes`)
 - No floating point for money on the decision path (Phase 3 spec §3)

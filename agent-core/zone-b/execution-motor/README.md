@@ -68,6 +68,17 @@ bash agent-core/shared/proto/generate.sh
   versions, debate texts, optional HITL record) for the compliance gates below. When the
   motor enforces compliance (always in production), plain `Execute` is refused with
   `context_missing` and this is the only way to trade. cognitive-core's relay uses it.
+* `rpc RetainHeldContext(ExecuteRequest) returns (RetainAck)` (owner decision 2026-09-29,
+  DECISIONS row 7, `retention.py`) — executes nothing. For a `DECISION_HELD_FOR_HUMAN`
+  decision with a `hold_id` and a context naming that signal, it appends ONE hash-chained
+  audit record `hold.context.retained` (`afe_audit`, as `afe_audit_app`) holding the
+  `ExecutionContext` and the held `AegisDecision` byte-exact (deterministic serialisation,
+  base64, sha256), keyed by `hold_id`/`signal_id`. hitl-backend reads it back when a human
+  releases the hold. Enabled whenever the audit database is configured (always in
+  production); otherwise it answers `retained=false`. Like `ExecuteWithContext`, the
+  context is unsigned and trusted from the mTLS caller; hitl-backend binds it to Aegis's own
+  copy of the held signal before using it. No retention period is enforced and nothing is
+  deleted: TODO(owner): legal confirmation of the audit retention period (issue #32).
 * `rpc Health(Empty) returns (HealthStatus)` — liveness/readiness; reflects the local
   kill-switch state only, no policy requirement beyond mTLS.
 

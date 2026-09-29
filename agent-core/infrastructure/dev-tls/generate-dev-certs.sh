@@ -271,6 +271,17 @@ for spec in "dev-operator-a:operator" "dev-operator-b:operator" "dev-compliance:
     entry=$(printf '"%s": {"roles": ["%s"], "ed25519_pubkey_hex": "%s"}' "$id" "$role" "$pub")
     approver_json="${approver_json:+$approver_json, }$entry"
 done
+# DEV ONLY hold-approval attestor (owner decision 2026-09-29, DECISIONS row 4): hitl-backend
+# signs each OIDC-authenticated approval with this key; Aegis accepts it only from the
+# hitl-backend certificate. Seed at out/hitl-backend/attestor.seed (mounted at /aegis-tls).
+openssl genpkey -algorithm ed25519 -out "$WORK_DIR/hitl-attestor.pem"
+openssl pkey -in "$WORK_DIR/hitl-attestor.pem" -outform DER | tail -c 32 | hex_of > "$OUT_DIR/hitl-backend/attestor.seed"
+chmod 600 "$OUT_DIR/hitl-backend/attestor.seed" 2>/dev/null || true
+attestor_pub=$(openssl pkey -in "$WORK_DIR/hitl-attestor.pem" -pubout -outform DER | tail -c 32 | hex_of)
+if [ ${#attestor_pub} -ne 64 ]; then
+    echo "error: could not derive the hitl-backend attestor key" >&2
+    exit 1
+fi
 cat > "$OUT_DIR/identities.json" <<EOF
 {
   "peers": {
@@ -281,10 +292,16 @@ cat > "$OUT_DIR/identities.json" <<EOF
     "hitl-backend": ["hold-resolver"],
     "operator": ["state-reader", "kill-trigger", "kill-reset"]
   },
-  "approvers": {$approver_json}
+  "approvers": {$approver_json},
+  "hold_attestors": {
+    "dev-hitl-oidc": {"peer": "hitl-backend", "roles": ["operator"],
+                      "ed25519_pubkey_hex": "$attestor_pub",
+                      "idp_issuer": "dev: HS256 tokens from hitl-interface, not an IdP"}
+  }
 }
 EOF
 echo "  dev operator identity + 3 reset approvers: $OUT_DIR/identities.json, seeds in $APPROVER_DIR"
+echo "  dev hold-approval attestor dev-hitl-oidc: seed in $OUT_DIR/hitl-backend/attestor.seed"
 
 for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor hitl-backend operator approvers; do
     cat > "$OUT_DIR/$d/README.md" <<EOF

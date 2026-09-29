@@ -29,9 +29,9 @@ use tonic::{Request, Response, Status};
 
 use crate::audit::AuditEvent;
 use crate::engine::{CancelToken, Engine, HoldError};
-use crate::identity::{cert_identity, Identities, PeerRole};
+use crate::identity::{cert_identity, HoldApprovalRefusal, Identities, PeerRole};
 use crate::killswitch::controller::ControllerError;
-use crate::killswitch::{ResetRefusal, ResetRequest, Role};
+use crate::killswitch::{ResetRefusal, ResetRequest};
 use crate::pb;
 use crate::state::ingest::{ingest, MAX_SNAPSHOTS_PER_PUSH};
 use crate::state::refdata::MemoryReferenceData;
@@ -144,22 +144,21 @@ impl AegisService {
     }
 
     /// ALI-164: when the limits require a second approver, releasing a hold needs an
-    /// Ed25519 approval signed by `second_approver_id` (a registered approver holding the
-    /// operator role, not the operator) over the hold id and the decision. A bare string
-    /// used to be enough, so one hold-resolver peer could name anyone as second approver.
-    fn check_second_approval(&self, req: &pb::ResolveHoldRequest) -> Result<(), Status> {
+    /// Ed25519 approval by `second_approver_id` (not the operator) over the hold id and
+    /// the decision. A bare string used to be enough, so one hold-resolver peer could name
+    /// anyone as second approver. Owner decision 2026-09-29: the approval may instead be
+    /// OIDC-attested by a `hold_attestors` key bound to this caller (hitl-backend), and
+    /// then the attested first approval must come with it, by a different subject. Any
+    /// approval that is present is verified, required or not. See
+    /// `Identities::verify_hold_release`.
+    fn check_second_approval(
+        &self,
+        caller: &Caller,
+        req: &pb::ResolveHoldRequest,
+    ) -> Result<(), Status> {
         let cfg = &self.engine.deps.limits.config;
-        if !req.approve || !cfg.hold_requires_second_approver {
+        if !req.approve {
             return Ok(());
-        }
-        let approval = req.second_approval.as_ref().ok_or_else(|| {
-            Status::failed_precondition("a signed second approval is required to release a hold")
-        })?;
-        if approval.approver_id != req.second_approver_id || approval.approver_id == req.operator_id
-        {
-            return Err(Status::failed_precondition(
-                "the second approval must be signed by second_approver_id, not the operator",
-            ));
         }
         let now = self
             .engine
@@ -167,22 +166,18 @@ impl AegisService {
             .clock
             .now_ns()
             .map_err(|_| Status::internal("clock unavailable"))?;
-        let verified = self
-            .identities
-            .verify_hold_approval(
-                &req.hold_id,
-                req.approve,
-                approval,
+        self.identities
+            .verify_hold_release(
+                &caller.id,
+                req,
+                cfg.hold_requires_second_approver,
                 now,
                 cfg.timings.approval_max_age_ms,
             )
-            .map_err(|e| Status::permission_denied(e.to_string()))?;
-        if verified.role != Role::Operator {
-            return Err(Status::permission_denied(
-                "the second approver must sign with the operator role",
-            ));
-        }
-        Ok(())
+            .map_err(|refusal| match refusal {
+                HoldApprovalRefusal::Precondition(why) => Status::failed_precondition(why),
+                HoldApprovalRefusal::Denied(why) => Status::permission_denied(why),
+            })
     }
 }
 
@@ -282,7 +277,7 @@ impl pb::Aegis for AegisService {
         let caller = self.authorize(&request, PeerRole::HoldResolver)?;
         let req = request.into_inner();
         self.bind_operator(&caller, &req.operator_id)?;
-        self.check_second_approval(&req)?;
+        self.check_second_approval(&caller, &req)?;
         let engine = self.engine.clone();
         let out = self
             .run(self.opts.rpc_timeout, move || engine.resolve_hold(&req))

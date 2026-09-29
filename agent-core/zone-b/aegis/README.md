@@ -91,7 +91,7 @@ the spec's table are UNSUBSTANTIATED until Phase 4 calibration.
 | `rate_global`, `rate_per_symbol` | C16 | Token bucket `capacity` and `refill_per_sec`. |
 | `omega_min` | C17 | [EXISTING 0.55] UNSUBSTANTIATED. Below it the signal is an abstain (hard reject). |
 | `regime.min_confidence`, `regime.allowed` | C18 | `C_MIN` (PROPOSED 0.6) and the regime names the strategy is validated for. |
-| `hold_requires_second_approver`, `hold_requires_cooling_period`, `hold_max_distress_score` | ResolveHold | TODO(owner): whether a second approver / cooling period is mandatory. |
+| `hold_requires_second_approver`, `hold_requires_cooling_period`, `hold_max_distress_score` | ResolveHold | TODO(owner): whether a second approver / cooling period is mandatory. The distress classifier is out of scope (2026-09-29): hitl-backend always sends 0.0, so `hold_max_distress_score` never blocks. |
 | `audit_mandatory` | audit | If true a sink failure rejects the decision (`REASON_AUDIT_UNAVAILABLE`) and refuses a kill reset. |
 | `timings` (optional) | various | PROPOSED defaults, all TODO(owner): `clock_skew_ms` 250, `max_signal_age_ms` 5000, `max_ref_age_ms` 1000, `max_regime_age_ms` 60000 (not in spec), `attestation_ttl_ms` 5000, `hold_window_ms` 60000, `replay_retention_ms` 86400000, `operator_heartbeat_interval_ms` 14400000, `operator_heartbeat_warn_ms` 12600000, `liveness_trip_ms` 60000, `approval_max_age_ms` 300000, `unusual_size_min_history` 30, `unusual_size_window_days` 30. |
 
@@ -106,8 +106,38 @@ PROPOSED option (mTLS client certificate per identity) plus signed approvals.
            "execution-motor": ["state-reader", "execution-reporter"],
            "market-data": ["market-data-writer"],
            "supervisor": ["state-reader", "kill-trigger"]},
- "approvers": {"alice": {"roles": ["operator"], "ed25519_pubkey_hex": "<64 hex>"}}}
+ "approvers": {"alice": {"roles": ["operator"], "ed25519_pubkey_hex": "<64 hex>"}},
+ "hold_attestors": {"hitl-oidc": {"peer": "hitl-backend", "roles": ["operator"],
+                                  "ed25519_pubkey_hex": "<64 hex>", "idp_issuer": "<OIDC issuer URL>"}}}
 ```
+
+`hold_attestors` is optional (owner decision 2026-09-29, DECISIONS row 4). Hold
+approvals (`ResolveHoldRequest.second_approval` and `first_approval`, canonical
+text `afe-hold-v1\nhold_id=..\napprove=..\napprover_id=..\nrole=..\napproved_at_ns=..\n`)
+are accepted in two forms:
+
+* **Registered approver** (ALI-164): `approver_id` is in `approvers` and
+  `credential_ref` is the hex Ed25519 signature by that approver's own key.
+* **OIDC-attested**: `approver_id` is the approver's OIDC subject (`sub`) and
+  `credential_ref` is `oidc-attested:<attestor_id>:<hex Ed25519 signature>`, by
+  the `hold_attestors` key, over the same text. Only the peer named in the
+  attestor entry (the hitl-backend certificate CN) may present it, only for
+  holds (never for kill-switch resets), with a role the entry lists, fresh
+  within `approval_max_age_ms`, and a subject without control characters.
+  An attested `second_approval` must come with the attested `first_approval`,
+  and the two subjects must differ; `second_approver_id` must equal the second
+  subject. Both approvals must be fresh when `ResolveHold` arrives, so keep
+  `hold_window_ms` below `approval_max_age_ms` (the PROPOSED defaults, 60 s and
+  300 s, do); otherwise a slow second approver makes Aegis refuse the release.
+* **Trust model:** an attested approval trusts hitl-backend (which holds the
+  attestor key and re-verifies each operator's token) and the IdP behind it. It
+  is not a per-person hardware key: a compromised hitl-backend host, attestor
+  key or IdP can mint approvals for any subject. The record of who approved is
+  hitl-backend's hash-chained audit log; Aegis sees the two subjects only in
+  this request.
+* Any approval that is present is verified even when
+  `hold_requires_second_approver` is false; a bad one refuses the release.
+  A rejection needs no approvals.
 
 `peers` maps the client certificate subject CN (else first DNS/URI SAN) to RPC
 roles. A verified certificate that is not listed has no roles (PERMISSION_DENIED).
@@ -431,10 +461,11 @@ AEGIS_SOFTHSM_KEY=attest-test AEGIS_SOFTHSM_PIN_FILE=/tmp/pin \
 These are deliberate gaps found in review, NOT fixed in this crate because each
 needs an owner decision or a change outside it:
 
-1. **Second approver on `ResolveHold` is caller-asserted.** The request has no
-   credential field for the second approver, so only `operator_id` is bound to
-   the mTLS identity. Closing this needs a proto change (signed approval) or a
-   second credential path. TODO(owner).
+1. **Second approver on `ResolveHold`.** Closed by ALI-164 (signed
+   `second_approval`) and the OIDC attestation above. What remains: with an
+   attested approval the two humans are proven by hitl-backend and the IdP, not
+   by keys each person holds (see "Identities file"). TODO(owner): whether that
+   is sufficient, or per-person keys (hardware tokens) are required.
 2. **C11 values notional at the order's bounded limit price, sells included.**
    For a sell the limit is a floor, so the executed notional can exceed what C11
    checked. Whether sells should be valued at a worst-case (higher) price, and

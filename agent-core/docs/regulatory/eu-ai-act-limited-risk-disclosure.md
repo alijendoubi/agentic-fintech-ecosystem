@@ -12,7 +12,7 @@
 |---|---|---|
 | HITL displays "AI-generated signal" label (§2) | No (`zone-c/hitl-interface/` does not exist) | `phase_4_backtesting_compliance.md` §10 |
 | Every trade decision produces a Compliance Manifest with full debate trace (Art. 13 row) | No (`compliance-manifest` is an empty package) | Phase 4 §9 |
-| HITL escalation; Dead Man's Switch; Reverse Guardrail classifier (Art. 14 row) | No. No classifier, data or policy exists | Phase 3 §5; Phase 4 §10 |
+| HITL escalation; Dead Man's Switch (Art. 14 row) | Partly: Aegis holds, heartbeat and kill switch exist; a Reverse Guardrail classifier was ruled out of scope (owner decision 2026-09-29) and the claim is withdrawn | Phase 3 §5; Phase 4 §10 |
 | Regime-aware WFA, Monte Carlo, KL drift monitoring (Art. 15 row) | No | Phase 4 §4-§8 |
 | Point-in-time data, survivorship-bias-free universe, MAD outlier detection (Art. 10 row) | Partly: MAD scoring exists in `zone-b/sensory-array/src/normalizer.rs`; point-in-time/survivorship-free training data does not | Phase 4 §3 |
 | 7-year manifest retention with hash chaining (Art. 12 row) | No | Phase 4 §8-§9 |
@@ -82,7 +82,7 @@ Even though AFE is currently assumed to be Limited Risk (working assumption, req
 | High-Risk Requirement | Article | AFE Implementation |
 |---|---|---|
 | Transparency & explainability | Art. 13 | Every trade decision generates a Compliance Manifest with full Blue/Red/Judge debate trace |
-| Human oversight | Art. 14 | HITL escalation protocol; Dead Man's Switch; Reverse Guardrail classifier |
+| Human oversight | Art. 14 | HITL escalation protocol; Dead Man's Switch |
 | Accuracy & robustness | Art. 15 | Regime-aware WFA; Monte Carlo stress testing; KL divergence drift monitoring |
 | Data governance | Art. 10 | Point-in-time data; survivorship-bias-free training universe; MAD outlier detection |
 | Record-keeping | Art. 12 | 7-year Compliance Manifest retention with cryptographic hash chaining |

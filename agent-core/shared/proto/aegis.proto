@@ -172,6 +172,14 @@ message ResolveHoldRequest {
   // ("afe-hold-v1" plus hold_id, approve, approver_id, role, approved_at_ns, one per
   // line). Before this, second_approver_id was only a caller-asserted string.
   Authorization second_approval = 8;
+  // Additive (owner decision 2026-09-29, DECISIONS row 4): the FIRST approver's approval, same
+  // format. Required when `second_approval` is OIDC-attested, i.e. its credential_ref is
+  // "oidc-attested:<attestor_id>:<hex Ed25519 signature>": hitl-backend (the only peer the
+  // attestor entry in identities.json names) vouches that the authenticated OIDC subject
+  // `approver_id` approved. With operator_id bound to hitl-backend's certificate, this is how
+  // Aegis still sees two distinct human approvers and refuses the same subject twice.
+  // This trusts hitl-backend and the IdP, not a per-person key (see the Aegis README).
+  Authorization first_approval = 9;
 }
 
 // ---- Kill switch ----
@@ -213,7 +221,9 @@ message Authorization {
   string approver_id = 1;
   string role = 2;                         // e.g. operator, compliance
   int64 approved_at_ns = 3;
-  string credential_ref = 4;               // authentication evidence; scheme TODO(owner)
+  // Hex Ed25519 signature by approver_id's registered key; for hold approvals only, also
+  // "oidc-attested:<attestor_id>:<hex signature>" (see ResolveHoldRequest.first_approval).
+  string credential_ref = 4;
 }
 
 message ResetKillSwitchRequest {

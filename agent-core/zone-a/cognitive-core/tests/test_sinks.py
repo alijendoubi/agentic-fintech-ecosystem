@@ -335,6 +335,12 @@ class _FakeMotorStub:
     async def ExecuteWithContext(self, request: Any, *, timeout: float) -> Any:  # noqa: N802
         raise AssertionError("ExecuteWithContext needs a request builder and a context")
 
+    async def RetainHeldContext(self, request: Any, *, timeout: float) -> Any:  # noqa: N802
+        self.calls.append((request, timeout))
+        if self.error:
+            raise self.error
+        return self.reply
+
 
 @pytest.mark.asyncio
 async def test_motor_grpc_sink_relays_the_decision_and_reports_the_ack(
@@ -476,3 +482,90 @@ async def test_motor_grpc_sink_falls_back_to_plain_execute_without_context(
     sink = MotorGrpcSink(stub=stub, request_builder=lambda d, s, c: None)
     await sink.send(decision)  # no context: a compliance-enforcing motor will refuse this
     assert stub.context_calls == [] and len(stub.calls) == 1
+
+
+# -- DECISIONS row 7: a HELD decision's debate context is retained in Zone C ----------------
+
+
+def _relay(protos: dict[str, Any], decision: Any, motor: InMemoryMotorSink) -> AegisRelaySink:
+    return AegisRelaySink(
+        aegis_stub=_FakeStub(decision),
+        trade_signal_pb2=protos["trade_signal_pb2"],
+        strategy_id="S-1",
+        motor_sink=motor,
+    )
+
+
+@pytest.mark.asyncio
+async def test_relay_retains_the_context_of_a_held_decision(generated_dir: Path) -> None:
+    protos = load_generated_protos(generated_dir)
+    decision = _decision(protos, decision=protos["aegis_pb2"].DECISION_HELD_FOR_HUMAN)
+    decision.hold_id = "hold-1"
+    motor = InMemoryMotorSink()
+    context = _context()
+    receipt = await _relay(protos, decision, motor).send(pending_signal(), context)
+    assert receipt.accepted
+    assert motor.sent == []  # nothing is executed
+    ((held, signal_message, retained_context),) = motor.retained
+    assert held is decision and retained_context is context
+    assert signal_message.strategy_id == "S-1"  # the exact proto that went to Aegis
+
+
+@pytest.mark.asyncio
+async def test_relay_retains_nothing_for_a_rejection_or_without_a_context(
+    generated_dir: Path,
+) -> None:
+    protos = load_generated_protos(generated_dir)
+    motor = InMemoryMotorSink()
+    rejected = _decision(protos, decision=protos["aegis_pb2"].DECISION_REJECTED)
+    await _relay(protos, rejected, motor).send(pending_signal(), _context())
+    held = _decision(protos, decision=protos["aegis_pb2"].DECISION_HELD_FOR_HUMAN)
+    await _relay(protos, held, motor).send(pending_signal())
+    assert motor.retained == [] and motor.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_retention_is_logged_not_raised(generated_dir: Path) -> None:
+    protos = load_generated_protos(generated_dir)
+    held = _decision(protos, decision=protos["aegis_pb2"].DECISION_HELD_FOR_HUMAN)
+    motor = InMemoryMotorSink(retain_fail_with=ConnectionError("motor down"))
+    receipt = await _relay(protos, held, motor).send(pending_signal(), _context())
+    assert receipt.accepted  # the hold exists either way; hitl-backend falls back, labelled
+
+
+@pytest.mark.asyncio
+async def test_motor_grpc_sink_retains_through_retain_held_context(generated_dir: Path) -> None:
+    protos = load_generated_protos(generated_dir)
+    motor_protos = load_generated_motor_protos(generated_dir)
+    held = _decision(protos, decision=protos["aegis_pb2"].DECISION_HELD_FOR_HUMAN)
+    held.hold_id = "hold-1"
+    signal_message = protos["trade_signal_pb2"].TradeSignal(signal_id="sig-1", symbol="AAPL")
+    builder = build_execute_request(
+        motor_protos["execution_motor_pb2"], motor_protos["market_snapshot_pb2"]
+    )
+    stub = _FakeMotorStub(SimpleNamespace(retained=True, audit_seq=7, detail=""))
+    sink = MotorGrpcSink(stub=stub, timeout_s=0.5, request_builder=builder)
+    receipt = await sink.retain_held(held, signal_message=signal_message, context=_context())
+    assert receipt.accepted and "seq=7" in receipt.detail
+    ((request, timeout),) = stub.calls
+    assert timeout == 0.5 and request.decision == held
+    assert request.context.signal == signal_message
+    assert request.context.blue_node_thesis == "BUY: momentum"
+    assert request.context.snapshot.mid_price == 190.5
+
+    refused = MotorGrpcSink(
+        stub=_FakeMotorStub(SimpleNamespace(retained=False, audit_seq=0, detail="no db")),
+        request_builder=builder,
+    )
+    receipt = await refused.retain_held(held, signal_message=signal_message, context=_context())
+    assert not receipt.accepted and "no db" in receipt.detail
+
+    down = MotorGrpcSink(
+        stub=_FakeMotorStub(error=ConnectionError("down")), request_builder=builder
+    )
+    with pytest.raises(SinkError, match="RetainHeldContext failed"):
+        await down.retain_held(held, signal_message=signal_message, context=_context())
+
+    no_builder = MotorGrpcSink(stub=_FakeMotorStub())
+    receipt = await no_builder.retain_held(held, signal_message=signal_message, context=_context())
+    assert not receipt.accepted
