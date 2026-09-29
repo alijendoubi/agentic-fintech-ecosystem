@@ -25,7 +25,7 @@ def base_url(pb: dict[str, Any]) -> Iterator[str]:
         holds=FakeHolds(pb, held_signal(pb)),
         audit=FakeAudit(),
         pb=pb,
-        policy=Policy(Decimal(1000), None, 0.0, True),
+        policy=Policy(Decimal(1000), None, 0.0),
         relay=FakeRelay(pb),
         clock_ns=lambda: NOW_NS,
     )

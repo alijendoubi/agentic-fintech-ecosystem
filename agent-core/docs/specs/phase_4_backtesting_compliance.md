@@ -121,7 +121,7 @@ Does not exist; compose and CI reference it. Requirements:
 2. Held-signal queue with countdown to `hold_expires_at_ns`; approve/reject via Aegis `ResolveHold`. Hard blocks are shown but cannot be overridden.
 3. Displays an "AI-generated signal" label on every proposal [EXISTING claim in the EU AI Act disclosure; currently unimplemented].
 4. Operator heartbeat control (Aegis `Heartbeat`), kill-switch trigger and multi-approver reset flow (`phase_3_aegis_execution.md` §5).
-5. Reverse-guardrail distress score and cooling period appear in `HITLOverrideRecord`. No DistilBERT classifier, training data or policy exists in the repo. TODO(owner): decide whether this is in scope; if not, remove the claim from the disclosure.
+5. Reverse-guardrail distress score and cooling period appear in `HITLOverrideRecord`. No DistilBERT classifier, training data or policy exists in the repo. Owner decision 2026-09-29: **out of scope**; the score field stays 0.0 and the claim is removed from the EU AI Act disclosure.
 6. Missing today: Dockerfile, package.json, tests. Compose publishes `3000:3000` to the host and sets `NEXT_PUBLIC_API_BASE_URL=http://localhost:4000`, an API that is not defined anywhere.
 
 ## 11. SHARP Step 4 automation
@@ -162,4 +162,4 @@ Does not exist; compose and CI reference it. Requirements:
 4. Aggregation rule for the collar; ADV window (§7).
 5. Scenario provenance and LLM contamination handling (§4.2, §7).
 6. KL monitor reference distribution and quantity (§8).
-7. HITL authentication scheme; whether the distress classifier is in scope (§10).
+7. HITL authentication scheme (distress classifier: out of scope, decided 2026-09-29) (§10).
