@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "status": "DRAFT",
+  "entries": [
+    {
+      "id": "flash-crash-2010",
+      "title": "May 6, 2010 Flash Crash",
+      "date": "2010-05-06",
+      "regimes": ["HIGH_VOL_CHOP", "CRISIS"],
+      "what_happened": "In an already stressed session, US equity indices fell several percent within minutes and largely recovered within about half an hour. Liquidity withdrew across E-mini futures and individual stocks; some stocks and ETFs traded at stub quotes of a penny or far above fair value, and many trades were later broken.",
+      "failure_pattern": "Displayed liquidity vanishes faster than prices move; a large automated sell program meeting thin books cascades through market makers and cross-market arbitrage. Market orders and stop orders fill at absurd prices.",
+      "lesson_for_red": "Challenge any thesis that assumes the quoted book will still be there when the order arrives; ask whether the plan relies on market or stop orders in a fast market and whether a price collar or halt would bind.",
+      "sources": ["https://www.sec.gov/news/studies/2010/marketevents-report.pdf", "https://en.wikipedia.org/wiki/2010_flash_crash"]
+    },
+    {
+      "id": "black-monday-1987",
+      "title": "Black Monday, October 19, 1987",
+      "date": "1987-10-19",
+      "regimes": ["CRISIS"],
+      "what_happened": "The Dow Jones Industrial Average fell by about 22 percent in a single day, the largest one-day percentage decline in its history, after a sharp run-up earlier that year. Portfolio-insurance selling and overwhelmed order handling amplified the fall.",
+      "failure_pattern": "Mechanical hedging strategies that sell into declines all act at once; a crowded risk-management rule becomes the source of the risk.",
+      "lesson_for_red": "Ask whether the trade depends on other participants' mechanical flows staying orderly, and what happens if everyone with the same rule acts together.",
+      "sources": ["https://en.wikipedia.org/wiki/Black_Monday_(1987)"]
+    },
+    {
+      "id": "knight-capital-2012",
+      "title": "Knight Capital trading-software failure",
+      "date": "2012-08-01",
+      "regimes": ["LOW_VOL_CHOP", "TRENDING_BULL", "TRENDING_BEAR", "HIGH_VOL_CHOP", "CRISIS"],
+      "what_happened": "A faulty deployment of order-routing software at Knight Capital sent a flood of unintended orders during the first minutes of trading, building large unwanted positions and a loss of roughly 440 million US dollars; the firm needed a rescue.",
+      "failure_pattern": "An operational defect, not a market view, produced runaway order flow; there was no effective automated kill switch or position limit to stop it quickly.",
+      "lesson_for_red": "Regardless of the market thesis, ask what bounds the damage if our own system misbehaves: order-rate limits, position caps, and a kill switch that actually cancels open orders.",
+      "sources": ["https://en.wikipedia.org/wiki/Knight_Capital_Group"]
+    },
+    {
+      "id": "covid-crash-2020",
+      "title": "COVID-19 market crash, March 2020",
+      "date": "2020-03-16",
+      "regimes": ["CRISIS", "HIGH_VOL_CHOP"],
+      "what_happened": "US equities fell roughly a third from their February peak within weeks. Market-wide circuit breakers halted US trading several times in March 2020, volatility indices reached levels not seen since 2008, and credit and funding markets needed emergency central-bank support.",
+      "failure_pattern": "An exogenous shock reprices every asset at once; correlations go to one, historical volatility estimates are stale within days, and liquidity is scarcest exactly when positions must be cut.",
+      "lesson_for_red": "Challenge sizing and stops calibrated on recent calm data; ask what happens if correlations jump to one and trading halts before the exit.",
+      "sources": ["https://en.wikipedia.org/wiki/2020_stock_market_crash"]
+    },
+    {
+      "id": "gamestop-squeeze-2021",
+      "title": "GameStop short squeeze, January 2021",
+      "date": "2021-01-28",
+      "regimes": ["TRENDING_BULL", "HIGH_VOL_CHOP"],
+      "what_happened": "Heavy retail buying and call-option activity drove GameStop and other heavily shorted stocks up many-fold within days, inflicting large losses on short sellers. Several brokers then restricted buying in the affected names.",
+      "failure_pattern": "A crowded short in a small-float name meets coordinated buying and option-dealer hedging; losses on a short are unbounded and exit liquidity disappears.",
+      "lesson_for_red": "For any short or fade thesis, ask about short interest, borrow availability and option-driven hedging flows, and whether broker or venue restrictions could trap the position.",
+      "sources": ["https://en.wikipedia.org/wiki/GameStop_short_squeeze"]
+    },
+    {
+      "id": "ltcm-1998",
+      "title": "Long-Term Capital Management collapse",
+      "date": "1998-09-23",
+      "regimes": ["CRISIS"],
+      "what_happened": "After the Russian default in August 1998, spreads that LTCM had bet would converge widened instead. The highly leveraged fund lost most of its capital within weeks, and a consortium of banks recapitalised it under Federal Reserve coordination.",
+      "failure_pattern": "Convergence trades that look low-risk in normal times carry hidden tail and liquidity risk; high leverage plus crowded positions turns a spread widening into forced liquidation.",
+      "lesson_for_red": "Ask whether the expected edge assumes mean reversion that a flight to quality could delay for longer than the position can survive, and how leverage and crowding change that.",
+      "sources": ["https://en.wikipedia.org/wiki/Long-Term_Capital_Management"]
+    },
+    {
+      "id": "dotcom-bust-2000",
+      "title": "Dot-com bubble peak and bust",
+      "date": "2000-03-10",
+      "regimes": ["TRENDING_BULL", "TRENDING_BEAR"],
+      "what_happened": "The Nasdaq Composite peaked in March 2000 after a multi-year surge in internet stocks, then fell by about three quarters over the following two and a half years.",
+      "failure_pattern": "Momentum and narrative carry prices far past fundamentals; the trend that looked like confirmation reverses into a long bear market, and dip-buying keeps losing.",
+      "lesson_for_red": "In strong uptrends, ask what valuation or breadth evidence supports the move beyond momentum itself; in a new downtrend, challenge buy-the-dip reasoning built in the prior regime.",
+      "sources": ["https://en.wikipedia.org/wiki/Dot-com_bubble"]
+    },
+    {
+      "id": "lehman-2008",
+      "title": "Lehman Brothers bankruptcy and the 2008 crisis",
+      "date": "2008-09-15",
+      "regimes": ["CRISIS", "TRENDING_BEAR"],
+      "what_happened": "Lehman Brothers filed for bankruptcy on September 15, 2008. Funding markets froze, a large money-market fund broke the buck, and equities fell sharply over the following months amid bank failures and government rescues.",
+      "failure_pattern": "Counterparty and funding risk dominate market risk; assets assumed liquid become unsellable, and short-selling bans and emergency rules change the playing field mid-trade.",
+      "lesson_for_red": "Ask whether the trade depends on a counterparty, broker or funding source that could fail, and whether regulators could change the rules (short-sale bans, halts) before exit.",
+      "sources": ["https://en.wikipedia.org/wiki/2007%E2%80%932008_financial_crisis"]
+    },
+    {
+      "id": "quant-quake-2007",
+      "title": "Quant equity deleveraging, August 2007",
+      "date": "2007-08-09",
+      "regimes": ["LOW_VOL_CHOP", "HIGH_VOL_CHOP"],
+      "what_happened": "In early August 2007, many long-short quantitative equity funds suffered sharp losses over a few days while broad indices moved comparatively little. Research attributes this to the rapid unwinding of similar factor portfolios by one or more large funds.",
+      "failure_pattern": "Many strategies hold the same factor bets; one forced seller's unwind moves every similar portfolio against its holders, invisible in index-level volatility.",
+      "lesson_for_red": "Challenge signals that look independent but share common factors with crowded strategies; calm index volatility does not mean a crowded factor is safe.",
+      "sources": ["https://www.nber.org/papers/w14465"]
+    },
+    {
+      "id": "momentum-crash-2009",
+      "title": "Momentum crash in the 2009 rebound",
+      "date": "2009-03-09",
+      "regimes": ["TRENDING_BULL", "HIGH_VOL_CHOP"],
+      "what_happened": "After the 2008 bear market, equities rebounded sharply from March 2009. Stocks that had fallen most rallied hardest, so momentum strategies that were short recent losers and long recent winners suffered severe losses.",
+      "failure_pattern": "Momentum strategies crash in panic rebounds after a bear market: the short leg is packed with the highest-beta losers, which snap back hardest when the regime turns.",
+      "lesson_for_red": "When a signal leans on recent trend persistence right after a market-wide drawdown, ask whether a sharp rebound would hit the short side hardest.",
+      "sources": ["https://www.nber.org/papers/w20439"]
+    },
+    {
+      "id": "us-downgrade-2011",
+      "title": "US credit downgrade sell-off, August 2011",
+      "date": "2011-08-08",
+      "regimes": ["HIGH_VOL_CHOP", "TRENDING_BEAR"],
+      "what_happened": "After Standard & Poor's downgraded the US long-term credit rating on August 5, 2011, amid the euro-area debt crisis, US equities fell steeply on August 8 and volatility stayed elevated for weeks.",
+      "failure_pattern": "A scheduled or announced macro event over a weekend produces a gap open no stop can protect; policy headlines then drive large two-way swings.",
+      "lesson_for_red": "Ask whether a known event (rating decision, vote, policy meeting) falls inside the holding period and whether the position can survive a gap through its stop.",
+      "sources": ["https://en.wikipedia.org/wiki/August_2011_stock_markets_fall"]
+    },
+    {
+      "id": "etf-dislocation-2015",
+      "title": "August 24, 2015 open and ETF dislocations",
+      "date": "2015-08-24",
+      "regimes": ["HIGH_VOL_CHOP", "CRISIS"],
+      "what_happened": "After a sell-off in China, US equities opened sharply lower on August 24, 2015. Many stocks and ETFs opened late or were repeatedly halted by limit-up/limit-down bands, and some ETFs traded far below the value of their holdings; stop orders filled at extreme prices.",
+      "failure_pattern": "At a disorderly open, price discovery is incomplete: ETF prices detach from their underlying value and stop orders become market orders into an empty book.",
+      "lesson_for_red": "Challenge any plan that trades the first minutes of a stressed open or uses stop-market exits on ETFs; ask whether a limit or delayed entry is safer.",
+      "sources": ["https://en.wikipedia.org/wiki/2015%E2%80%932016_stock_market_selloff"]
+    },
+    {
+      "id": "brexit-vote-2016",
+      "title": "Brexit referendum result",
+      "date": "2016-06-24",
+      "regimes": ["HIGH_VOL_CHOP"],
+      "what_happened": "The UK voted to leave the European Union in a referendum held on June 23, 2016, against what markets had largely priced in. Sterling fell sharply overnight and global equities dropped on June 24 before recovering over the following weeks.",
+      "failure_pattern": "A binary event whose consensus outcome is priced in; when the other outcome happens, positions built on the consensus gap against their holders.",
+      "lesson_for_red": "Ask whether the thesis silently assumes the market-implied outcome of a pending binary event, and what the position does if the other outcome happens.",
+      "sources": ["https://en.wikipedia.org/wiki/2016_United_Kingdom_European_Union_membership_referendum"]
+    },
+    {
+      "id": "archegos-2021",
+      "title": "Archegos Capital forced liquidation",
+      "date": "2021-03-26",
+      "regimes": ["TRENDING_BULL", "HIGH_VOL_CHOP"],
+      "what_happened": "Archegos Capital held large, concentrated, leveraged positions through total return swaps with several banks. When some of the stocks fell and margin calls went unmet, the banks sold very large blocks, driving those stocks down sharply and causing multi-billion-dollar losses at some banks.",
+      "failure_pattern": "Hidden concentration: one leveraged holder's forced liquidation dominates price action in otherwise ordinary names, independent of fundamentals.",
+      "lesson_for_red": "When a stock moves violently without news, ask whether forced block selling by a leveraged holder could continue, rather than treating the drop as a mispricing to buy.",
+      "sources": ["https://en.wikipedia.org/wiki/Archegos_Capital_Management"]
+    },
+    {
+      "id": "svb-collapse-2023",
+      "title": "Silicon Valley Bank collapse, March 2023",
+      "date": "2023-03-10",
+      "regimes": ["CRISIS", "HIGH_VOL_CHOP"],
+      "what_happened": "Silicon Valley Bank failed on March 10, 2023, after a rapid deposit run triggered by losses on its bond portfolio. Regional bank stocks fell sharply, several were halted repeatedly, and further bank failures and emergency measures followed.",
+      "failure_pattern": "A sector-wide confidence shock spreads through stocks that share a vulnerability; news moves faster than fundamentals can be assessed, and halts interrupt exits.",
+      "lesson_for_red": "For any position in a sector under a confidence shock, ask whether contagion to peers with the same exposure is already priced, and whether halts could trap the position.",
+      "sources": ["https://en.wikipedia.org/wiki/Collapse_of_Silicon_Valley_Bank"]
+    },
+    {
+      "id": "bear-market-2022",
+      "title": "2022 rate-driven bear market",
+      "date": "2022-06-13",
+      "regimes": ["TRENDING_BEAR"],
+      "what_happened": "As inflation rose and the Federal Reserve raised rates rapidly through 2022, US equities entered a bear market, with long-duration growth stocks falling furthest; bonds fell at the same time, so the usual stock-bond diversification failed.",
+      "failure_pattern": "A persistent macro regime change: rallies fade repeatedly, and relationships that held for a decade (bonds hedging equities, growth outperforming) break down.",
+      "lesson_for_red": "In a downtrend, challenge long theses that rely on relationships learned in the previous low-rate regime, and ask whether a bounce is a trend change or another bear-market rally.",
+      "sources": ["https://en.wikipedia.org/wiki/2022_stock_market_decline"]
+    }
+  ]
+}

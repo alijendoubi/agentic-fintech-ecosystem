@@ -12,6 +12,9 @@ from .errors import MemoryValidationError
 MAX_TEXT_CHARS = 8000
 MS_PER_DAY = 86_400_000
 MAX_RETENTION_DAYS = 3650
+#: Seed scenarios are curated reference data dated at historical events: age-based expiry would
+#: drop them on load. They are removed only by an explicit reload/delete (ALI-157).
+SEED_EXPIRES_MS = 2**62
 
 _RECORD_ID = re.compile(r"[A-Za-z0-9._:\-]{1,128}")
 _SYMBOL = re.compile(r"[A-Z0-9.\-]{1,32}")
@@ -21,6 +24,7 @@ _REGIME = re.compile(r"[A-Z_]{1,32}")
 class MemoryKind(StrEnum):
     DEBATE_OUTCOME = "debate_outcome"
     POST_TRADE_REFLECTION = "post_trade_reflection"
+    SEED_SCENARIO = "seed_scenario"  # curated public market event (seed.py), not our trade
 
 
 class Outcome(StrEnum):
@@ -111,6 +115,8 @@ class RetentionPolicy:
                 raise MemoryValidationError(f"{name} must be an int in [1, {MAX_RETENTION_DAYS}]")
 
     def expires_at_ms(self, kind: MemoryKind, ts_ms: int) -> int:
+        if kind == MemoryKind.SEED_SCENARIO:
+            return SEED_EXPIRES_MS
         days = self.debate_days if kind == MemoryKind.DEBATE_OUTCOME else self.reflection_days
         return ts_ms + days * MS_PER_DAY
 
