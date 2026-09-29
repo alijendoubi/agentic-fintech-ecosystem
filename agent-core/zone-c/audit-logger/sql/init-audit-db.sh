@@ -14,6 +14,29 @@ set -euo pipefail
 : "${AFE_AUDIT_OWNER_PASSWORD:?AFE_AUDIT_OWNER_PASSWORD is required}"
 : "${AFE_AUDIT_APP_PASSWORD:?AFE_AUDIT_APP_PASSWORD is required}"
 
+# ALI-21: refuse template values, short passwords and a shared password before any role exists.
+check_password() { # $1 = variable name, $2 = value
+  local lowered
+  lowered="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+  if [ "${#2}" -lt 16 ]; then
+    echo "init-audit-db: $1 must be at least 16 characters" >&2
+    exit 1
+  fi
+  case "$lowered" in
+    *change-me* | *change_me* | *changeme* | *replace-me* | *replaceme* | *placeholder* | \
+      *your-secret* | *yoursecret* | *example* | *default* | *password*)
+      echo "init-audit-db: $1 looks like a placeholder; set a random value" >&2
+      exit 1
+      ;;
+  esac
+}
+check_password AFE_AUDIT_OWNER_PASSWORD "$AFE_AUDIT_OWNER_PASSWORD"
+check_password AFE_AUDIT_APP_PASSWORD "$AFE_AUDIT_APP_PASSWORD"
+if [ "$AFE_AUDIT_OWNER_PASSWORD" = "$AFE_AUDIT_APP_PASSWORD" ]; then
+  echo "init-audit-db: AFE_AUDIT_OWNER_PASSWORD and AFE_AUDIT_APP_PASSWORD must differ" >&2
+  exit 1
+fi
+
 AFE_AUDIT_SQL_DIR="${AFE_AUDIT_SQL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/migrations}"
 export AFE_AUDIT_OWNER_PASSWORD AFE_AUDIT_APP_PASSWORD
 

@@ -134,3 +134,18 @@ def test_credentials_never_appear_in_repr_or_str() -> None:
     for text in (repr(CREDS), str(CREDS), repr(AlpacaPaperBroker(CREDS))):
         assert "PKTESTKEY123" not in text
         assert "SECRETVALUE456" not in text
+
+
+@pytest.mark.parametrize(
+    ("key", "secret"),
+    [
+        ("change-me", "SECRETVALUE456"),
+        ("PKTESTKEY123", "your-secret-here"),
+        ("PLACEHOLDER", "PLACEHOLDER"),
+        ("PKTESTKEY123", "replace_me".replace("_", "-")),
+    ],
+)
+def test_placeholder_credentials_are_refused_at_startup(key: str, secret: str) -> None:
+    """ALI-21: a template value must stop the motor before any request carries it."""
+    with pytest.raises(ConfigError, match="placeholder"):
+        alpaca_broker_from_env({"ALPACA_API_KEY": key, "ALPACA_SECRET_KEY": secret})

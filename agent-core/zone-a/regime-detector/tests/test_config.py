@@ -24,10 +24,32 @@ def test_model_dir_wins_over_legacy_path() -> None:
     assert Settings.from_env(env).model_dir == Path("/data/m")
 
 
+GOOD_KEY = "q7Xv2LmR9sTz4WbN8cKp1HdF6gJy3AeU"
+
+
 def test_hmac_key_is_bytes_and_min_length_enforced() -> None:
-    assert Settings.from_env({"MODEL_HMAC_KEY": "k" * 32}).model_hmac_key == b"k" * 32
+    assert Settings.from_env({"MODEL_HMAC_KEY": GOOD_KEY}).model_hmac_key == GOOD_KEY.encode()
     with pytest.raises(ConfigError):
         Settings.from_env({"MODEL_HMAC_KEY": "short"})
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "change-me-in-production-change-me-in-production",
+        "PLACEHOLDER-" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4",
+        "my-default-hmac-key-0123456789abcdef",
+    ],
+)
+def test_hmac_key_placeholder_is_rejected(key: str) -> None:
+    """ALI-21: a placeholder must stop the process, not silently authenticate models."""
+    with pytest.raises(ConfigError, match="placeholder"):
+        Settings.from_env({"MODEL_HMAC_KEY": key})
+
+
+def test_hmac_key_with_too_few_distinct_chars_is_rejected() -> None:
+    with pytest.raises(ConfigError, match="distinct chars"):
+        Settings.from_env({"MODEL_HMAC_KEY": "k" * 32})
 
 
 @pytest.mark.parametrize(

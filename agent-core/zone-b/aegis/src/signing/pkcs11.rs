@@ -65,14 +65,42 @@ fn find_slot(ctx: &Pkcs11, token_label: &str) -> Result<Slot, SignError> {
     )))
 }
 
+/// Template values that must never reach an HSM login (ALI-21). Same list as the HITL terminal
+/// (`zone-c/hitl-interface/src/lib/config.ts`), minus "password", which a real PIN may contain.
+const PLACEHOLDER_FRAGMENTS: [&str; 10] = [
+    "change-me",
+    "change_me",
+    "changeme",
+    "replace-me",
+    "replaceme",
+    "placeholder",
+    "your-secret",
+    "yoursecret",
+    "example",
+    "default",
+];
+
+/// Strips the trailing newline and refuses an empty or placeholder PIN. The error text never
+/// contains the PIN itself.
+fn validate_pin(raw: &str) -> Result<&str, SignError> {
+    let pin = raw.trim_end_matches(['\r', '\n']);
+    if pin.trim().is_empty() {
+        return Err(SignError::Unavailable("pin file is empty".into()));
+    }
+    let lowered = pin.to_ascii_lowercase();
+    if PLACEHOLDER_FRAGMENTS.iter().any(|f| lowered.contains(f)) {
+        return Err(SignError::Unavailable(
+            "pin file holds a placeholder value".into(),
+        ));
+    }
+    Ok(pin)
+}
+
 fn read_pin(cfg: &Pkcs11Config) -> Result<AuthPin, SignError> {
     let raw =
         std::fs::read_to_string(&cfg.pin_file).map_err(|e| unavailable("read pin file", e))?;
-    Ok(AuthPin::new(
-        raw.trim_end_matches(['\r', '\n'])
-            .to_owned()
-            .into_boxed_str(),
-    ))
+    let pin = validate_pin(&raw)?;
+    Ok(AuthPin::new(pin.to_owned().into_boxed_str()))
 }
 
 fn open(ctx: &Pkcs11, slot: Slot, cfg: &Pkcs11Config) -> Result<Live, SignError> {
@@ -199,4 +227,35 @@ fn strip_der_octet_string(der: &[u8]) -> Vec<u8> {
 pub fn build_signer(cfg: &Pkcs11Config) -> Result<HsmSigner, SignError> {
     let backend = CryptokiBackend::connect(cfg)?;
     HsmSigner::new(&cfg.key_label, Box::new(backend))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pin_trailing_newline_is_stripped() {
+        assert_eq!(validate_pin("493817\n").unwrap(), "493817");
+        assert_eq!(validate_pin("493817\r\n").unwrap(), "493817");
+    }
+
+    #[test]
+    fn empty_pin_is_refused() {
+        for raw in ["", "\n", "   \n"] {
+            assert!(matches!(validate_pin(raw), Err(SignError::Unavailable(_))));
+        }
+    }
+
+    #[test]
+    fn placeholder_pin_is_refused_without_echoing_it() {
+        for raw in ["change-me\n", "PLACEHOLDER", "default-pin-1234"] {
+            match validate_pin(raw) {
+                Err(SignError::Unavailable(msg)) => {
+                    assert!(msg.contains("placeholder"));
+                    assert!(!msg.contains(raw.trim_end()));
+                }
+                other => panic!("expected refusal, got {other:?}"),
+            }
+        }
+    }
 }

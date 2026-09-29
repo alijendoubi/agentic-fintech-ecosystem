@@ -39,6 +39,7 @@ bash agent-core/shared/proto/generate.sh    # Python stubs (needs grpcio-tools)
 # Compose (full dev stack first started 2026-09-25, ALI-167). Dev needs the dev-tls bootstrap first:
 cd agent-core/infrastructure/dev-tls && sh generate-dev-certs.sh --yes-i-know-this-is-dev-only
 cd .. && cp .env.example .env    # fill every blank; secrets are ${VAR:?}
+bash check-env.sh                  # refuses placeholder/short secrets before anything starts (ALI-21)
 docker compose config
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # dev only: host ports, dev mTLS certs, dev signer
 

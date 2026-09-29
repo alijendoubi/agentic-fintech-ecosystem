@@ -209,4 +209,11 @@ def test_init_procedure_rejects_weak_or_identical_passwords() -> None:
     same = "s" * 20
     result = run_failing_init({"AFE_AUDIT_OWNER_PASSWORD": same, "AFE_AUDIT_APP_PASSWORD": same})
     assert result.returncode != 0
-    assert "division by zero" in result.stdout + result.stderr
+    # ALI-21: the shell guard refuses before psql runs; the SQL guard stays as a second line.
+    assert "must differ" in result.stdout + result.stderr
+
+
+def test_init_procedure_rejects_placeholder_passwords() -> None:
+    result = run_failing_init({"AFE_AUDIT_OWNER_PASSWORD": "change-me-in-production"})
+    assert result.returncode != 0
+    assert "looks like a placeholder" in result.stdout + result.stderr

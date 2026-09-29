@@ -21,7 +21,7 @@ from regime_detector.publisher import RegimePublisher
 from regime_detector.questdb_client import BarRows
 from regime_detector.service import RegimeService
 
-KEY = "k" * 32
+KEY = "q7Xv2LmR9sTz4WbN8cKp1HdF6gJy3AeU"
 NOW = 1_800_000_000.0
 
 
