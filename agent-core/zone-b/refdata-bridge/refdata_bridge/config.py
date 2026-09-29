@@ -19,6 +19,8 @@ DEFAULT_REGIME_CHANNEL = "regime:labels"
 DEFAULT_HEARTBEAT_PATH = "/tmp/refdata-bridge.heartbeat"  # noqa: S108 - container-local file
 
 ENVIRONMENT_VAR = "ENVIRONMENT"
+# Same set and fail-closed default as execution-motor / Aegis: unset means production.
+ENVIRONMENTS = frozenset({"production", "staging", "development", "test"})
 TLS_CA_VAR = "REFDATA_CLIENT_TLS_CA"
 TLS_CERT_VAR = "REFDATA_CLIENT_TLS_CERT"
 TLS_KEY_VAR = "REFDATA_CLIENT_TLS_KEY"
@@ -56,7 +58,9 @@ class Settings:
         """Build settings from ``env`` (defaults to ``os.environ``)."""
         source = os.environ if env is None else env
         tls_ca, tls_cert, tls_key = _tls_paths(source)
-        environment = _text(source, ENVIRONMENT_VAR, "development").lower()
+        environment = _text(source, ENVIRONMENT_VAR, "production").lower()
+        if environment not in ENVIRONMENTS:
+            raise ConfigError(f"{ENVIRONMENT_VAR} must be one of {sorted(ENVIRONMENTS)}")
         if environment == "production" and tls_ca is None:
             raise ConfigError(
                 f"{ENVIRONMENT_VAR}=production refuses an insecure Aegis channel: set "

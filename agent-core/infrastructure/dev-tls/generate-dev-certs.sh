@@ -210,9 +210,40 @@ issue_cert client refdata-bridge     refdata-bridge     ""
 issue_cert client aegis-supervisor   aegis-supervisor   ""
 
 # ----------------------------------------------------------------------------
+# 3b. DEV ONLY attestation signing key (ALI-167)
+#     Aegis's dev signer (AEGIS_SIGNER=dev) otherwise generates a random key in
+#     memory at every start, which execution-motor cannot know, so no approved
+#     decision could ever verify at the motor. Pin it: a 32-byte Ed25519 seed for
+#     Aegis (AEGIS_DEV_SIGNING_SEED_FILE) and the matching public key for the
+#     motor (MOTOR_ATTESTATION_KEYS_FILE). key_id follows Aegis's dev signer:
+#     "dev-ed25519-" + first 16 hex chars of SHA-256(raw public key).
+# ----------------------------------------------------------------------------
+hex_of() { od -An -v -tx1 | tr -d ' 
+'; }
+
+SIGNER_DIR="$OUT_DIR/aegis-signer"
+mkdir -p "$SIGNER_DIR"
+openssl genpkey -algorithm ed25519 -out "$WORK_DIR/signer.pem"
+SEED_HEX=$(openssl pkey -in "$WORK_DIR/signer.pem" -outform DER | tail -c 32 | hex_of)
+openssl pkey -in "$WORK_DIR/signer.pem" -pubout -outform DER | tail -c 32 > "$WORK_DIR/signer.pub.raw"
+PUB_HEX=$(hex_of < "$WORK_DIR/signer.pub.raw")
+FPR_HEX=$(openssl dgst -sha256 -r "$WORK_DIR/signer.pub.raw" | cut -c1-16)
+if [ ${#SEED_HEX} -ne 64 ] || [ ${#PUB_HEX} -ne 64 ] || [ ${#FPR_HEX} -ne 16 ]; then
+    echo "error: could not derive the dev Ed25519 signing key" >&2
+    exit 1
+fi
+KEY_ID="dev-ed25519-$FPR_HEX"
+printf '%s
+' "$SEED_HEX" > "$SIGNER_DIR/seed.hex"
+chmod 600 "$SIGNER_DIR/seed.hex" 2>/dev/null || true
+printf '[{"key_id": "%s", "algorithm": "ED25519", "public_key_hex": "%s"}]
+'     "$KEY_ID" "$PUB_HEX" > "$OUT_DIR/execution-motor/attestation-keys.json"
+echo "  dev attestation signer: key_id=$KEY_ID (seed in $SIGNER_DIR, public key in execution-motor/)"
+
+# ----------------------------------------------------------------------------
 # 4. Per-directory DEV ONLY README (also see ./README.md for the full guide)
 # ----------------------------------------------------------------------------
-for d in aegis cognitive-core execution-motor refdata-bridge aegis-supervisor; do
+for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor; do
     cat > "$OUT_DIR/$d/README.md" <<EOF
 # DEV ONLY - NOT FOR PRODUCTION
 

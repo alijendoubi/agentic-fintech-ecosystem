@@ -94,7 +94,7 @@ does not need the HTTP port exposed.
 | `REFDATA_CLIENT_TLS_CA` | unset | PEM CA Aegis's server certificate chains to. |
 | `REFDATA_CLIENT_TLS_CERT` | unset | This service's client certificate PEM (CN in Aegis's `market-data-writer` role). |
 | `REFDATA_CLIENT_TLS_KEY` | unset | Private key PEM for `REFDATA_CLIENT_TLS_CERT`. |
-| `ENVIRONMENT` | `development` | `production` refuses to start without `REFDATA_CLIENT_TLS_CA` (no plaintext Aegis channel in production). |
+| `ENVIRONMENT` | `production` | One of `production`, `staging`, `development`, `test` (anything else refuses to start). Unset means production, like execution-motor and Aegis. `production` refuses to start without `REFDATA_CLIENT_TLS_CA` (no plaintext Aegis channel in production). |
 | `AFE_PROTO_DIR` | `agent-core/shared/generated` (relative to this package) | Directory holding the generated `aegis_pb2*`/`market_snapshot_pb2` modules. |
 | `BATCH_INTERVAL_S` | `1.0` | Push cycle period. |
 | `MAX_BATCH_SNAPSHOTS` | `64` | Max snapshots per `PushReferenceData` call. |
