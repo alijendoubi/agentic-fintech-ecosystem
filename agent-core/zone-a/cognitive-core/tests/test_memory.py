@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from cognitive_core import prompts
@@ -91,7 +92,7 @@ async def test_any_failure_is_unavailable_never_ok_and_empty() -> None:
 @pytest.mark.asyncio
 async def test_slow_provider_times_out_as_unavailable() -> None:
     class Slow:
-        async def recall(self, **_: object) -> list[object]:
+        async def recall(self, **_: object) -> list[Any]:
             await asyncio.sleep(5)
             return []
 
@@ -116,7 +117,7 @@ async def test_malformed_hit_is_unavailable() -> None:
 @pytest.mark.asyncio
 async def test_cancellation_is_not_swallowed() -> None:
     class Cancelled:
-        async def recall(self, **_: object) -> list[object]:
+        async def recall(self, **_: object) -> list[Any]:
             raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
@@ -231,8 +232,12 @@ def _debate(**updates: object) -> DebateState:
         "blue_thesis": BlueThesis(side=SignalSide.BUY, rationale="r"),
         "red_challenge": RedChallenge(),
         "judge_verdict": JudgeVerdict(
-            side=SignalSide.BUY, omega=0.7, p_success=0.6, p_failure=0.4,
-            reward_estimate=2.0, risk_estimate=1.0,
+            side=SignalSide.BUY,
+            omega=0.7,
+            p_success=0.6,
+            p_failure=0.4,
+            reward_estimate=2.0,
+            risk_estimate=1.0,
         ),
     }
     return DebateState(**{**base, **updates})

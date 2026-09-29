@@ -48,7 +48,9 @@ def test_symbol_and_kind_filters_combine_with_regime(store_factory: StoreFactory
     store.add(make_record("b", symbol="MSFT"))
     store.add(make_record("c", symbol="AAPL", kind=MemoryKind.POST_TRADE_REFLECTION))
     hits = store.query(
-        "breakout above resistance", regime="TRENDING_BULL", symbol="AAPL",
+        "breakout above resistance",
+        regime="TRENDING_BULL",
+        symbol="AAPL",
         kind=MemoryKind.POST_TRADE_REFLECTION,
     )
     assert [h.record.record_id for h in hits] == ["c"]

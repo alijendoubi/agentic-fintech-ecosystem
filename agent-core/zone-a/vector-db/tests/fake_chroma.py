@@ -35,7 +35,10 @@ class FakeCollection:
     def upsert(self, **kwargs: Any) -> None:
         self._check("upsert", kwargs)
         for rid, emb, doc, meta in zip(
-            kwargs["ids"], kwargs["embeddings"], kwargs["documents"], kwargs["metadatas"],
+            kwargs["ids"],
+            kwargs["embeddings"],
+            kwargs["documents"],
+            kwargs["metadatas"],
             strict=True,
         ):
             self.rows[rid] = (emb, doc, meta)

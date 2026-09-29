@@ -24,8 +24,12 @@ def _adapter(
 async def test_write_debate_then_recall_round_trip() -> None:
     adapter, store = _adapter()
     await adapter.write_debate(
-        signal_id="sig-9", symbol="AAPL", regime="CRISIS", ts_ms=NOW_MS,
-        outcome="abstain", text="Judge abstained: omega below threshold in crisis",
+        signal_id="sig-9",
+        symbol="AAPL",
+        regime="CRISIS",
+        ts_ms=NOW_MS,
+        outcome="abstain",
+        text="Judge abstained: omega below threshold in crisis",
     )
     (view,) = await adapter.recall(symbol="MSFT", regime="CRISIS", query_text="omega abstained")
     assert view.kind == "debate_outcome"
@@ -93,7 +97,12 @@ def test_top_k_must_be_positive() -> None:
 
 def test_outcome_values_are_the_documented_set() -> None:
     assert {o.value for o in Outcome} == {
-        "pending", "abstain", "win", "loss", "breakeven", "unknown",
+        "pending",
+        "abstain",
+        "win",
+        "loss",
+        "breakeven",
+        "unknown",
     }
 
 

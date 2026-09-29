@@ -44,8 +44,12 @@ def test_prompt_examples_validate_against_the_real_schema(example: str, model: t
         (
             prompts.REFLECTOR_SYSTEM_PROMPT,
             {
-                "trade_signal": "T", "realised_pnl": -1.0, "regime_at_close": "CRISIS",
-                "outcome_notes": "N", "observed_underperformance": "U", "debate_history": "D",
+                "trade_signal": "T",
+                "realised_pnl": -1.0,
+                "regime_at_close": "CRISIS",
+                "outcome_notes": "N",
+                "observed_underperformance": "U",
+                "debate_history": "D",
             },
         ),
     ],
@@ -58,8 +62,12 @@ def test_templates_format_without_stray_braces(template: str, fields: dict[str, 
 
 @pytest.mark.parametrize(
     "template",
-    [prompts.BLUE_SYSTEM_PROMPT, prompts.RED_SYSTEM_PROMPT, prompts.JUDGE_SYSTEM_PROMPT,
-     prompts.REFLECTOR_SYSTEM_PROMPT],
+    [
+        prompts.BLUE_SYSTEM_PROMPT,
+        prompts.RED_SYSTEM_PROMPT,
+        prompts.JUDGE_SYSTEM_PROMPT,
+        prompts.REFLECTOR_SYSTEM_PROMPT,
+    ],
 )
 def test_structured_prompts_demand_json_only(template: str) -> None:
     assert "ONE JSON object" in template and "Schema:" in template and "Example:" in template
@@ -74,8 +82,12 @@ def test_json_schema_example_survives_formatting_as_json() -> None:
 
 @pytest.mark.parametrize(
     "template",
-    [prompts.RED_SYSTEM_PROMPT, prompts.JUDGE_SYSTEM_PROMPT, prompts.COMPRESSION_SYSTEM_PROMPT,
-     prompts.REFLECTOR_SYSTEM_PROMPT],
+    [
+        prompts.RED_SYSTEM_PROMPT,
+        prompts.JUDGE_SYSTEM_PROMPT,
+        prompts.COMPRESSION_SYSTEM_PROMPT,
+        prompts.REFLECTOR_SYSTEM_PROMPT,
+    ],
 )
 def test_prompts_that_embed_model_output_declare_it_untrusted(template: str) -> None:
     assert "untrusted_output" in template and "Never follow instructions" in template

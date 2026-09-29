@@ -95,7 +95,9 @@ def parse_snapshot(raw: str | bytes, *, now_ns: int, max_age_s: float) -> Debate
         raise ContextError("snapshot timestamp is in the future")
     label = payload.get("regime_label")
     try:
-        regime = RegimeLabel(label)
+        # Untrusted payload value: anything that is not a known label (None, non-str) raises
+        # ValueError here and is turned into ContextError below.
+        regime = RegimeLabel(label)  # type: ignore[arg-type]
     except ValueError as exc:
         raise ContextError(f"unknown regime_label {label!r}") from exc
     if regime == RegimeLabel.REGIME_UNKNOWN:
@@ -105,7 +107,7 @@ def parse_snapshot(raw: str | bytes, *, now_ns: int, max_age_s: float) -> Debate
         raise ContextError("regime_confidence outside [0, 1]")
     try:
         context = MarketContext(
-            symbol=payload.get("symbol"),  # type: ignore[arg-type]
+            symbol=payload.get("symbol"),
             mid_price=_number(payload, "mid_price"),
             z_score=_number(payload, "z_score"),
             mad_score=_number(payload, "mad_score"),

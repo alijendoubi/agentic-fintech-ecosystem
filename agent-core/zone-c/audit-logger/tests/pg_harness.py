@@ -156,7 +156,10 @@ def run_failing_init(env_overrides: dict[str, str | None]) -> subprocess.Complet
 
 _TRIGGERS_ALWAYS = (
     "audit_events_chain_insert",
-    "audit_events_no_update", "audit_events_no_delete", "audit_events_no_truncate")
+    "audit_events_no_update",
+    "audit_events_no_delete",
+    "audit_events_no_truncate",
+)
 
 
 def _super_exec(pg: PgInstance, statements: list[str]) -> None:

@@ -101,9 +101,7 @@ async def _subscribe_once(
         log.info("redis_subscriber_listening", channel=channel)
         try:
             while not shutdown.is_set():
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=1.0
-                )
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message is None:
                     continue
                 data = message.get("data")

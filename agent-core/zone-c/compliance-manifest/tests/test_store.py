@@ -41,7 +41,10 @@ def test_put_writes_a_read_only_file_and_audits_it(
     assert stored.seq == 1
     assert stored.path.name == "000000000001.json"
     assert stored.path.read_text(encoding="utf-8").strip() == built.document_json
-    assert not os.access(stored.path, os.W_OK)
+    # root bypasses permission checks, so os.access(W_OK) is always True for euid 0 (e.g. a
+    # container). The mode-bit assertion below checks the read-only property for every user.
+    if os.geteuid() != 0:
+        assert not os.access(stored.path, os.W_OK)
     assert not stored.path.stat().st_mode & stat.S_IWUSR
     assert audit.events == [
         (

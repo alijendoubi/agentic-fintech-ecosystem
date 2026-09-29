@@ -95,9 +95,7 @@ def deserialize_model(payload: bytes, symbol: str) -> TrainedModel:
         raise ModelError("model metadata does not match this symbol/version")
     if not (np.isfinite(scaler.mean).all() and (scaler.scale > 0).all()):
         raise ModelError("scaler parameters are invalid")
-    model = assemble_model(
-        params, scaler, float(meta["trained_at"]), int(meta["n_train_rows"])
-    )
+    model = assemble_model(params, scaler, float(meta["trained_at"]), int(meta["n_train_rows"]))
     if [label.value for label in model.labels] != meta.get("state_labels"):
         raise ModelError("stored state labels disagree with the deterministic assignment")
     return model
@@ -167,4 +165,3 @@ class ModelStore:
         model = deserialize_model(payload, symbol)
         log.info("model_loaded", symbol=symbol, path=str(path))
         return model
-

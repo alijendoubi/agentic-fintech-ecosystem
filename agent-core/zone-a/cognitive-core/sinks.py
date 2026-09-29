@@ -329,9 +329,7 @@ class MotorGrpcSink:
         except Exception as exc:  # noqa: BLE001 - any transport/encoding failure is a SinkError
             raise SinkError(f"Execute failed: {type(exc).__name__}: {exc}") from exc
         detail = _describe_ack(ack)
-        log.info(
-            "decision_relayed", signal_id=getattr(decision, "signal_id", ""), motor=detail
-        )
+        log.info("decision_relayed", signal_id=getattr(decision, "signal_id", ""), motor=detail)
         return SinkReceipt(True, detail)
 
 

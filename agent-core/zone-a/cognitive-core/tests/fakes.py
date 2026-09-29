@@ -53,9 +53,7 @@ def initial_state(regime: RegimeLabel = RegimeLabel.TRENDING_BULL) -> DebateStat
 class ScriptedClient:
     """Returns a fixed reply (or raises it if it is an exception); records call order."""
 
-    def __init__(
-        self, reply: object, name: str = "client", calls: list[str] | None = None
-    ) -> None:
+    def __init__(self, reply: object, name: str = "client", calls: list[str] | None = None) -> None:
         self._reply = reply
         self._name = name
         self.calls: list[str] = calls if calls is not None else []

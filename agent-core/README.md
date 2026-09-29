@@ -3,36 +3,39 @@
 Greenfield autonomous US equities trading system (design and partial implementation). Replaces `Trading-News/` as the primary project.
 
 > **Read this first: documentation describes TARGET-STATE controls unless a control is explicitly marked "implemented".**
-> The platform is **not** capable of trading, paper or live. Even where a component below is implemented and unit-tested, the
-> end-to-end path is not wired: nothing feeds Aegis reference data, cognitive-core cannot authenticate to a production-mode
-> Aegis (plaintext gRPC channel), there is no HITL backend, and the execution motor has no service entrypoint. Regulatory
+> The platform is **not** capable of trading for real. The paper-trade path (cognitive-core -> Aegis -> execution-motor over
+> mTLS, reference data via refdata-bridge, PR #8/#12) and a HITL backend (PR #25) are wired, but the system has never run
+> against a real broker, real LLMs or the real Polygon feed, the risk limits are uncalibrated, and owner decisions (Linear
+> "Go-Live Readiness Blockers") are open. Regulatory
 > documents under `docs/regulatory/` are drafts/templates that require qualified legal review; they are not evidence of
 > compliance. Whether to ever go live is an owner decision (`docs/specs/phase_5_canary_production.md`).
 
-## Current status (main, updated 2026-09-25)
+## Current status (main, updated 2026-09-29)
 
 "Implemented" means code exists in the repo; it does not mean validated in production or against a real broker/feed.
 "Ran" means PKG-D2 executed the command in a local worktree on 2026-09-21; anything else is taken from the package's own
 README/tests and was **not** re-run in that pass. Rows marked "2026-09-25" were re-checked against main on that date
 (ALI-17). Everything that was on other branches on 2026-09-21 (Aegis, vector memory, cognitive-core runner, the
-execution-motor service, refdata-bridge) has since merged via PRs #5-#8.
+execution-motor service, refdata-bridge) has since merged via PRs #5-#8. Rows marked "2026-09-29" were re-run against
+main on that date for the CI-debt pass (ruff, mypy, pytest per package, as `.github/workflows/ci.yml` runs them).
 
 | Area | State | Evidence in tree |
 |---|---|---|
-| `zone-a/cognitive-core` (LangGraph Blue/Red/Judge/Compression/Reflector) | **Implemented, unit tests with mocked LLMs; runner service + Dockerfile in tree** (`service.py`, relays approved decisions to execution-motor). LLM access route unresolved (ADR-003 Proposed; code uses Bedrock/IAM). 2026-09-25: container starts and stays healthy in the full dev stack; never called a real LLM | `graph.py`, `service.py`, `sinks.py`, `Dockerfile`, `tests/` |
+| `zone-a/cognitive-core` (LangGraph Blue/Red/Judge/Compression/Reflector) | **Implemented, unit tests with mocked LLMs; runner service + Dockerfile in tree** (`service.py`, relays approved decisions to execution-motor with their decision context via `ExecuteWithContext`, PR #21). Optional vol-scaled position sizer after the Judge (`COGNITIVE_SIZER=vol_scaled`, ALI-160, PR #24; default stays fixed quantity; parameters are owner-supplied, not calibrated). LLM access route unresolved (ADR-003 Proposed; code uses Bedrock/IAM). 2026-09-25: container starts and stays healthy in the full dev stack; never called a real LLM | `graph.py`, `service.py`, `sinks.py`, `Dockerfile`, `tests/` |
 | `zone-a/regime-detector` (HMM, 5 states) | **Implemented and tested.** `hmm.py` is a thin entrypoint shim over the `regime_detector/` package. Ran: `python -m pytest` = 134 passed. Models persist as HMAC-verified `.npz` (not pickle) and are only saved/loaded when `MODEL_HMAC_KEY` is set. Dockerfile exists; image build not run by PKG-D2 | `hmm.py`, `regime_detector/`, `tests/`, `Dockerfile` |
-| `zone-a/vector-db` | **Implemented (`afe_vector_memory`)**: Chroma memory layer over `HttpClient`, fail-closed store, in-memory fake, contract tests (incl. a real in-process engine). **No seed scenarios** (ALI-157). Compose runs the pinned `chromadb/chroma:1.5.9` server image (the Rust `chroma` binary) | `afe_vector_memory/`, `tests/` |
+| `zone-a/vector-db` | **Implemented (`afe_vector_memory`)**: Chroma memory layer over `HttpClient`, fail-closed store, in-memory fake, contract tests (incl. a real in-process engine). Seed scenarios for the Red debater (ALI-157, PR #23): `seeds/historical_scenarios.json` loader/validator; the file is **DRAFT** pending owner review and its source links are unverified. Compose runs the pinned `chromadb/chroma:1.5.9` server image (the Rust `chroma` binary) | `afe_vector_memory/`, `tests/` |
 | `zone-b/sensory-array` (Rust ingestor, normalizer, ILP/Redis sinks, health) | **Implemented.** No `protoc` or protobuf codegen needed (self-contained crate). Unit + integration tests exist (`tests/ingestor_reconnect.rs`, `tests/live_sinks.rs`). `cargo fmt --check` ran clean; clippy/test results: see PKG-D2 report (crates.io was unreachable at times). Never run against Polygon | `src/*.rs`, `Cargo.lock`, `Dockerfile` |
 | `zone-b/aegis` | **Implemented**: controls C01-C19, kill-switch latch state machine, attestation signing (dev Ed25519 / PKCS#11), gRPC over mTLS with identity roles, `PushReferenceData`, the `aegis supervisor` liveness watchdog, Dockerfile, README. 2026-09-25: `cargo fmt`/`clippy -D warnings`/`test` pass in `rust:1.98-bookworm` (this Windows machine has no MSVC linker, ALI-18); container healthy in the full dev stack. Limits are placeholders until calibrated (ALI-159); production HSM not configured (ALI-155) | `src/`, `tests/`, `Dockerfile`, `README.md` |
-| `zone-b/execution-motor` | **Implemented, gRPC service over mTLS** (`Execute`/`Health`), attestation verification, notional caps, persistent idempotency, Alpaca paper client, mock broker for dev, Dockerfile. 2026-09-25: `python -m pytest` = 360 passed on main; container healthy in the full dev stack. Kill-switch reaction (cancel open orders on LOGIC/HARD) is PR #9 | `execution_motor/`, `tests/`, `Dockerfile`, `README.md` |
+| `zone-b/execution-motor` | **Implemented, gRPC service over mTLS** (`Execute`/`Health`), attestation verification, notional caps, persistent idempotency, Alpaca paper client, mock broker for dev, Dockerfile. 2026-09-25: `python -m pytest` = 360 passed on main; container healthy in the full dev stack. Kill-switch reaction (cancel open orders on LOGIC/HARD) is PR #9. Since PR #21 (ALI-161) every released order needs a SHARP-`PROMOTED` strategy and a write-once compliance manifest (`execution_motor/compliance.py`, `ExecuteWithContext`); the SHARP gate is off in dev compose. 2026-09-29: `pytest` = 423 passed, `mypy .` clean | `execution_motor/`, `tests/`, `Dockerfile`, `README.md` |
 | `zone-b/refdata-bridge` | **Implemented**: forwards sensory-array snapshots and regime labels from Redis into `Aegis.PushReferenceData` over mTLS (role `market-data-writer`). Per-symbol regime labels are PR #11 (ALI-158); its container crash and plaintext-TLS wiring are fixed in PR #12 | `refdata_bridge/`, `tests/`, `Dockerfile`, `README.md` |
 | `zone-c/audit-logger` | **Implemented (library `afe_audit`)**: append-only hash-chained audit trail on PostgreSQL 16, verifier, anchors, KL drift functions. Integration tests use Docker and were **not re-run** by PKG-D2. Compose mounts its `sql/` into `postgres-audit` (verified: init creates the two roles and schema; see `infrastructure/`) | `afe_audit/`, `sql/`, `README.md` |
-| `zone-c/compliance-manifest`, `zone-c/sharp-gate` | **Implemented (libraries `afe_manifest`, `afe_sharp`)**; not re-run by PKG-D2 | `README.md` in each |
-| `zone-c/hitl-interface` | **Implemented (Next.js 16, port 3000, `/api/health`), tested in isolation.** Ran: `npm ci`, `npm run typecheck`, `npm run lint`, `npm test` (177 passed; one earlier run under heavy machine load reported a worker error, the rerun was clean). `npm run build` not run by PKG-D2. No HITL backend exists (`docs/api-contract.md` is PROPOSED); every decision fails closed | `package.json`, `README.md` |
+| `zone-c/compliance-manifest`, `zone-c/sharp-gate` | **Implemented (libraries `afe_manifest`, `afe_sharp`)**, enforced by execution-motor since PR #21. Not re-run by PKG-D2; 2026-09-29: `pytest` passes for both (Docker-backed Postgres integration tests included) | `README.md` in each |
+| `zone-c/hitl-interface` | **Implemented (Next.js 16, port 3000, `/api/health`), tested in isolation.** Ran: `npm ci`, `npm run typecheck`, `npm run lint`, `npm test` (177 passed; one earlier run under heavy machine load reported a worker error, the rerun was clean). `npm run build` not run by PKG-D2. The backend now exists (`zone-c/hitl-backend`, PR #25; `docs/api-contract.md` is still PROPOSED). 2026-09-29: `typecheck`, `lint`, `test` (205 passed) and `build` pass | `package.json`, `README.md` |
+| `zone-c/hitl-backend` | **Implemented (ALI-156, PR #25)**: REST backend for the terminal; Aegis `ListHolds`/`GetHold`/`ResolveHold` over mTLS, relay of released decisions to execution-motor, every attempt audited before Aegis is called. **Single-approver holds only** (four-eyes approvals refused: no second-approver signing), **no distress classifier** (approvals refused outside dev), no TLS server (compose profile `hitl-backend`), state in memory. 2026-09-29: `pytest` = 44 passed, `mypy` clean; added to CI | `hitl_backend/`, `tests/`, `Dockerfile`, `README.md` |
 | `backtesting/` | **Implemented, synthetic data only.** Engine, WFA, Monte Carlo, calibration machinery. Ran: `pytest` = 111 passed, `ruff` and `mypy` clean. Produces no calibrated result (no real dataset in the repo) | `README.md` |
 | `shared/proto` | Messages plus the `Aegis` service (`aegis.proto`) and `compliance_manifest.proto`; `buf lint` and `check-breaking.sh` pass locally (Ran); money as `_nanos` int64 fields alongside legacy doubles | `*.proto`, `buf.yaml`, `generate.sh`, `check-breaking.sh` |
-| `infrastructure/docker-compose.yml` | Reconciled with each package's Dockerfile, env names, ports and health checks; secrets are `${VAR:?}`; zone networks internal; only HITL publishes a host port (127.0.0.1). 2026-09-25: the **full dev stack was started for the first time** (ALI-167, PR #12): every image builds and 11 of 12 services run healthy (sensory-array needs a real Polygon key, ALI-165). That bring-up needed fixes that are in PR #12 (dev signer key pinning, refdata-bridge import crash and TLS env names) | `docker-compose.yml`, `docker-compose.dev.yml`, `.env.example` |
-| CI (`.github/workflows/ci.yml`) | Fail-loud per-package jobs (ruff, pytest, mypy, cargo fmt/clippy/test, HITL, buf, docker build smoke, compose validation). **Never run on GitHub: Actions is billing-locked (ALI-10).** Security scans (gitleaks, pip-audit, cargo audit, npm audit) and the missing refdata-bridge / execution-motor jobs are in the ALI-15 PR | `.github/workflows/ci.yml` |
+| `infrastructure/docker-compose.yml` | Reconciled with each package's Dockerfile, env names, ports and health checks; secrets are `${VAR:?}`; zone networks internal; only HITL publishes a host port (127.0.0.1). 2026-09-25: the **full dev stack was started for the first time** (ALI-167, PR #12): every image builds and 11 of 12 services run healthy (sensory-array needs a real Polygon key, ALI-165). That bring-up needed fixes that are in PR #12 (dev signer key pinning, refdata-bridge import crash and TLS env names). `check-env.sh` refuses placeholder or weak secrets before startup, and services refuse placeholder credentials (ALI-21, PR #20) | `docker-compose.yml`, `docker-compose.dev.yml`, `.env.example` |
+| CI (`.github/workflows/ci.yml`) | Fail-loud per-package jobs (ruff, pytest, mypy, cargo fmt/clippy/test, HITL, buf, docker build smoke, compose validation). **Never run on GitHub: Actions is billing-locked (ALI-10).** Security scans (gitleaks, pip-audit, cargo audit, npm audit) and the refdata-bridge / execution-motor jobs merged in PR #16 (ALI-15); hitl-backend was added on `chore/ci-debt`. 2026-09-29: every Python/Rust/HITL job was replicated locally and passes on that branch (Rust with the local 1.94.1 toolchain, not the pinned 1.98.1) | `.github/workflows/ci.yml` |
 | Regulatory documents | **Drafts/templates**; several stated results are unsubstantiated (`ptc-calibration.md` banner) | `docs/regulatory/` |
 | Runbooks | **DRAFT, untested; no drill ever run** | `docs/runbooks/` |
 
@@ -44,18 +47,19 @@ Notes in parentheses give the state in this tree; see the spec that plans each c
 Zone A — Thinking (GPU, LLMs, LangGraph, HMM, VectorDB)
   zone-a/cognitive-core/      Python: LangGraph Blue/Red/Judge/Reflector debate (implemented)
   zone-a/regime-detector/     Python: HMM 5-state market regime classifier (implemented; hmm.py shim + regime_detector/ package)
-  zone-a/vector-db/           ChromaDB: adversarial scenario embeddings (planned; empty package)
+  zone-a/vector-db/           ChromaDB memory layer afe_vector_memory (implemented; DRAFT seed scenarios)
 
 Zone B — Execution (Aegis, SOR, HSM, FIX)
   zone-b/sensory-array/       Rust: WebSocket L2 ingestor, QuestDB writer (implemented, hot path)
-  zone-b/aegis/               Rust: deterministic PTCs, HSM signing, kill switches (spec: docs/specs/phase_3_aegis_execution.md; placeholder in this tree, implementation on pkg-e/aegis)
-  zone-b/execution-motor/     Python: order execution library; Smart Order Router deferred (Phase 3 spec §10; no service entrypoint yet)
+  zone-b/aegis/               Rust: deterministic PTCs, HSM signing, kill switches (implemented; spec: docs/specs/phase_3_aegis_execution.md)
+  zone-b/execution-motor/     Python: gRPC execution service over mTLS (implemented); Smart Order Router deferred (Phase 3 spec §10)
 
 Zone C — Compliance (audit logs, HITL terminal, DORA reporting)
   zone-c/audit-logger/        Python library: append-only, hash-chained audit logs, KL monitor functions (implemented; Phase 4 spec §8)
   zone-c/compliance-manifest/ Python library: per-trade manifest pipeline (implemented; Phase 4 spec §9)
   zone-c/sharp-gate/          Python library: SHARP promotion state machine (implemented)
   zone-c/hitl-interface/      Next.js: operator HITL terminal (implemented; backend contract PROPOSED)
+  zone-c/hitl-backend/        Python: REST backend for the terminal (implemented, single-approver holds only)
 
 Shared
   shared/proto/               Protobuf message definitions; Aegis service definition proposed in Phase 3 spec Appendix A
@@ -106,12 +110,12 @@ docker compose up -d                      # base file: no host ports except HITL
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # local dev: host ports, plaintext Aegis
 ```
 
-Verified: `docker compose config` (base and dev override), and starting `vector-db`, `redis`, `questdb`, `postgres-audit`
-alone (all reached healthy; the audit init script created its roles). **Not verified:** starting the whole stack. Known
-blockers for a working end-to-end stack: Aegis needs owner-supplied `limits.json`/`identities.json`, TLS material and an HSM
-(or the dev signer); cognitive-core only speaks plaintext gRPC, so it can reach Aegis only with the dev override
-(`AEGIS_INSECURE_DEV=1`); nothing pushes reference data to Aegis yet; the HITL backend does not exist; cognitive-core needs
-an LLM route (ADR-003, compose adds a proposed `zone-a-llm-egress` network); `execution-motor` has no entrypoint.
+Verified: `docker compose config` (base and dev override). The full dev stack was started for the first time on
+2026-09-25 (ALI-167, PR #12; see the status table): 11 of 12 services healthy, sensory-array needs a real Polygon key.
+Known blockers for a real (non-dev) stack: Aegis needs owner-supplied `limits.json`/`identities.json`, production TLS
+material and an HSM (the dev override uses dev mTLS certs and the dev signer); cognitive-core needs an LLM route (ADR-003,
+compose adds a proposed `zone-a-llm-egress` network); the HITL backend runs only behind the `hitl-backend` profile (no TLS
+server yet).
 `.gitattributes` forces LF on `*.sh`/`*.sql`/Dockerfiles: a CRLF checkout breaks the Postgres init script inside the container.
 
 ## Latency Budget (targets; none has been measured or validated)
@@ -131,8 +135,8 @@ The earlier stated end-to-end total of < 2,600 ms is not consistent with the ADR
 
 - **Aegis is the only component that may authorise an order** (target). Zone A must hold no trading/signing/broker credentials. Compose no longer injects LLM provider keys: cognitive-core uses AWS Bedrock with IAM-role auth (ADR-002). The route (VPC endpoint vs gateway vs direct API) is still undecided in `docs/adr/ADR-003-zone-a-llm-access.md` (Proposed), and compose carries a proposed `zone-a-llm-egress` network until it is.
 - Hot path is MCP-free — direct socket connections only.
-- All orders must pass Aegis PTCs before reaching the broker (target; not implemented).
-- Every trade decision should generate a Compliance Manifest (Zone C, 7-year retention; requirement basis requires qualified legal review) (target; not implemented).
+- All orders must pass Aegis PTCs before reaching the broker (implemented for the paper path: execution-motor verifies the Aegis attestation before the broker, PR #8; not validated against a real broker).
+- Every trade decision should generate a Compliance Manifest (Zone C, 7-year retention; requirement basis requires qualified legal review) (implemented in execution-motor, PR #21; never run against a real broker).
 - KL divergence monitoring to trigger circuit breakers (target; reference distribution undefined).
 - Fail closed everywhere (Phase 3 spec §9).
 
@@ -152,7 +156,7 @@ The earlier stated end-to-end total of < 2,600 ms is not consistent with the ADR
 | Phase 0: Foundation scaffold | **Done** (merged): directory scaffold, compose, protos, docs, CI | n/a | Compose/proto/CI gaps remain (see status table) |
 | Phase 1: Sensory Array + Regime Detector | **Code implemented; regime-detector tests pass (134); sensory-array never run against Polygon** | `docs/specs/phase_1_sensory_array.md` | Spec updated to the real module maps |
 | Phase 2: Cognitive Core | **Code implemented; unit tests with mocked LLMs**; not integrated with a live Aegis | `docs/specs/phase_2_cognitive_core.md` | LLM access unresolved (ADR-003) |
-| Phase 3: Aegis + Execution | **Aegis on branch `pkg-e/aegis` (not in this tree); execution-motor is a library** | `docs/specs/phase_3_aegis_execution.md` | Reference-data feed and broker gateway not wired |
+| Phase 3: Aegis + Execution | **Aegis and the execution-motor service implemented** (PRs #5-#8); paper path wired | `docs/specs/phase_3_aegis_execution.md` | Reference data via refdata-bridge (PR #8/#12); broker gateway (ADR-004) not implemented; never run against a real broker |
 | Phase 4: Backtesting + Compliance | **Libraries implemented** (backtesting, audit-logger, compliance-manifest, sharp-gate, HITL terminal); no calibrated result exists | `docs/specs/phase_4_backtesting_compliance.md` | Needs real data before any threshold can be called calibrated |
 | Phase 5: Canary + Production | **Not started.** Spec drafted; go-live is an owner decision | `docs/specs/phase_5_canary_production.md` | |
 

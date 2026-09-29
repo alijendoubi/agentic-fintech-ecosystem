@@ -95,13 +95,27 @@ def test_every_proto_field_is_modelled(pb2: ModuleType) -> None:
 
 def _pending() -> TradeSignal:
     return TradeSignal(
-        signal_id="sig-1", symbol="AAPL", created_at_ns=1_700_000_000_000_000_000,
-        side=SignalSide.SELL_SHORT, quantity=25.0, omega=0.81, expected_value=12.5,
-        p_success=0.62, p_failure=0.38, reward_estimate=100.0, risk_estimate=40.0,
-        estimated_spread_cost=0.5, estimated_market_impact=0.25, estimated_venue_fees=0.1,
-        estimated_total_cost=0.85, regime=RegimeLabel.HIGH_VOL_CHOP, regime_confidence=0.7,
-        debate_summary="summary", price_limit=189.5,
-        valid_until_ns=1_700_000_002_000_000_000, status=SignalStatus.SIGNAL_PENDING,
+        signal_id="sig-1",
+        symbol="AAPL",
+        created_at_ns=1_700_000_000_000_000_000,
+        side=SignalSide.SELL_SHORT,
+        quantity=25.0,
+        omega=0.81,
+        expected_value=12.5,
+        p_success=0.62,
+        p_failure=0.38,
+        reward_estimate=100.0,
+        risk_estimate=40.0,
+        estimated_spread_cost=0.5,
+        estimated_market_impact=0.25,
+        estimated_venue_fees=0.1,
+        estimated_total_cost=0.85,
+        regime=RegimeLabel.HIGH_VOL_CHOP,
+        regime_confidence=0.7,
+        debate_summary="summary",
+        price_limit=189.5,
+        valid_until_ns=1_700_000_002_000_000_000,
+        status=SignalStatus.SIGNAL_PENDING,
     )
 
 
@@ -119,8 +133,10 @@ def test_round_trip_preserves_every_field(pb2: ModuleType) -> None:
 def test_round_trip_abstain_with_regime_unknown(pb2: ModuleType) -> None:
     original = _pending().model_copy(
         update={
-            "side": SignalSide.SIDE_UNKNOWN, "quantity": 0.0,
-            "status": SignalStatus.SIGNAL_ABSTAIN, "regime": RegimeLabel.REGIME_UNKNOWN,
+            "side": SignalSide.SIDE_UNKNOWN,
+            "quantity": 0.0,
+            "status": SignalStatus.SIGNAL_ABSTAIN,
+            "regime": RegimeLabel.REGIME_UNKNOWN,
         }
     )
     assert from_proto(to_proto(original, pb2), pb2) == original
