@@ -73,6 +73,14 @@ Relay behavior (`sinks.AegisRelaySink`):
   Aegis returned (no re-derivation). A held or rejected decision — or an approved one with no
   attestation set — is logged (`motor_relay_skipped`) and stops there: Aegis is the only
   authority that may let a signal reach execution.
+- A `DECISION_HELD_FOR_HUMAN` decision's debate context (the same `ExecuteRequest` an approval
+  would get: snapshot, the `TradeSignal`, model versions, Blue/Red/Judge texts) is sent to
+  `ExecutionMotor.RetainHeldContext` (owner decision 2026-09-29, DECISIONS row 7), which
+  stores it in the Zone C audit log and executes nothing. This uses the existing mTLS channel
+  to execution-motor; cognitive-core still has no route to the audit database. A failed
+  retention is logged (`held_context_not_retained`) and never raised: the hold exists either
+  way, and hitl-backend then labels the released context `hold-signal-only`. cognitive-core
+  produces no separate compression summaries, so `compression_summaries` stays empty.
 - A failure relaying an approved decision to execution-motor is **not** swallowed: it is
   logged as `motor_relay_failed` and re-raised as `SinkError`, which the runner already
   treats like any other undelivered signal (`signal_send_failed` log line,

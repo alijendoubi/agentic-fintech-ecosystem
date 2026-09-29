@@ -150,18 +150,11 @@ def test_request_ids_are_scoped_to_the_operator(pb: dict[str, Any]) -> None:
     assert status == 200 and hold["hitlStatus"] == "APPROVED"
 
 
-def test_four_eyes_holds_cannot_be_approved_here(pb: dict[str, Any]) -> None:
-    rig = Rig(pb, quantity_threshold=Decimal(5))  # 10 shares >= 5 -> two approvers
-    assert rig.service.list_pending()["holds"][0]["requiredApprovals"] == 2
-    assert code(rig.decide()) == (422, "second_approver_signing_unavailable")
-    assert rig.holds.resolved == []
-    assert rig.audit.events[-1][0] == "hitl.decision.denied"
-    assert rig.decide("REJECT")[1]["hitlStatus"] == "REJECTED"  # one rejection is enough
-
-
 def test_notional_threshold_counts_for_limit_orders(pb: dict[str, Any]) -> None:
     rig = Rig(pb, notional_threshold_usd=Decimal("1000"))  # 10 * 190.5 = 1905 >= 1000
-    assert code(rig.decide()) == (422, "second_approver_signing_unavailable")
+    status, hold = rig.decide()
+    assert status == 200 and hold["hitlStatus"] == "PENDING" and hold["requiredApprovals"] == 2
+    assert rig.holds.resolved == []  # one approval of two: nothing reaches Aegis
 
 
 def test_distress_score_is_unscored_and_audited_as_out_of_scope(pb: dict[str, Any]) -> None:

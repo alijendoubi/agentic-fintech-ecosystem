@@ -29,6 +29,7 @@ from .keys import load_attestation_keys
 from .kill_watch import KillSwitchWatcher, aegis_state_stream, build_kill_guard
 from .mock_broker import MockBroker
 from .motor import ExecutionMotor
+from .retention import build_retainer
 from .server import build_grpc_server
 from .server_config import ServerConfig
 from .sor import RouterConfig, SmartOrderRouter, UnscoredPolicy
@@ -149,12 +150,20 @@ def build_app(env: dict[str, str]) -> MotorApp:
     if channel is None:
         _log.warning("aegis_reporting_disabled", note="AEGIS_TARGET is unset")
     reporter = None if channel is None else _build_reporter(protos, channel, broker)
+    # Held-signal context retention (DECISIONS row 7) uses the same audit database as the
+    # compliance gates; production always has it (the gates cannot be disabled there).
+    retainer = None
+    if compliance_cfg.needs_audit_db:
+        retainer = build_retainer(env, actor=compliance_cfg.audit_actor)
+    else:
+        _log.warning("held_context_retention_disabled", note="no audit database: dev only")
     servicer = ExecutionMotorServicer(
         motor,
         protos["execution_motor_pb2"],
         kill_switch=kill,
         reporter=reporter,
         compliance=compliance,
+        retainer=retainer,
     )
     return MotorApp(server_cfg, servicer, protos["execution_motor_pb2_grpc"], watcher)
 
