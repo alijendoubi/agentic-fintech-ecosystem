@@ -25,10 +25,20 @@ AGENT_CORE = Path(__file__).resolve().parents[2]
 PROTO_DIR = AGENT_CORE / "shared" / "proto"
 DEV_TLS = AGENT_CORE / "infrastructure" / "dev-tls" / "out"
 
+DEV_ENV_FILE = AGENT_CORE / "infrastructure" / ".env"
+
 AEGIS_ADDR = os.environ.get("AFE_LIVE_AEGIS", "127.0.0.1:50051")
 MOTOR_ADDR = os.environ.get("AFE_LIVE_MOTOR", "127.0.0.1:50052")
-REDIS_URL = os.environ.get("AFE_LIVE_REDIS", "redis://127.0.0.1:6379")
+REDIS_HOST_PORT = os.environ.get("AFE_LIVE_REDIS", "127.0.0.1:6379")
 HITL_URL = os.environ.get("AFE_LIVE_HITL", "http://127.0.0.1:3000")
+
+# Redis ACL users (ALI-20) and the .env key holding each one's password. Each test publishes
+# as the service that owns the channel, exactly as the real producers do.
+REDIS_USERS = {
+    "sensory-array": "REDIS_SENSORY_PASSWORD",
+    "regime-detector": "REDIS_REGIME_PASSWORD",
+    "healthcheck": "REDIS_HEALTHCHECK_PASSWORD",
+}
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -119,16 +129,56 @@ def motor(pb: dict[str, ModuleType]) -> Iterator[object]:
     ch.close()
 
 
-@pytest.fixture(scope="session")
-def redis_client() -> Iterator[object]:
+def _dev_env() -> dict[str, str]:
+    """KEY=VALUE pairs from the dev stack's infrastructure/.env (never committed)."""
+    if not DEV_ENV_FILE.is_file():
+        return {}
+    pairs = {}
+    for line in DEV_ENV_FILE.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, _, value = line.partition("=")
+            pairs[key.strip()] = value.strip()
+    return pairs
+
+
+def redis_password(user: str) -> str:
+    key = REDIS_USERS[user]
+    value = os.environ.get(key) or _dev_env().get(key, "")
+    if not value:
+        pytest.fail(f"{key} is not set (environment or {DEV_ENV_FILE})")
+    return value
+
+
+def redis_as(user: str | None, password: str | None = None) -> object:
+    """A client authenticated as ``user`` (None: anonymous)."""
     import redis
 
-    client = redis.Redis.from_url(REDIS_URL, socket_timeout=5)
+    host, _, port = REDIS_HOST_PORT.rpartition(":")
+    if user is None:
+        return redis.Redis(host=host, port=int(port), socket_timeout=5)
+    secret = redis_password(user) if password is None else password
+    return redis.Redis(host=host, port=int(port), username=user, password=secret, socket_timeout=5)
+
+
+@pytest.fixture(scope="session")
+def snapshot_redis() -> Iterator[object]:
+    client = redis_as("sensory-array")
     yield client
-    client.close()
+    client.close()  # type: ignore[attr-defined]
+
+
+@pytest.fixture(scope="session")
+def regime_redis() -> Iterator[object]:
+    client = redis_as("regime-detector")
+    yield client
+    client.close()  # type: ignore[attr-defined]
 
 
 @pytest.fixture
-def stack_now_ns(redis_client: object) -> int:
-    seconds, micros = redis_client.time()  # type: ignore[attr-defined]
+def stack_now_ns() -> int:
+    client = redis_as("healthcheck")
+    try:
+        seconds, micros = client.time()  # type: ignore[attr-defined]
+    finally:
+        client.close()  # type: ignore[attr-defined]
     return int(seconds) * 1_000_000_000 + int(micros) * 1_000

@@ -51,7 +51,7 @@ services:
       COGNITIVE_SINK: grpc
       ZONE_B_GRPC_HOST: aegis
       ZONE_B_GRPC_PORT: "50051"
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://cognitive-core:${REDIS_COGNITIVE_PASSWORD:?}@redis:6379
       SNAPSHOT_CHANNEL: sensory:snapshots
       COGNITIVE_MEMORY_ENABLED: "true"
       CHROMA_HOST: vector-db
@@ -82,7 +82,7 @@ services:
     environment:
       QUESTDB_HOST: questdb
       QUESTDB_PORT: "9000"
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://regime-detector:${REDIS_REGIME_PASSWORD:?}@redis:6379
       MODEL_DIR: /app/models
       # Without a key (>= 32 chars) models are trained in memory only and never persisted.
       MODEL_HMAC_KEY: ${MODEL_HMAC_KEY:?set MODEL_HMAC_KEY (>= 32 chars, e.g. openssl rand -base64 48)}
@@ -137,7 +137,7 @@ services:
       POLYGON_API_KEY: ${POLYGON_API_KEY:?set POLYGON_API_KEY}
       QUESTDB_ILP_HOST: questdb
       QUESTDB_ILP_PORT: "9009"
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://sensory-array:${REDIS_SENSORY_PASSWORD:?}@redis:6379
       FRESHNESS_L2_MS: "1"
       FRESHNESS_PRINT_MS: "5"
     depends_on:
@@ -282,7 +282,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       ENVIRONMENT: production
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://refdata-bridge:${REDIS_REFDATA_PASSWORD:?}@redis:6379
       AEGIS_TARGET: aegis:50051
       # The bridge reads REFDATA_CLIENT_TLS_* (see zone-b/refdata-bridge/README.md). These were
       # AEGIS_CLIENT_TLS_*, which it ignores, so it silently ran a plaintext channel (ALI-167).
@@ -333,17 +333,68 @@ services:
       retries: 5
       start_period: 20s
 
+  # ALI-20: no anonymous access; one ACL user per service, each limited to the exact pub/sub command
+  # and channel it needs (Redis 7 selectors), so e.g. only regime-detector can publish regime:labels
+  # and nothing can read or write keys. noeviction: nothing here may be silently dropped (Aegis keeps
+  # its risk state in its own state dir, not in Redis). Passwords are owner-supplied, URL-safe (hex).
   redis:
     image: redis:7.4.6-alpine
     container_name: afe-redis
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - noeviction
+      - --user
+      - default
+      - "off"
+      - --user
+      - sensory-array
+      - "on"
+      - ">${REDIS_SENSORY_PASSWORD:?set REDIS_SENSORY_PASSWORD (hex)}"
+      - resetchannels
+      - "(+publish &sensory:snapshots)"
+      - "(+subscribe &regime:labels)"
+      - "+@connection"
+      - --user
+      - regime-detector
+      - "on"
+      - ">${REDIS_REGIME_PASSWORD:?set REDIS_REGIME_PASSWORD (hex)}"
+      - resetchannels
+      - "(+publish &regime:labels)"
+      - "+@connection"
+      - --user
+      - cognitive-core
+      - "on"
+      - ">${REDIS_COGNITIVE_PASSWORD:?set REDIS_COGNITIVE_PASSWORD (hex)}"
+      - resetchannels
+      - "(+subscribe &sensory:snapshots)"
+      - "+@connection"
+      - --user
+      - refdata-bridge
+      - "on"
+      - ">${REDIS_REFDATA_PASSWORD:?set REDIS_REFDATA_PASSWORD (hex)}"
+      - resetchannels
+      - "(+subscribe &sensory:snapshots &regime:labels)"
+      - "+@connection"
+      - --user
+      - healthcheck
+      - "on"
+      - ">${REDIS_HEALTHCHECK_PASSWORD:?set REDIS_HEALTHCHECK_PASSWORD (hex)}"
+      - "+ping"
+      - "+time"
+    environment:
+      REDISCLI_AUTH: ${REDIS_HEALTHCHECK_PASSWORD:?set REDIS_HEALTHCHECK_PASSWORD (hex)}
     volumes:
       - redis-data:/data
     networks:
       - zone-ab-grpc
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--user", "healthcheck", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5

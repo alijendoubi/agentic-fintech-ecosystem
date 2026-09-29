@@ -53,3 +53,11 @@ the tests accept that. An APPROVED decision is exercised through the tamper chec
 Timestamps come from Redis `TIME`, which is the Docker VM clock, not the host clock.
 On Docker Desktop the two can drift by close to a second, which is most of Aegis's 1 s
 freshness window for reference data.
+
+## Redis credentials (ALI-20)
+
+Redis refuses anonymous clients. The tests connect as the service that owns each channel:
+`sensory-array` publishes snapshots, `regime-detector` publishes regime labels, and
+`healthcheck` reads `TIME`. Passwords are read from the environment or from the dev stack's
+`agent-core/infrastructure/.env` (`REDIS_SENSORY_PASSWORD`, `REDIS_REGIME_PASSWORD`,
+`REDIS_HEALTHCHECK_PASSWORD`).
