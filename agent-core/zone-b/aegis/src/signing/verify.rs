@@ -2,12 +2,14 @@
 //! for the broker gateway / execution-motor (README "Attestation contract").
 //!
 //! A verifier MUST, in this order:
-//!  1. check `canonical_version == "afe-attest-v1"`,
+//!  1. check `canonical_version == "afe-attest-v2"` (v1 is retired and refused),
 //!  2. check the order mirrors the attestation (`hsm_key_id`, `hsm_signature`,
 //!     `attestation_expires_at_ns`),
 //!  3. reject if `now > expires_at_ns` (or `now < decided_at_ns` beyond skew),
 //!  4. rebuild the canonical text from the ORDER fields plus the attestation
-//!     fields, hash it and compare with `payload_sha256`,
+//!     fields (including `Attestation.strategy_id`), hash it and compare with
+//!     `payload_sha256`; a consumer that acts on a strategy id (the motor's
+//!     SHARP gate) MUST use this verified value or refuse on a mismatch,
 //!  5. verify the signature over the digest with the key registered for `key_id`,
 //!  6. enforce single use (a `signal_id` / `order_id` seen before is refused).
 //!     Step 6 needs state and belongs to the gateway; it is not done here.
@@ -126,6 +128,7 @@ fn fields_for(
 ) -> AttestationFields {
     AttestationFields {
         signal_id: order.signal_id.clone(),
+        strategy_id: a.strategy_id.clone(),
         symbol: order.symbol.clone(),
         side,
         order_type: order_type.to_owned(),
@@ -239,7 +242,7 @@ mod tests {
             omega: 0.8,
             regime: pb::RegimeLabel::TrendingBull,
             regime_confidence: 0.9,
-            strategy_id: String::new(),
+            strategy_id: "AFE-STRATEGY-001".into(),
         }
     }
 
@@ -282,7 +285,8 @@ mod tests {
         assert_eq!(r.order.hsm_signature, r.att.signature);
         assert_eq!(r.order.side, pb::OrderSide::OrderBuy as i32);
         assert_eq!(r.order.order_type, pb::OrderType::Limit as i32);
-        assert_eq!(r.att.canonical_version, "afe-attest-v1");
+        assert_eq!(r.att.canonical_version, "afe-attest-v2");
+        assert_eq!(r.att.strategy_id, "AFE-STRATEGY-001");
         assert_eq!(r.att.payload_sha256.len(), 32);
     }
 
@@ -345,6 +349,18 @@ mod tests {
             Err(VerifyError::DigestMismatch)
         );
         let mut r = rig(Side::Buy);
+        r.att.strategy_id = "AFE-STRATEGY-002".into(); // relabelled strategy
+        assert_eq!(
+            check(&r, NOW + 1, ShortPolicy::Allow),
+            Err(VerifyError::DigestMismatch)
+        );
+        let mut r = rig(Side::Buy);
+        r.att.strategy_id = String::new();
+        assert_eq!(
+            check(&r, NOW + 1, ShortPolicy::Allow),
+            Err(VerifyError::UnsupportedOrder)
+        );
+        let mut r = rig(Side::Buy);
         r.att.limits_config_sha256 = "cd".repeat(32);
         assert_eq!(
             check(&r, NOW + 1, ShortPolicy::Allow),
@@ -388,12 +404,16 @@ mod tests {
 
     #[test]
     fn version_and_unknown_enums_are_refused() {
-        let mut r = rig(Side::Buy);
-        r.att.canonical_version = "afe-attest-v2".into();
-        assert_eq!(
-            check(&r, NOW + 1, ShortPolicy::Allow),
-            Err(VerifyError::UnsupportedVersion)
-        );
+        // v1 is retired (fail closed), and an unknown future version is refused too.
+        for version in ["afe-attest-v1", "afe-attest-v3", ""] {
+            let mut r = rig(Side::Buy);
+            r.att.canonical_version = version.into();
+            assert_eq!(
+                check(&r, NOW + 1, ShortPolicy::Allow),
+                Err(VerifyError::UnsupportedVersion),
+                "{version:?}"
+            );
+        }
         let mut r = rig(Side::Buy);
         r.order.side = 0;
         assert_eq!(

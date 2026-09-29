@@ -27,7 +27,8 @@ import "market_snapshot.proto";
 //     (ORDER_BUY/ORDER_SELL). The mapping must be defined by the Aegis owner.
 //  3. Attestation.payload_sha256/signature are opaque bytes; the canonical text
 //     is not itself carried, so verifiers must rebuild it from OrderRequest +
-//     Attestation fields (spec section 7).
+//     Attestation fields (spec section 7). Since afe-attest-v2 that includes
+//     Attestation.strategy_id (field 9, additive, also in Appendix A.1).
 
 // Money/price/quantity fields are fixed-point int64 in units of 1e-9 ("nanos").
 // Never use float/double for money. See docs/specs/phase_3_aegis_execution.md section 3.
@@ -118,7 +119,7 @@ message ControlResult {
 
 // Short-lived, single-use authorisation over the exact order. See spec section 7.
 message Attestation {
-  string canonical_version = 1;   // "afe-attest-v1"
+  string canonical_version = 1;   // "afe-attest-v2" (v1 is retired: verifiers refuse it)
   bytes payload_sha256 = 2;       // SHA-256 of the canonical text
   bytes signature = 3;            // HSM signature over payload_sha256
   string key_id = 4;
@@ -126,6 +127,9 @@ message Attestation {
   int64 expires_at_ns = 6;        // PROPOSED decided_at_ns + 5 s
   uint64 aegis_state_seq = 7;
   string limits_config_sha256 = 8;
+  // TradeSignal.strategy_id, signed into the canonical text since afe-attest-v2.
+  // Verifiers rebuild the text with it; consumers must use this signed value.
+  string strategy_id = 9;
 }
 
 message AegisDecision {

@@ -14,6 +14,7 @@ use serde_json::json;
 
 const NOW: i64 = 1_790_000_000_000_000_000;
 const TTL_NS: i64 = 5_000_000_000;
+const STRATEGY_ID: &str = "AFE-STRATEGY-001";
 const LIMITS_SHA: &str = "abababababababababababababababababababababababababababababababab";
 
 fn signal(side: Side, id: &str) -> ValidatedSignal {
@@ -28,7 +29,7 @@ fn signal(side: Side, id: &str) -> ValidatedSignal {
         omega: 0.8,
         regime: pb::RegimeLabel::TrendingBull,
         regime_confidence: 0.9,
-        strategy_id: String::new(),
+        strategy_id: STRATEGY_ID.into(),
     }
 }
 
@@ -57,6 +58,7 @@ fn main() {
         .unwrap();
         let fields = AttestationFields {
             signal_id: sig.signal_id.clone(),
+            strategy_id: att.strategy_id.clone(),
             symbol: sig.symbol.clone(),
             side,
             order_type: "LIMIT".into(),
@@ -94,6 +96,7 @@ fn main() {
                     "expires_at_ns": att.expires_at_ns,
                     "aegis_state_seq": att.aegis_state_seq,
                     "limits_config_sha256": att.limits_config_sha256,
+                    "strategy_id": att.strategy_id,
                 },
             }),
         );

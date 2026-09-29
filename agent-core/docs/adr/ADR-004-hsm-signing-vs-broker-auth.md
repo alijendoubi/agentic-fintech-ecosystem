@@ -41,7 +41,7 @@ Consequence: **what the HSM signs is unresolved**, and with it the claim that on
 - Meets goal 1 strongly, but merges routing/algo logic into the smallest, most critical component, hurting its <50 ms budget and auditability. The credential is still in process memory at use time (an HSM can store it wrapped, but the value must be presented to the broker in clear).
 
 ### C. Attestation + broker gateway (PROPOSED)
-- HSM signs the attestation over canonical order bytes (Phase 3 spec §7 defines `afe-attest-v1`, 5 s expiry, single-use nonce).
+- HSM signs the attestation over canonical order bytes (Phase 3 spec §7 defines `afe-attest-v2`, which also signs `strategy_id`; 5 s expiry, single-use nonce).
 - A small **broker gateway** is the only holder of broker credentials. For each request it: verifies the HSM signature with the public key, checks expiry and single use, checks that the outgoing order fields equal the attested fields exactly, then adds broker authentication and forwards. It also permits risk-reducing actions the state machine allows (cancels on kill-switch levels).
 - execution-motor holds **no** broker credentials. Compromising it alone cannot place an unattested order. Compromising the gateway is the remaining high-value target; it is deliberately tiny and single-purpose. It may live inside the Aegis container (fewer components) or as a separate container (separate blast radius); recommend separate.
 - What the HSM protects here: attestation keys (non-extractable). The broker secret itself is protected by ordinary secret management (and optionally stored wrapped), not by HSM signing. Documentation must say so honestly.

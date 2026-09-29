@@ -159,6 +159,8 @@ def test_plain_execute_still_works_with_compliance_disabled(pb2: dict[str, Modul
         ({"signal_id": "someone-else"}, RejectReason.CONTEXT_MISMATCH),
         ({"symbol": "MSFT"}, RejectReason.CONTEXT_MISMATCH),
         ({"strategy_id": "  "}, RejectReason.CONTEXT_MISMATCH),
+        # afe-attest-v2: the context may not relabel the strategy Aegis signed
+        ({"strategy_id": "AFE-STRATEGY-OTHER"}, RejectReason.CONTEXT_MISMATCH),
     ],
 )
 def test_context_not_matching_the_signed_order_is_refused(
@@ -169,6 +171,22 @@ def test_context_not_matching_the_signed_order_is_refused(
         request(pb2, context(pb2, **signal_over)), _Ctx()
     )
     assert ack.reject_reason == reason.value
+    assert writer.calls == [] and broker.submitted == []
+
+
+def test_relabelling_both_context_and_attestation_fails_the_signature(
+    pb2: dict[str, ModuleType],
+) -> None:
+    """A caller that rewrites Attestation.strategy_id to match its context passes the binding
+    and the gate, but the signed text no longer verifies: nothing reaches the broker."""
+    broker, gate, writer = FakeBroker(), FakeGate(), FakeWriter()
+    dec = approved(pb2)
+    dec.attestation.strategy_id = "AFE-STRATEGY-OTHER"
+    ack = servicer(pb2, broker, ComplianceGates(writer, gate)).ExecuteWithContext(
+        request(pb2, context(pb2, strategy_id="AFE-STRATEGY-OTHER"), dec), _Ctx()
+    )
+    assert ack.reject_reason == RejectReason.ATTESTATION_INVALID.value
+    assert gate.seen == ["AFE-STRATEGY-OTHER"]
     assert writer.calls == [] and broker.submitted == []
 
 

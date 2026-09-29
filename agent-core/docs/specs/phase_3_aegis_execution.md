@@ -218,11 +218,12 @@ Options (full analysis in ADR-004):
 - **C. Attestation + broker gateway (PROPOSED recommendation).** The HSM signs an attestation over canonical order bytes. A small *broker gateway* is the only component holding broker credentials; it verifies signature, expiry, single-use and exact match to the order, then adds broker auth and forwards. execution-motor holds no broker credentials.
 - **D. A different broker/auth model.** The broker decision is open (TODO(owner): the DORA doc says the production broker is "TBD").
 
-Attestation payload (PROPOSED canonical form v1). Do not sign "protobuf bytes" (serialisation is not canonical across implementations). Sign SHA-256 of this exact UTF-8 text, one `key=value` per line, fixed order, `\n`-terminated, integers in decimal:
+Attestation payload (canonical form v2, implemented in Aegis and execution-motor). Do not sign "protobuf bytes" (serialisation is not canonical across implementations). Sign SHA-256 of this exact UTF-8 text, one `key=value` per line, fixed order, `\n`-terminated, integers in decimal:
 
 ```
-afe-attest-v1
+afe-attest-v2
 signal_id=<uuid>
+strategy_id=<string>
 symbol=<SYM>
 side=<BUY|SELL|SELL_SHORT>
 order_type=<LIMIT|...>
@@ -236,6 +237,9 @@ limits_config_sha256=<hex>
 key_id=<string>
 ```
 
+- `strategy_id` (v2) is `TradeSignal.strategy_id`, signed so that a compromised Zone A cannot relabel the strategy that execution-motor's SHARP promotion gate checks (owner decision, 2026-09-29). Aegis echoes it in `Attestation.strategy_id` (field 9) so verifiers can rebuild the text, and C02 refuses a signal whose `strategy_id` is empty, longer than 128 bytes, or contains a control character or `=`. A consumer that acts on a strategy id MUST use the attested value (execution-motor refuses a context whose `strategy_id` differs, `context_mismatch`).
+- Every free-text value (`signal_id`, `strategy_id`, `symbol`, `order_type`, `limits_config_sha256`, `key_id`) must be non-empty and contain no control character and no `=`; otherwise no text is produced (no attestation / verification fails).
+- Versions: `afe-attest-v1` (the same text without the `strategy_id` line) is retired. Aegis signs only v2 and verifiers MUST refuse any other `canonical_version`, v1 included (fail closed: v1 was never deployed, so no v1 attestation is in flight, and accepting it would reopen the unsigned-strategy gap).
 - `expires_at_ns` PROPOSED = `decided_at_ns` + 5 s: an attestation is a short-lived, single-use authorisation, not a standing key.
 - Mechanism: ECDSA P-256 with SHA-256 (PROPOSED) via PKCS#11 (`cryptoki` is already in `Cargo.toml`). TODO(owner): confirm the mechanism is supported by the chosen production HSM.
 - ADR-001's "2-of-3 MPC threshold ECDSA" is not a capability that a plain PKCS#11 HSM library is described as providing, and no design for it exists in the repo. Treat it as unverified until the owner supplies a design or amends ADR-001 (a status note has been appended there). ADR-001 also places a signing shard in the Zone C audit store while README/compose describe Zone C as air-gapped from signing keys (§14).
@@ -441,7 +445,7 @@ message ControlResult {
 
 // Short-lived, single-use authorisation over the exact order. See spec section 7.
 message Attestation {
-  string canonical_version = 1;   // "afe-attest-v1"
+  string canonical_version = 1;   // "afe-attest-v2" (v1 is retired: verifiers refuse it)
   bytes payload_sha256 = 2;       // SHA-256 of the canonical text
   bytes signature = 3;            // HSM signature over payload_sha256
   string key_id = 4;
@@ -449,6 +453,9 @@ message Attestation {
   int64 expires_at_ns = 6;        // PROPOSED decided_at_ns + 5 s
   uint64 aegis_state_seq = 7;
   string limits_config_sha256 = 8;
+  // TradeSignal.strategy_id, signed into the canonical text since afe-attest-v2.
+  // Verifiers rebuild the text with it; consumers must use this signed value.
+  string strategy_id = 9;
 }
 
 message AegisDecision {

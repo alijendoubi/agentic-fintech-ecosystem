@@ -3,19 +3,23 @@
 Both run inside the motor, which already sits on the audit network (``zone-bc-audit``) and sees
 every order immediately before the broker; Zone A (cognitive-core) never touches the audit store.
 
-* **SHARP gate** (``StrategyGate``): the strategy named by the caller's ``TradeSignal.strategy_id``
-  must map (owner-supplied file) to a SHARP proposal whose audited state is ``PROMOTED``
-  (``CANARY`` too, only with an explicit opt-in). Checked before any idempotency claim, so a
-  refused strategy never burns the signal.
+* **SHARP gate** (``StrategyGate``): the strategy Aegis signed (``Attestation.strategy_id``,
+  which the caller's ``TradeSignal.strategy_id`` must equal) must map (owner-supplied file) to
+  a SHARP proposal whose audited state is ``PROMOTED`` (``CANARY`` too, only with an explicit
+  opt-in). Checked before any idempotency claim, so a refused strategy never burns the signal.
 * **Manifest** (``ManifestWriter``): after every motor check passed and immediately before the
   broker, one manifest is built from the Aegis decision plus the caller's ``ExecutionContext``
   and stored write-once (``afe_manifest``, which also writes one ``manifest.stored`` audit
   record). Any failure refuses the order (``RejectReason.MANIFEST_FAILED``).
 
 Trust boundary: the context is NOT signed. It is bound to the attestation by
-``signal_id``/``symbol`` (``bind_context``); anything else in it (including ``strategy_id``) is
-trusted because the caller authenticated over mTLS. TODO(owner): sign ``strategy_id`` into
-``afe-attest-v1`` if a compromised Zone A must not be able to relabel a strategy.
+``signal_id``/``symbol``/``strategy_id`` (``bind_context``). ``strategy_id`` is signed by
+Aegis (``afe-attest-v2``, ``Attestation.strategy_id``), so a context naming another strategy
+is refused (``CONTEXT_MISMATCH``) and the SHARP gate checks the attested value. The gate
+runs before the motor verifies the signature, but that is safe: a forged
+``Attestation.strategy_id`` changes the rebuilt text, so the motor refuses the order
+(``ATTESTATION_INVALID``) before the broker. Everything else in the context (texts, model
+versions, snapshot) is trusted because the caller authenticated over mTLS.
 
 The Zone C libraries (``afe_manifest``, ``afe_sharp``, ``afe_audit``) are imported only by the
 factories at the bottom, so the motor and its unit tests do not depend on them.
@@ -65,7 +69,8 @@ def _short(exc: BaseException) -> str:
 
 
 def bind_context(decision: Any, context: Any) -> ContextRefusal | None:
-    """The context must describe exactly the signed order: same signal_id and symbol."""
+    """The context must describe exactly the signed order: same signal_id, symbol and
+    strategy_id (the attested one, signed since afe-attest-v2)."""
     order = decision.order
     signal = context.signal
     if not (context.HasField("signal") and context.HasField("snapshot")):
@@ -76,6 +81,10 @@ def bind_context(decision: Any, context: Any) -> ContextRefusal | None:
         return ContextRefusal(RejectReason.CONTEXT_MISMATCH, "symbol differs from decision")
     if not signal.strategy_id.strip():
         return ContextRefusal(RejectReason.CONTEXT_MISMATCH, "signal has no strategy_id")
+    if signal.strategy_id != decision.attestation.strategy_id:
+        return ContextRefusal(
+            RejectReason.CONTEXT_MISMATCH, "strategy_id differs from the attested strategy_id"
+        )
     return None
 
 
@@ -90,10 +99,11 @@ class ComplianceGates:
     def requires_context(self) -> bool:
         return self.manifest is not None or self.strategy_gate is not None
 
-    def check_strategy(self, context: Any) -> str | None:
+    def check_strategy(self, attested_strategy_id: str) -> str | None:
+        """SHARP gate over the ATTESTED strategy id (``AttestedOrder.attestation``)."""
         if self.strategy_gate is None:
             return None
-        return self.strategy_gate.check(context.signal.strategy_id)
+        return self.strategy_gate.check(attested_strategy_id)
 
     def release_check(self, decision: Any, context: Any) -> Callable[[], str | None] | None:
         writer = self.manifest

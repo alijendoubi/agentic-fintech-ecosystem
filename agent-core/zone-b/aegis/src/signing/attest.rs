@@ -43,12 +43,15 @@ pub fn attest_order(
         .decided_at_ns
         .checked_add(p.ttl_ns)
         .ok_or_else(|| SignError::Canonical("expiry overflow".into()))?;
+    // `strategy_id` is signed (afe-attest-v2) and echoed in the attestation so
+    // the execution-motor can bind its SHARP gate to the signed value.
     // The attested text (spec section 7) binds `signal_id`, not `order_id`, so
     // the client order id IS the signal id: one signal, one order, and the
     // broker's idempotency key is covered by the signature.
     let order_id = p.signal.signal_id.clone();
     let fields = AttestationFields {
         signal_id: p.signal.signal_id.clone(),
+        strategy_id: p.signal.strategy_id.clone(),
         symbol: p.signal.symbol.clone(),
         side: p.signal.side,
         order_type: ORDER_TYPE_LIMIT.to_owned(),
@@ -72,6 +75,7 @@ pub fn attest_order(
         expires_at_ns,
         aegis_state_seq: p.state_seq,
         limits_config_sha256: p.limits_sha256.to_owned(),
+        strategy_id: p.signal.strategy_id.clone(),
     };
     let order = pb::OrderRequest {
         order_id,
