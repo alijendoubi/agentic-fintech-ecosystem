@@ -57,3 +57,31 @@ async def test_empty_but_reachable_store_says_no_precedent_found(memory: Any) ->
     h = make_harness(runner_settings(), precedents=adapter)
     await h.runner.handle_message(snapshot_json())
     assert "no similar past debates found" in h.clients["judge"].prompts[0]
+
+
+def test_build_memory_passes_the_chroma_token_from_the_environment(
+    memory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ALI-20: compose puts Chroma behind a bearer-token proxy; the token must reach the client."""
+    avm, store, _ = memory
+    from cognitive_core import __main__ as entrypoint
+    from cognitive_core.runner_config import RunnerSettings
+
+    seen: list[Any] = []
+
+    def fake_open(settings: Any) -> Any:
+        seen.append(settings)
+        return store
+
+    monkeypatch.setattr(avm, "open_chroma_store", fake_open)
+    token = "0123456789abcdef0123456789abcdef"
+    env = {
+        "COGNITIVE_SINK": "log",
+        "COGNITIVE_MEMORY_ENABLED": "true",
+        "CHROMA_HOST": "vector-db",
+        "CHROMA_AUTH_TOKEN": token,
+    }
+    precedents, reflections = entrypoint.build_memory(env, RunnerSettings.from_env(env))
+    assert precedents is not None and reflections is not None
+    assert [s.host for s in seen] == ["vector-db"]
+    assert seen[0].auth_token == token

@@ -80,3 +80,57 @@ def test_valid_symbols(symbol: str) -> None:
 )
 def test_invalid_symbols(symbol: object) -> None:
     assert not is_valid_symbol(symbol)
+
+
+QDB_PASSWORD = "Zq8vN2kLx7Rt4bWm"
+
+
+def test_questdb_basic_auth_is_optional_and_absent_by_default() -> None:
+    settings = Settings.from_env({})
+    assert settings.questdb_http_user is None
+    assert settings.questdb_http_password is None
+
+
+def test_questdb_basic_auth_pair_is_read_and_password_not_in_repr() -> None:
+    settings = Settings.from_env(
+        {"QUESTDB_HTTP_USER": "afe_reader", "QUESTDB_HTTP_PASSWORD": QDB_PASSWORD}
+    )
+    assert settings.questdb_http_user == "afe_reader"
+    assert settings.questdb_http_password == QDB_PASSWORD
+    assert QDB_PASSWORD not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"QUESTDB_HTTP_USER": "afe_reader"},
+        {"QUESTDB_HTTP_PASSWORD": QDB_PASSWORD},
+        {"QUESTDB_HTTP_USER": "  ", "QUESTDB_HTTP_PASSWORD": QDB_PASSWORD},
+    ],
+)
+def test_questdb_basic_auth_must_be_a_pair(env: dict[str, str]) -> None:
+    with pytest.raises(ConfigError, match="set together"):
+        Settings.from_env(env)
+
+
+@pytest.mark.parametrize("user", ["afe:reader", "a b", "x" * 65, "us\u00e9r"])
+def test_questdb_user_rejects_unsafe_names(user: str) -> None:
+    with pytest.raises(ConfigError, match="QUESTDB_HTTP_USER"):
+        Settings.from_env({"QUESTDB_HTTP_USER": user, "QUESTDB_HTTP_PASSWORD": QDB_PASSWORD})
+
+
+@pytest.mark.parametrize(
+    ("password", "match"),
+    [
+        ("short-Pw1", "at least 16"),
+        ("with space inside 0123", "printable"),
+        ("change-me-questdb-0123456789", "placeholder"),
+        ("PLACEHOLDER0123456789abc", "placeholder"),
+        ("my-default-password-0123", "placeholder"),
+    ],
+)
+def test_questdb_password_rejects_weak_values_without_echoing(password: str, match: str) -> None:
+    """ALI-20/ALI-21: a short or placeholder password stops the process and is never echoed."""
+    with pytest.raises(ConfigError, match=match) as info:
+        Settings.from_env({"QUESTDB_HTTP_USER": "afe_reader", "QUESTDB_HTTP_PASSWORD": password})
+    assert password not in str(info.value)
