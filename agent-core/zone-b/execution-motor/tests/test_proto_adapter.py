@@ -20,6 +20,7 @@ from .helpers import NOW_NS, HmacTestVerifier, sign
 
 NANO = 1_000_000_000
 KEY_ID = "test-key-1"
+STRATEGY_ID = "AFE-STRATEGY-001"
 
 
 def build(
@@ -41,12 +42,13 @@ def build(
         attestation_expires_at_ns=NOW_NS + 4 * NANO,
     )
     att = pb2["aegis"].Attestation(
-        canonical_version="afe-attest-v1",
+        canonical_version="afe-attest-v2",
         key_id=KEY_ID,
         decided_at_ns=NOW_NS - 1,
         expires_at_ns=NOW_NS + 4 * NANO,
         aegis_state_seq=7,
         limits_config_sha256="ab" * 32,
+        strategy_id=STRATEGY_ID,
     )
     for name, value in (order_over or {}).items():
         setattr(order, name, value)
@@ -79,6 +81,7 @@ def test_conversion_maps_fields_with_exact_decimals(pb2: dict[str, ModuleType]) 
     assert order.limit_price == Decimal("190.5")
     assert attested.attestation.key_id == KEY_ID
     assert attested.attestation.expires_at_ns == NOW_NS + 4 * NANO
+    assert attested.attestation.strategy_id == STRATEGY_ID
 
 
 def test_full_pipeline_verifies_with_test_verifier(pb2: dict[str, ModuleType]) -> None:
@@ -86,11 +89,12 @@ def test_full_pipeline_verifies_with_test_verifier(pb2: dict[str, ModuleType]) -
     assert evaluate_attestation(HmacTestVerifier(), attested) is None
 
 
-def test_canonical_text_matches_the_assumed_v1_layout(pb2: dict[str, ModuleType]) -> None:
+def test_canonical_text_matches_the_v2_layout(pb2: dict[str, ModuleType]) -> None:
     text = canonical_attestation_text(*build(pb2)).decode()
     assert text == (
-        "afe-attest-v1\n"
+        "afe-attest-v2\n"
         "signal_id=0b9c7f3e-6d0e-4a3a-9c53-0d9d5b8e1a11\n"
+        f"strategy_id={STRATEGY_ID}\n"
         "symbol=AAPL\n"
         "side=BUY\n"
         "order_type=LIMIT\n"
@@ -166,9 +170,30 @@ def test_non_pending_status_refused(pb2: dict[str, ModuleType]) -> None:
         attested_order_from_proto(*build(pb2, order_over={"status": 3}))
 
 
-def test_unsupported_canonical_version_refused(pb2: dict[str, ModuleType]) -> None:
+@pytest.mark.parametrize("version", ["afe-attest-v1", "afe-attest-v3", ""])
+def test_unsupported_canonical_version_refused(pb2: dict[str, ModuleType], version: str) -> None:
+    """v1 (no signed strategy_id) is retired: refused even when correctly signed."""
     with pytest.raises(OrderValidationError):
-        attested_order_from_proto(*build(pb2, att_over={"canonical_version": "afe-attest-v2"}))
+        attested_order_from_proto(*build(pb2, att_over={"canonical_version": version}))
+
+
+def test_relabelled_strategy_id_breaks_verification(pb2: dict[str, ModuleType]) -> None:
+    """strategy_id is signed (v2): changing it after signing fails the digest/signature."""
+    order, att = build(pb2)
+    att.strategy_id = "AFE-STRATEGY-EVIL"
+    attested = attested_order_from_proto(order, att)
+    assert attested.attestation.strategy_id == "AFE-STRATEGY-EVIL"
+    assert evaluate_attestation(HmacTestVerifier(), attested) is not None
+
+
+@pytest.mark.parametrize("bad", ["", "A=B", "A\nsymbol=MSFT"])
+def test_missing_or_malformed_attested_strategy_id_is_refused(
+    pb2: dict[str, ModuleType], bad: str
+) -> None:
+    order, att = build(pb2)
+    att.strategy_id = bad
+    with pytest.raises(OrderValidationError):
+        attested_order_from_proto(order, att)
 
 
 @pytest.mark.parametrize(

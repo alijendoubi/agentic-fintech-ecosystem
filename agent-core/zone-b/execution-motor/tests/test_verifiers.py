@@ -63,6 +63,7 @@ def hsm_sign_digest(private: ec.EllipticCurvePrivateKey, digest: bytes) -> bytes
 def hsm_text() -> bytes:
     return build_canonical_text(
         signal_id="3e7bafc0-9d94-4e31-8d87-3b4b8a7c0044",
+        strategy_id="AFE-STRATEGY-001",
         symbol="AAPL",
         side="BUY",
         order_type="LIMIT",
