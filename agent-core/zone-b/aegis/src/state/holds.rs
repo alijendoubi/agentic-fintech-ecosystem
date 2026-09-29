@@ -16,6 +16,8 @@ pub struct Held {
     pub validated: ValidatedSignal,
     pub payload_sha256: [u8; 32],
     pub expires_at_ns: i64,
+    /// The HELD_FOR_HUMAN decision as returned to the submitter (ALI-156: `ListHolds`).
+    pub decision: pb::AegisDecision,
 }
 
 #[derive(Debug, Default)]
@@ -35,6 +37,13 @@ impl HoldStore {
 
     pub fn get(&self, hold_id: &str) -> Option<&Held> {
         self.map.get(hold_id)
+    }
+
+    /// Every pending hold, soonest expiry first (ALI-156).
+    pub fn all(&self) -> Vec<&Held> {
+        let mut holds: Vec<&Held> = self.map.values().collect();
+        holds.sort_by(|a, b| (a.expires_at_ns, &a.hold_id).cmp(&(b.expires_at_ns, &b.hold_id)));
+        holds
     }
 
     pub fn take(&mut self, hold_id: &str) -> Option<Held> {
@@ -89,14 +98,17 @@ mod tests {
             },
             payload_sha256: [0; 32],
             expires_at_ns: exp,
+            decision: pb::AegisDecision::default(),
         }
     }
 
     #[test]
     fn insert_take_expire_and_bound() {
         let mut s = HoldStore::default();
-        assert!(s.insert(held("a", 10)) && s.insert(held("b", 20)));
+        assert!(s.insert(held("b", 20)) && s.insert(held("a", 10)));
         assert_eq!(s.len(), 2);
+        let order: Vec<&str> = s.all().iter().map(|h| h.hold_id.as_str()).collect();
+        assert_eq!(order, ["a", "b"]);
         assert!(s.get("a").is_some());
         let exp = s.take_expired(11);
         assert_eq!(exp.len(), 1);

@@ -435,6 +435,28 @@ async fn execution_reports_state_and_hold_rpcs_work_for_their_roles() {
         .into_inner();
     assert_eq!(held.decision, DecisionStatus::DecisionHeldForHuman as i32);
     let mut op = client(&s, Some("operator-console")).await.unwrap();
+    // ALI-156: pending holds are readable by hold-resolver peers only
+    let listed = op.list_holds(pb::Empty {}).await.unwrap().into_inner();
+    assert_eq!(listed.holds.len(), 1);
+    assert_eq!(listed.holds[0].decision.as_ref(), Some(&held));
+    let one = op
+        .get_hold(pb::GetHoldRequest {
+            hold_id: held.hold_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(one, listed.holds[0]);
+    assert_eq!(
+        core.list_holds(pb::Empty {}).await.unwrap_err().code(),
+        Code::PermissionDenied
+    );
+    let missing = op
+        .get_hold(pb::GetHoldRequest {
+            hold_id: "nope".into(),
+        })
+        .await;
+    assert_eq!(missing.unwrap_err().code(), Code::NotFound);
     let denied = op
         .resolve_hold(pb::ResolveHoldRequest {
             hold_id: held.hold_id.clone(),

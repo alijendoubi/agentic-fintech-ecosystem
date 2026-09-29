@@ -14,12 +14,20 @@ use crate::audit::AuditEvent;
 use crate::controls::ReplayVerdict;
 use crate::domain::{Mode, ValidatedSignal};
 use crate::pb::{
-    AegisDecision, DecisionStatus, ReasonCode, ResolveHoldRequest, SignalStatus, TradeSignal,
+    AegisDecision, DecisionStatus, HeldSignal, ReasonCode, ResolveHoldRequest, SignalStatus,
+    TradeSignal,
 };
 use crate::state::holds::Held;
 use crate::state::replay::ReplayRecord;
 
 const NANOS_PER_MS: i64 = 1_000_000;
+
+fn held_view(held: &Held) -> HeldSignal {
+    HeldSignal {
+        decision: Some(held.decision.clone()),
+        signal: Some(held.signal.clone()),
+    }
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum HoldError {
@@ -49,12 +57,16 @@ impl Engine {
             .valid_until_ns
             .min(now.saturating_add(window_ms.saturating_mul(NANOS_PER_MS)));
         let hold_id = uuid::Uuid::new_v4().to_string();
+        let mut held_decision = d.clone();
+        held_decision.hold_id = hold_id.clone();
+        held_decision.hold_expires_at_ns = expires;
         let held = Held {
-            hold_id: hold_id.clone(),
+            hold_id,
             signal: raw.clone(),
             validated: v.clone(),
             payload_sha256: hash,
             expires_at_ns: expires,
+            decision: held_decision.clone(),
         };
         if expires <= now || !core.holds.insert(held) {
             downgrade(
@@ -65,9 +77,30 @@ impl Engine {
             );
             return d;
         }
-        d.hold_id = hold_id;
-        d.hold_expires_at_ns = expires;
-        d
+        held_decision
+    }
+
+    /// Pending holds for the HITL backend (ALI-156). Expired holds are
+    /// rejected and dropped first, exactly as `resolve_hold` does.
+    pub fn list_holds(&self) -> Result<Vec<HeldSignal>, HoldError> {
+        let now = self.now().ok_or(HoldError::Internal)?;
+        let mut core = self.lock().ok_or(HoldError::Internal)?;
+        for held in core.holds.take_expired(now) {
+            self.expire_hold(&held, now);
+        }
+        Ok(core.holds.all().into_iter().map(held_view).collect())
+    }
+
+    pub fn get_hold(&self, hold_id: &str) -> Result<HeldSignal, HoldError> {
+        let now = self.now().ok_or(HoldError::Internal)?;
+        let mut core = self.lock().ok_or(HoldError::Internal)?;
+        for held in core.holds.take_expired(now) {
+            self.expire_hold(&held, now);
+        }
+        core.holds
+            .get(hold_id)
+            .map(held_view)
+            .ok_or(HoldError::NotFound)
     }
 
     /// Record an expired hold as a REJECT (idempotent replay record + audit).

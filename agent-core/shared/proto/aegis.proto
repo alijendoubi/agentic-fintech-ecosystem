@@ -37,6 +37,10 @@ service Aegis {
   rpc SubmitSignal(TradeSignal) returns (AegisDecision);
   // Human decision on a held signal. All hard controls are re-run at release time.
   rpc ResolveHold(ResolveHoldRequest) returns (AegisDecision);
+  // Read-only view of pending holds for the HITL backend (ALI-156). Same role as
+  // ResolveHold (`hold-resolver`). Expired holds are rejected and dropped first.
+  rpc ListHolds(Empty) returns (ListHoldsResponse);
+  rpc GetHold(GetHoldRequest) returns (HeldSignal);
 
   rpc TriggerKillSwitch(TriggerKillSwitchRequest) returns (KillSwitchState);
   rpc ResetKillSwitch(ResetKillSwitchRequest) returns (ResetKillSwitchResponse);
@@ -137,6 +141,21 @@ message AegisDecision {
   int64 decided_at_ns = 10;
   uint64 aegis_state_seq = 11;
   string aegis_version = 12;
+}
+
+// One pending hold: the HELD_FOR_HUMAN decision (with every control result) and the
+// exact signal it was evaluated on (ALI-156).
+message HeldSignal {
+  AegisDecision decision = 1;
+  TradeSignal signal = 2;
+}
+
+message GetHoldRequest {
+  string hold_id = 1;
+}
+
+message ListHoldsResponse {
+  repeated HeldSignal holds = 1;
 }
 
 message ResolveHoldRequest {

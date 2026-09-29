@@ -116,6 +116,7 @@ roles. A verified certificate that is not listed has no roles (PERMISSION_DENIED
 |---|---|
 | SubmitSignal | `signal-submitter` |
 | ResolveHold | `hold-resolver`; `operator_id` must equal the certificate identity |
+| ListHolds, GetHold | `hold-resolver` (ALI-156: read-only; each pending hold's HELD decision with every control result, plus its signal; expired holds are rejected and dropped first) |
 | TriggerKillSwitch | `kill-trigger` |
 | ResetKillSwitch | `kill-reset` plus signed approvals (below) |
 | Heartbeat | `operator`; `operator_id` must equal the certificate identity |
