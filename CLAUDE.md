@@ -54,7 +54,7 @@ Implemented (see the README status table for what was and was not re-run):
 - `agent-core/zone-a/cognitive-core/` - LangGraph Blue/Red/Judge debate, runner service (`service.py`) + Dockerfile
 - `agent-core/zone-a/regime-detector/` - 5-state HMM; `hmm.py` shim over the `regime_detector/` package; HMAC-verified `.npz` model store
 - `agent-core/zone-b/sensory-array/` - Rust WebSocket L2 ingestor, QuestDB ILP + Redis sinks (hot path, no MCP)
-- `agent-core/zone-a/vector-db/` - `afe_vector_memory` Chroma memory layer (no seed scenarios yet, ALI-157)
+- `agent-core/zone-a/vector-db/` - `afe_vector_memory` Chroma memory layer; DRAFT seed scenarios (ALI-157, PR #23; unreviewed, issue #33)
 - `agent-core/zone-b/aegis/` - Rust risk gate: controls C01-C19, kill switches, attestation signing, gRPC/mTLS, `aegis supervisor`
 - `agent-core/zone-b/execution-motor/` - gRPC service over mTLS: attestation-verified execution, Alpaca paper client, mock broker
 - `agent-core/zone-b/refdata-bridge/` - Redis -> `Aegis.PushReferenceData` over mTLS
