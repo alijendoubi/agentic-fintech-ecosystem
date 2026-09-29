@@ -1,0 +1,45 @@
+{
+  "started_stack_ns": 1790308919056656000,
+  "baseline": {
+    "level": "KILL_LEVEL_NORMAL",
+    "motor_halted": false
+  },
+  "step1_soft": {
+    "level_after_trigger": "KILL_LEVEL_SOFT",
+    "trigger_rpc_s": 0.016,
+    "motor_halted_after_s": 0.015,
+    "signal_decision": "DECISION_REJECTED",
+    "signal_failed_reasons": [
+      "REASON_KILL_SWITCH_ACTIVE"
+    ],
+    "reset_single_operator_accepted": true,
+    "reset_refusal": "",
+    "level_after_reset": "KILL_LEVEL_NORMAL",
+    "motor_resumed_after_s": 0.0
+  },
+  "step2_logic": {
+    "cancel_sweep_logged_within_s": 0.141,
+    "reset_one_operator_accepted": false,
+    "reset_one_operator_refusal": "insufficient approvals: need 2 operator(s) and 0 compliance approver(s), distinct people",
+    "reset_two_operators_accepted": true,
+    "reset_two_operators_refusal": "",
+    "level_after_reset": "KILL_LEVEL_NORMAL"
+  },
+  "step6_persistence": {
+    "aegis_back_after_s": 0.563,
+    "level_after_restart": "KILL_LEVEL_SOFT",
+    "reset_accepted": true,
+    "level_after_reset": "KILL_LEVEL_NORMAL"
+  },
+  "step4_freeze": {
+    "frozen_for_s": 30,
+    "motor_logged_stream_down_after_s": 5.282,
+    "motor_halted_while_frozen": true,
+    "motor_recovered_after_unfreeze_s": 0.0,
+    "supervisor_probe_failures_logged": 16,
+    "supervisor_trip_attempts_failed": 0,
+    "supervisor_latched_hard": false,
+    "level_after": "KILL_LEVEL_NORMAL"
+  },
+  "finished_stack_ns": 1790308952948343000
+}

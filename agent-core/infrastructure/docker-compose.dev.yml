@@ -62,7 +62,7 @@ services:
       - ${AEGIS_CONFIG_DIR:-./secrets/aegis-config}:/cfg:ro
       - ./dev-tls/out/aegis:/tls:ro
       - ./dev-tls/out/aegis-signer:/signer:ro
-      - ./dev-tls/identities.json:/dev-identities.json:ro
+      - ./dev-tls/out/identities.json:/dev-identities.json:ro # generated: adds the operator + reset approvers (ALI-170)
       - ${AEGIS_HSM_MODULE_DIR:-./secrets/hsm}:/hsm:ro
     ports:
       - "127.0.0.1:50051:50051" # gRPC, mTLS (client certs required — see dev-tls/README.md)
