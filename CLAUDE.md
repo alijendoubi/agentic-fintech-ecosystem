@@ -29,7 +29,8 @@ python -m backtesting.engine --help   # smoke CLI; python -m backtesting.calibra
 #   (one command, split here for reading; MSYS_NO_PATHCONV stops Git Bash rewriting the paths)
 cd agent-core/zone-b/sensory-array && cargo test --locked
 
-# HITL operator terminal (Next.js, port 3000, GET /api/health)
+# HITL operator terminal (Next.js, port 3000 inside compose, GET /api/health). In compose only hitl-proxy
+# (nginx, infrastructure/hitl-proxy/hitl.conf) has a host port: https://localhost:8443 (dev CA: dev-tls/out/hitl-proxy/ca.pem)
 cd agent-core/zone-c/hitl-interface && npm ci && npm run typecheck && npm run lint && npm test && npm run build
 
 # Protobuf
