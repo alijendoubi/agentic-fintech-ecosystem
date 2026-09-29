@@ -6,9 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from cognitive_core.models import SignalSide, SignalStatus
+from cognitive_core.models import SignalSide, SignalStatus, TradeSignal
 from cognitive_core.service import CognitiveRunner, CycleOutcome, SourceError
-from cognitive_core.sinks import InMemorySink
+from cognitive_core.sinks import DecisionContext, InMemorySink, SinkReceipt
 from cognitive_core.sources import StaticSource
 from cognitive_core.tests.fakes import BLUE_JSON, RED_JSON, ScriptedClient
 from cognitive_core.tests.runner_fakes import (
@@ -185,7 +185,9 @@ async def test_sink_failure_is_counted_not_retried_and_not_recorded() -> None:
 @pytest.mark.asyncio
 async def test_unexpected_exception_becomes_error_outcome_and_no_signal() -> None:
     class Exploding(InMemorySink):
-        async def send(self, signal):  # type: ignore[no-untyped-def, override]
+        async def send(
+            self, signal: TradeSignal, context: DecisionContext | None = None
+        ) -> SinkReceipt:
             raise RuntimeError("bug")
 
     h = make_harness(sink=Exploding())

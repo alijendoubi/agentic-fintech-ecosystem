@@ -44,6 +44,9 @@ def pb2(tmp_path_factory: pytest.TempPathFactory) -> dict[str, ModuleType]:
             "order": importlib.import_module("order_request_pb2"),
             "aegis": importlib.import_module("aegis_pb2"),
             "motor": importlib.import_module("execution_motor_pb2"),
+            "compliance": importlib.import_module("compliance_manifest_pb2"),
+            "snapshot": importlib.import_module("market_snapshot_pb2"),
+            "signal": importlib.import_module("trade_signal_pb2"),
         }
     finally:
         sys.path.remove(str(out))

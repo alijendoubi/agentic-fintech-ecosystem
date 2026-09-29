@@ -4,3 +4,6 @@ structlog>=24.4.0
 protobuf>=5.28.0
 cryptography>=43.0.0
 grpcio>=1.67.0
+# ALI-161: Zone C libraries copied into the image (afe_audit, afe_manifest, afe_sharp)
+psycopg2-binary>=2.9.9
+numpy>=2.0.0

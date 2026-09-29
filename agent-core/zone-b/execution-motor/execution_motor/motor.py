@@ -3,6 +3,7 @@
 Pipeline (every step fails closed; nothing here raises to the caller for a policy outcome):
   halt -> attestation (missing/invalid) -> expiry/future -> algo support -> notional cap ->
   routing -> idempotency claims (signal_id AND order_id) -> session notional reservation ->
+  release check (the per-trade Compliance Manifest, ALI-161; optional) ->
   halt (again, immediately before the broker call) -> broker.submit_order (exactly once).
 
 Replay keys: ``signal_id`` is inside the signed attestation text, ``order_id`` is not, so an
@@ -48,6 +49,10 @@ from .toxicity import VenueObservation
 _log = structlog.get_logger("execution_motor.motor")
 _ZERO = Decimal(0)
 VenueStats = Callable[[], Mapping[str, Sequence[VenueObservation]]]
+# Called once, after every motor check passed and the claims/reservation are held, immediately
+# before the broker. Returns None to release the order, or a detail string to refuse it. Must
+# not raise (``compliance.ComplianceGates`` wraps every failure into a detail string).
+ReleaseCheck = Callable[[], str | None]
 
 
 def _no_stats() -> Mapping[str, Sequence[VenueObservation]]:
@@ -109,13 +114,17 @@ class ExecutionMotor:
         return self._config.allow_short_selling
 
     def execute(
-        self, attested: AttestedOrder, *, reference_price: Decimal | None = None
+        self,
+        attested: AttestedOrder,
+        *,
+        reference_price: Decimal | None = None,
+        release_check: ReleaseCheck | None = None,
     ) -> ExecutionReport:
         """Execute one attested order. Always returns a report; never raises."""
         received = self._clock()
         order = attested.order
         try:
-            report = self._run(attested, reference_price, received)
+            report = self._run(attested, reference_price, received, release_check)
         except Exception as exc:  # noqa: BLE001 - last-resort boundary: halt and fail closed
             self._kill.halt(f"unexpected error: {type(exc).__name__}")
             _log.error("motor_internal_error", order_id=order.order_id, error=type(exc).__name__)
@@ -135,7 +144,13 @@ class ExecutionMotor:
 
     # ---------------------------------------------------------------- pipeline
 
-    def _run(self, attested: AttestedOrder, ref: Decimal | None, received: int) -> ExecutionReport:
+    def _run(
+        self,
+        attested: AttestedOrder,
+        ref: Decimal | None,
+        received: int,
+        release_check: ReleaseCheck | None = None,
+    ) -> ExecutionReport:
         order = attested.order
         pre = self._precheck(attested, ref, received)
         if isinstance(pre, ExecutionReport):
@@ -147,6 +162,15 @@ class ExecutionMotor:
         gate = self._claim_and_reserve(order, notional, received, ref)
         if gate is not None:
             return gate
+        if release_check is not None:
+            # Claims stay consumed (fail closed): a refused order is never retried under the
+            # same signal. Only the notional reservation is returned.
+            refusal = release_check()
+            if refusal is not None:
+                self._ledger.release(notional)
+                return self._rejected(
+                    order, RejectReason.MANIFEST_FAILED, refusal, received, ref, decision.venue
+                )
         return self._submit(order, decision.venue, notional, received, ref)
 
     def _precheck(

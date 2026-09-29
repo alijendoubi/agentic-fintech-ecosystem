@@ -20,7 +20,7 @@ WORKDIR /build
 COPY shared/proto ./shared/proto
 RUN pip install --no-cache-dir "grpcio-tools>=1.67.0"
 WORKDIR /build/shared/proto
-RUN PYTHON=python ./generate.sh
+RUN PYTHON=python bash ./generate.sh  # via bash: the file is mode 100644 in git
 
 FROM python:${PYTHON_TAG} AS runtime
 RUN groupadd -g 10001 motor \
@@ -31,12 +31,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=build /build/shared/generated ./shared/generated
 COPY zone-b/execution-motor/__init__.py ./__init__.py
 COPY zone-b/execution-motor/execution_motor ./execution_motor
+# Compliance gates (ALI-161): per-trade manifest + SHARP promotion, imported only when enabled.
+COPY zone-c/audit-logger/afe_audit ./afe_audit
+COPY zone-c/compliance-manifest/afe_manifest ./afe_manifest
+COPY zone-c/sharp-gate/afe_sharp ./afe_sharp
 ENV PYTHONPATH=/app:/app/shared/generated \
     PYTHONUNBUFFERED=1 \
     MOTOR_LISTEN_ADDR=0.0.0.0:50061 \
     MOTOR_STATE_DIR=/var/lib/execution-motor
-RUN mkdir -p /var/lib/execution-motor && chown motor:motor /var/lib/execution-motor
-VOLUME ["/var/lib/execution-motor"]
+RUN mkdir -p /var/lib/execution-motor /var/lib/afe-manifests \
+ && chown motor:motor /var/lib/execution-motor /var/lib/afe-manifests
+VOLUME ["/var/lib/execution-motor", "/var/lib/afe-manifests"]
 EXPOSE 50061
 USER 10001:10001
 # No shell/curl dependency: a plain TCP connect to the listen port (same approach as

@@ -68,7 +68,7 @@ All specs are in `agent-core/docs/specs/`; open decisions are in `agent-core/doc
 - Intended: Zone A holds no trading/signing/broker credentials — only Aegis authorises orders. Compose no longer injects LLM provider keys (cognitive-core uses Bedrock/IAM, ADR-002); the LLM egress route is still open in ADR-003 (Proposed).
 - Hot path is MCP-free — direct socket connections only
 - All orders must carry a valid Aegis attestation: execution-motor verifies it before the broker (a separate broker gateway, ADR-004, is not implemented)
-- Intended: every trade decision generates a Compliance Manifest in Zone C (library exists; not wired into a running service, ALI-161)
+- Every order execution-motor releases gets a write-once Compliance Manifest first, and its strategy must be SHARP-`PROMOTED` (ALI-161, `execution_motor/compliance.py`; the SHARP gate is off in dev compose). Held/rejected decisions get no manifest; a soft-block approval needs the HITL backend (ALI-156)
 - Compose/CI: secrets only via `${VAR:?}` env (`agent-core/infrastructure/.env.example` has blanks); zone networks are `internal: true`; `*.sh`/`*.sql`/Dockerfiles must be LF (`.gitattributes`)
 - No floating point for money on the decision path (Phase 3 spec §3)
 - Latency budgets are unvalidated targets and inconsistent between README, ADR-002 and code; see README "Latency Budget"

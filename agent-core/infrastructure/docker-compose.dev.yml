@@ -107,8 +107,13 @@ services:
       AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
       MOTOR_USE_MOCK_BROKER: "1" # no real Alpaca credentials in dev
       MOTOR_ATTESTATION_KEYS_FILE: /tls/attestation-keys.json # dev signer's public key (dev-tls, ALI-167)
+      # Dev has no promoted SHARP proposal (and sharp-gate's migrations are not mounted): skip that gate.
+      # Manifests stay ON in dev. Both opt-outs are refused when MOTOR_ENV is production (ALI-161).
+      MOTOR_SHARP_DISABLED: "1"
+      MOTOR_SHARP_STRATEGY_MAP: ""
     volumes: !override
       - execution-motor-state:/var/lib/execution-motor
+      - execution-motor-manifests:/var/lib/afe-manifests
       - ./dev-tls/out/execution-motor:/tls:ro
       - ./dev-tls/out/execution-motor:/aegis-tls:ro
       - ${MOTOR_CONFIG_DIR:-./secrets/motor-config}:/cfg:ro

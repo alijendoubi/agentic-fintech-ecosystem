@@ -10,11 +10,14 @@ from cognitive_core.service import CycleOutcome
 from cognitive_core.sinks import (
     AegisGrpcSink,
     AegisRelaySink,
+    DecisionContext,
     InMemoryMotorSink,
     InMemorySink,
     LogSink,
     MotorGrpcSink,
     SinkError,
+    build_execute_request,
+    load_generated_motor_protos,
     load_generated_protos,
 )
 from cognitive_core.tests.runner_fakes import make_harness, pending_signal, snapshot_json
@@ -329,6 +332,9 @@ class _FakeMotorStub:
             raise self.error
         return self.reply
 
+    async def ExecuteWithContext(self, request: Any, *, timeout: float) -> Any:  # noqa: N802
+        raise AssertionError("ExecuteWithContext needs a request builder and a context")
+
 
 @pytest.mark.asyncio
 async def test_motor_grpc_sink_relays_the_decision_and_reports_the_ack(
@@ -374,3 +380,99 @@ async def test_in_memory_motor_sink_collects_and_can_fail() -> None:
     sink.fail_with = ConnectionError("down")
     with pytest.raises(SinkError, match="down"):
         await sink.send(decision)
+
+
+# -- ALI-161: decision context for the Compliance Manifest --------------------------------
+
+
+def _context(**over: Any) -> DecisionContext:
+    fields: dict[str, Any] = {
+        "symbol": "AAPL",
+        "ingestion_ts_ns": 1_700_000_000_000_000_000,
+        "mid_price": 190.5,
+        "z_score": 1.2,
+        "mad_score": 0.9,
+        "order_flow_imbalance": 0.1,
+        "realized_volatility": 0.2,
+        "adv_30d": 5e7,
+        "regime": "TRENDING_BULL",
+        "blue_node_thesis": "BUY: momentum",
+        "red_node_challenge": "counter: earnings",
+        "judge_synthesis": "judge says go",
+        "model_versions": {"cognitive-core/blue": "m-blue"},
+    }
+    fields.update(over)
+    return DecisionContext(**fields)
+
+
+class _FakeContextStub(_FakeMotorStub):
+    def __init__(self, reply: Any = None) -> None:
+        super().__init__(reply)
+        self.context_calls: list[tuple[Any, float]] = []
+
+    async def ExecuteWithContext(self, request: Any, *, timeout: float) -> Any:  # noqa: N802
+        # Overrides the parent's refusal: this fake accepts context calls.
+        self.context_calls.append((request, timeout))
+        return self.reply
+
+
+@pytest.mark.asyncio
+async def test_runner_relays_the_signal_proto_and_the_debate_context(generated_dir: Path) -> None:
+    protos = load_generated_protos(generated_dir)
+    decision = _decision(
+        protos, decision=protos["aegis_pb2"].DECISION_APPROVED, with_attestation=True
+    )
+    motor = InMemoryMotorSink()
+    sink = AegisRelaySink(
+        aegis_stub=_FakeStub(decision),
+        trade_signal_pb2=protos["trade_signal_pb2"],
+        strategy_id="S-1",
+        motor_sink=motor,
+    )
+    h = make_harness(sink=sink)  # type: ignore[arg-type]
+    assert await h.runner.handle_message(snapshot_json()) is CycleOutcome.EMITTED
+    (signal_message,) = motor.signals
+    (context,) = motor.contexts
+    assert signal_message.strategy_id == "S-1"  # the exact proto that went to Aegis
+    assert context is not None and context.symbol == signal_message.symbol
+    assert context.regime and context.mid_price > 0
+    assert set(context.model_versions) >= {"cognitive-core/blue", "cognitive-core/judge"}
+
+
+@pytest.mark.asyncio
+async def test_motor_grpc_sink_uses_execute_with_context_when_it_can(generated_dir: Path) -> None:
+    protos = load_generated_protos(generated_dir)
+    motor_protos = load_generated_motor_protos(generated_dir)
+    decision = _decision(
+        protos, decision=protos["aegis_pb2"].DECISION_APPROVED, with_attestation=True
+    )
+    signal_message = protos["trade_signal_pb2"].TradeSignal(signal_id="sig-1", symbol="AAPL")
+    stub = _FakeContextStub(SimpleNamespace(accepted=True, detail="ok"))
+    builder = build_execute_request(
+        motor_protos["execution_motor_pb2"], motor_protos["market_snapshot_pb2"]
+    )
+    sink = MotorGrpcSink(stub=stub, timeout_s=0.5, request_builder=builder)
+    await sink.send(decision, signal_message=signal_message, context=_context())
+    ((request, timeout),) = stub.context_calls
+    assert stub.calls == [] and timeout == 0.5
+    assert request.decision == decision
+    assert request.context.signal == signal_message
+    snap = request.context.snapshot
+    assert (snap.symbol, snap.mid_price, snap.is_stale) == ("AAPL", 190.5, False)
+    assert snap.regime == motor_protos["market_snapshot_pb2"].TRENDING_BULL
+    assert dict(request.context.model_versions) == {"cognitive-core/blue": "m-blue"}
+    assert request.context.judge_synthesis == "judge says go"
+
+
+@pytest.mark.asyncio
+async def test_motor_grpc_sink_falls_back_to_plain_execute_without_context(
+    generated_dir: Path,
+) -> None:
+    protos = load_generated_protos(generated_dir)
+    decision = _decision(
+        protos, decision=protos["aegis_pb2"].DECISION_APPROVED, with_attestation=True
+    )
+    stub = _FakeContextStub(SimpleNamespace(accepted=False, detail="context_missing"))
+    sink = MotorGrpcSink(stub=stub, request_builder=lambda d, s, c: None)
+    await sink.send(decision)  # no context: a compliance-enforcing motor will refuse this
+    assert stub.context_calls == [] and len(stub.calls) == 1

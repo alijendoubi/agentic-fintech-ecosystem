@@ -7,11 +7,13 @@ The gRPC server/client wiring itself is NOT part of this package yet (see report
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any, Final, Protocol
 
+from .compliance import DISABLED, ComplianceGates, bind_context
 from .errors import OrderValidationError
-from .models import ExecutionReport, ExecutionStatus, RejectReason, Side
+from .models import AttestedOrder, ExecutionReport, ExecutionStatus, RejectReason, Side
 from .motor import ExecutionMotor
 from .proto_adapter import attested_order_from_proto
 
@@ -38,7 +40,12 @@ def to_nanos(value: Decimal) -> int:
     return int((value * _NANOS).to_integral_value(rounding=ROUND_HALF_EVEN))
 
 
-def _invalid_report(decision: Any, detail: str, now_ns: int) -> ExecutionReport:
+def _invalid_report(
+    decision: Any,
+    detail: str,
+    now_ns: int,
+    reason: RejectReason = RejectReason.INVALID_ORDER,
+) -> ExecutionReport:
     order = decision.order
     return ExecutionReport(
         order_id=order.order_id or "unknown",
@@ -47,7 +54,7 @@ def _invalid_report(decision: Any, detail: str, now_ns: int) -> ExecutionReport:
         symbol=order.symbol or "unknown",
         status=ExecutionStatus.REJECTED,
         requested_quantity=Decimal(0),
-        reject_reason=RejectReason.INVALID_ORDER,
+        reject_reason=reason,
         reject_detail=detail[:300],
         received_at_ns=now_ns,
         updated_at_ns=now_ns,
@@ -67,6 +74,20 @@ def reached_broker(report: ExecutionReport) -> bool:
     return report.reject_reason is RejectReason.BROKER_REJECTED
 
 
+def _attested(motor: ExecutionMotor, decision: Any, now_ns: int) -> AttestedOrder | ExecutionReport:
+    """A complete APPROVED decision as an ``AttestedOrder``, else the refusal report."""
+    if int(decision.decision) != _DECISION_APPROVED:
+        return _invalid_report(decision, "decision is not APPROVED", now_ns)
+    if not decision.HasField("order") or not decision.HasField("attestation"):
+        return _invalid_report(decision, "APPROVED decision lacks order or attestation", now_ns)
+    try:
+        return attested_order_from_proto(
+            decision.order, decision.attestation, allow_short=motor.allow_short_selling
+        )
+    except OrderValidationError as exc:
+        return _invalid_report(decision, str(exc), now_ns)
+
+
 def handle_decision(
     motor: ExecutionMotor,
     decision: Any,
@@ -74,6 +95,7 @@ def handle_decision(
     now_ns: int,
     reference_price: Decimal | None = None,
     reporter: ExecutionReporter | None = None,
+    compliance: ComplianceGates = DISABLED,
 ) -> ExecutionReport:
     """Execute an AegisDecision. Anything other than a complete APPROVED decision is refused.
 
@@ -82,18 +104,65 @@ def handle_decision(
 
     With a ``reporter``, the outcome is sent back to Aegis (``ReportExecution``) when the order
     reached the broker. Delivery problems never change the returned report.
+
+    When ``compliance`` needs a context (always in production), a bare decision is refused:
+    use ``handle_request`` (``ExecuteWithContext``).
     """
-    if int(decision.decision) != _DECISION_APPROVED:
-        return _invalid_report(decision, "decision is not APPROVED", now_ns)
-    if not decision.HasField("order") or not decision.HasField("attestation"):
-        return _invalid_report(decision, "APPROVED decision lacks order or attestation", now_ns)
-    try:
-        attested = attested_order_from_proto(
-            decision.order, decision.attestation, allow_short=motor.allow_short_selling
+    if compliance.requires_context:
+        return _invalid_report(
+            decision,
+            "compliance is enforced: use ExecuteWithContext",
+            now_ns,
+            RejectReason.CONTEXT_MISSING,
         )
-    except OrderValidationError as exc:
-        return _invalid_report(decision, str(exc), now_ns)
-    report = motor.execute(attested, reference_price=reference_price)
+    attested = _attested(motor, decision, now_ns)
+    if isinstance(attested, ExecutionReport):
+        return attested
+    return _execute(motor, attested, reference_price, reporter, None)
+
+
+def handle_request(
+    motor: ExecutionMotor,
+    request: Any,
+    *,
+    now_ns: int,
+    compliance: ComplianceGates,
+    reference_price: Decimal | None = None,
+    reporter: ExecutionReporter | None = None,
+) -> ExecutionReport:
+    """Execute an ``ExecuteRequest`` (decision + context), ALI-161.
+
+    Order: decision checks -> context bound to the signed order -> SHARP gate (before any
+    idempotency claim) -> motor pipeline, whose last step before the broker stores the
+    Compliance Manifest. A refusal before the motor is never reported to Aegis.
+    """
+    decision = request.decision
+    attested = _attested(motor, decision, now_ns)
+    if isinstance(attested, ExecutionReport):
+        return attested
+    if not request.HasField("context"):
+        return _invalid_report(
+            decision, "request has no context", now_ns, RejectReason.CONTEXT_MISSING
+        )
+    context = request.context
+    refusal = bind_context(decision, context)
+    if refusal is not None:
+        return _invalid_report(decision, refusal.detail, now_ns, refusal.reason)
+    blocked = compliance.check_strategy(context)
+    if blocked is not None:
+        return _invalid_report(decision, blocked, now_ns, RejectReason.STRATEGY_NOT_PROMOTED)
+    check = compliance.release_check(decision, context)
+    return _execute(motor, attested, reference_price, reporter, check)
+
+
+def _execute(
+    motor: ExecutionMotor,
+    attested: AttestedOrder,
+    reference_price: Decimal | None,
+    reporter: ExecutionReporter | None,
+    release_check: Callable[[], str | None] | None,
+) -> ExecutionReport:
+    report = motor.execute(attested, reference_price=reference_price, release_check=release_check)
     if reporter is not None and reached_broker(report):
         reporter.report_execution(report)
     return report
