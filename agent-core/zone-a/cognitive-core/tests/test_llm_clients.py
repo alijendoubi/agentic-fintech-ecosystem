@@ -133,6 +133,7 @@ async def test_factories_use_bedrock_with_settings_and_no_api_keys(
     fake_bedrock: type[_CapturingBedrock], factory: Any, model_field: str, token_field: str
 ) -> None:
     settings = make_settings(
+        COGNITIVE_LLM_ROUTE="bedrock",
         COGNITIVE_BEDROCK_REGION="eu-west-1",
         COGNITIVE_BEDROCK_ENDPOINT_URL="https://vpce.example",
     )

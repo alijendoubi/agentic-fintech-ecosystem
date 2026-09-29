@@ -12,8 +12,9 @@
 #
 # Design rules enforced by this file:
 #   * Secrets come only from the environment via ${VAR:?message}; there are no default secrets.
-#   * Zone networks are `internal: true`. Only sensory-array (Polygon) and, when enabled, execution-motor
-#     (broker) get a non-internal egress network; cognitive-core's LLM egress network is PROPOSED in ADR-003.
+#   * Zone networks are `internal: true`. Only sensory-array (Polygon), execution-motor (broker) and
+#     llm-gateway (LLM provider, ADR-003 Option 2) get a non-internal egress network. cognitive-core has
+#     none: it reaches LLMs only through llm-gateway on the internal `zone-a-llm-internal` network.
 #   * Host ports: only hitl-interface (bound to 127.0.0.1). Everything else is published by
 #     docker-compose.dev.yml for local development only.
 #   * Images are pinned (no :latest). Health checks that need no curl/wget use bash /dev/tcp because the
@@ -31,7 +32,9 @@ networks:
   zone-bc-audit:
     internal: true # Zone B/C audit path and audit database
   zone-b-egress: {} # Zone B market-data / broker egress (sensory-array). Restrict at the host firewall.
-  zone-a-llm-egress: {} # PROPOSED (ADR-003 option 1): Bedrock egress for cognitive-core. Restrict at the host firewall.
+  zone-a-llm-internal:
+    internal: true # ADR-003 Option 2: cognitive-core <-> llm-gateway only
+  llm-gateway-egress: {} # llm-gateway -> AWS Bedrock only. Restrict at the host firewall (compose cannot filter FQDNs).
   zone-c-external: {} # Zone C: operator access (HITL)
 
 services:
@@ -46,8 +49,10 @@ services:
     container_name: afe-cognitive-core
     environment:
       PYTHONUNBUFFERED: "1"
-      # LLM access is AWS Bedrock (ADR-002, IAM role auth). Region has no safe default.
-      COGNITIVE_BEDROCK_REGION: ${COGNITIVE_BEDROCK_REGION:?set the AWS region that hosts the Bedrock models}
+      # LLMs only via llm-gateway (ADR-003 Option 2): no provider credentials in Zone A.
+      COGNITIVE_LLM_ROUTE: gateway
+      COGNITIVE_LLM_GATEWAY_URL: http://llm-gateway:4000
+      COGNITIVE_LLM_GATEWAY_KEY: ${LLM_GATEWAY_MASTER_KEY:?set LLM_GATEWAY_MASTER_KEY (>= 32 chars, e.g. openssl rand -hex 32)}
       COGNITIVE_SINK: grpc
       ZONE_B_GRPC_HOST: aegis
       ZONE_B_GRPC_PORT: "50051"
@@ -69,10 +74,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      llm-gateway:
+        condition: service_healthy
     networks:
       - zone-a-internal
       - zone-ab-grpc
-      - zone-a-llm-egress
+      - zone-a-llm-internal
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -129,6 +136,64 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # -------------------------------------------------------------
+  # LLM GATEWAY (ADR-003 Option 2) - outside Zone A
+  # -------------------------------------------------------------
+  # LiteLLM proxy: the only holder of LLM-provider credentials and the only service with LLM egress.
+  # cognitive-core reaches it on zone-a-llm-internal with LLM_GATEWAY_MASTER_KEY; model aliases and
+  # Bedrock ids are in llm-gateway/config.yaml. AWS credentials: an IAM role in a real deployment
+  # (TODO(owner): how the role reaches this container, e.g. instance profile + IMDSv2 hop limit);
+  # static dev credentials are added only by docker-compose.dev.yml.
+  llm-gateway:
+    image: litellm/litellm-non_root:v1.103.0@sha256:fda2894415d89350ca6a16195c935726382354d2194ebb1ce43e6bd5480b06ce
+    container_name: afe-llm-gateway
+    command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+    environment:
+      LLM_GATEWAY_MASTER_KEY: ${LLM_GATEWAY_MASTER_KEY:?set LLM_GATEWAY_MASTER_KEY (>= 32 chars, e.g. openssl rand -hex 32)}
+      LLM_GATEWAY_AWS_REGION: ${LLM_GATEWAY_AWS_REGION:?set the AWS region that hosts the Bedrock models}
+      # Per-alias request/token-per-minute limits. Owner decisions, no defaults (TODO(owner)).
+      LLM_GATEWAY_BLUE_RPM: ${LLM_GATEWAY_BLUE_RPM:?set the Blue requests-per-minute limit}
+      LLM_GATEWAY_BLUE_TPM: ${LLM_GATEWAY_BLUE_TPM:?set the Blue tokens-per-minute limit}
+      LLM_GATEWAY_RED_RPM: ${LLM_GATEWAY_RED_RPM:?set the Red requests-per-minute limit}
+      LLM_GATEWAY_RED_TPM: ${LLM_GATEWAY_RED_TPM:?set the Red tokens-per-minute limit}
+      LLM_GATEWAY_JUDGE_RPM: ${LLM_GATEWAY_JUDGE_RPM:?set the Judge requests-per-minute limit}
+      LLM_GATEWAY_JUDGE_TPM: ${LLM_GATEWAY_JUDGE_TPM:?set the Judge tokens-per-minute limit}
+      LLM_GATEWAY_COMPRESSION_RPM: ${LLM_GATEWAY_COMPRESSION_RPM:?set the compression requests-per-minute limit}
+      LLM_GATEWAY_COMPRESSION_TPM: ${LLM_GATEWAY_COMPRESSION_TPM:?set the compression tokens-per-minute limit}
+      LLM_GATEWAY_REFLECTOR_RPM: ${LLM_GATEWAY_REFLECTOR_RPM:?set the reflector requests-per-minute limit}
+      LLM_GATEWAY_REFLECTOR_TPM: ${LLM_GATEWAY_REFLECTOR_TPM:?set the reflector tokens-per-minute limit}
+      # Use the model cost map bundled in the image (no fetch from GitHub at startup); no admin UI or
+      # API docs pages.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      DISABLE_ADMIN_UI: "True"
+      NO_DOCS: "True"
+      NO_REDOC: "True"
+    volumes:
+      - ./llm-gateway/config.yaml:/etc/litellm/config.yaml:ro
+    networks:
+      - zone-a-llm-internal
+      - llm-gateway-egress
+    user: "65534:65534" # the image's non-root user
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      # /health/liveliness needs no key and makes no provider call. No curl in the image; use its python.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=4).status != 200)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # -------------------------------------------------------------
   # ZONE B - EXECUTION

@@ -97,8 +97,8 @@ hardcodes the `dev-tls/out/...` paths as bind-mount sources, same idea as the
   `docker-compose.dev.yml` with the same mount/env-var pattern ready to
   uncomment once those services exist.
 
-You still need to fill in the other `${VAR:?}` secrets in `.env` (Bedrock
-region, `MODEL_HMAC_KEY`, `POLYGON_API_KEY`, audit DB passwords, HITL secret,
+You still need to fill in the other `${VAR:?}` secrets in `.env` (LLM gateway
+key, region, rate limits and dev AWS credentials, `MODEL_HMAC_KEY`, `POLYGON_API_KEY`, audit DB passwords, HITL secret,
 etc. — see `.env.example`); TLS is the only piece this directory solves.
 
 ## Do not

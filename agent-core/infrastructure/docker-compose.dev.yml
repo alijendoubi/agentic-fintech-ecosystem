@@ -95,6 +95,16 @@ services:
     networks:
       - dev-host
 
+  # llm-gateway (ADR-003 Option 2): a developer machine has no IAM role, so dev uses static AWS
+  # credentials, given ONLY to the gateway (never to cognitive-core). Without valid credentials the
+  # gateway's Bedrock calls fail and every debate degrades to abstain. AWS_SESSION_TOKEN is only
+  # needed for temporary credentials (SSO/STS).
+  llm-gateway:
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?dev only - set AWS credentials for the LLM gateway}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?dev only - set AWS credentials for the LLM gateway}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+
   # execution-motor (agent-core/zone-b/execution-motor): own mTLS listener (server cert, dev-tls issues
   # CN=execution-motor) plus a client identity to report fills back to Aegis (AEGIS_CLIENT_TLS_*, the
   # execution-motor client cert generated for that purpose, roles state-reader + execution-reporter:

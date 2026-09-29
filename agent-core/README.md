@@ -110,8 +110,8 @@ Verified: `docker compose config` (base and dev override), and starting `vector-
 alone (all reached healthy; the audit init script created its roles). **Not verified:** starting the whole stack. Known
 blockers for a working end-to-end stack: Aegis needs owner-supplied `limits.json`/`identities.json`, TLS material and an HSM
 (or the dev signer); cognitive-core only speaks plaintext gRPC, so it can reach Aegis only with the dev override
-(`AEGIS_INSECURE_DEV=1`); nothing pushes reference data to Aegis yet; the HITL backend does not exist; cognitive-core needs
-an LLM route (ADR-003, compose adds a proposed `zone-a-llm-egress` network); `execution-motor` has no entrypoint.
+(`AEGIS_INSECURE_DEV=1`); nothing pushes reference data to Aegis yet; the HITL backend does not exist; cognitive-core reaches
+LLMs only through the `llm-gateway` service (ADR-003 Option 2; never exercised against real Bedrock); `execution-motor` has no entrypoint.
 `.gitattributes` forces LF on `*.sh`/`*.sql`/Dockerfiles: a CRLF checkout breaks the Postgres init script inside the container.
 
 ## Latency Budget (targets; none has been measured or validated)
@@ -129,7 +129,7 @@ The earlier stated end-to-end total of < 2,600 ms is not consistent with the ADR
 
 ## Design principles (intent; not all enforced today)
 
-- **Aegis is the only component that may authorise an order** (target). Zone A must hold no trading/signing/broker credentials. Compose no longer injects LLM provider keys: cognitive-core uses AWS Bedrock with IAM-role auth (ADR-002). The route (VPC endpoint vs gateway vs direct API) is still undecided in `docs/adr/ADR-003-zone-a-llm-access.md` (Proposed), and compose carries a proposed `zone-a-llm-egress` network until it is.
+- **Aegis is the only component that may authorise an order** (target). Zone A must hold no trading/signing/broker credentials. Zone A also holds no LLM-provider credentials (ADR-003 Option 2, implemented in compose): cognitive-core calls the internal `llm-gateway` (LiteLLM proxy, `infrastructure/llm-gateway/config.yaml`) over the internal `zone-a-llm-internal` network with a gateway key; only the gateway holds AWS credentials and has egress (`llm-gateway-egress`) to AWS Bedrock. The gateway key is a Zone A secret (it can spend LLM budget, not place orders).
 - Hot path is MCP-free — direct socket connections only.
 - All orders must pass Aegis PTCs before reaching the broker (target; not implemented).
 - Every trade decision should generate a Compliance Manifest (Zone C, 7-year retention; requirement basis requires qualified legal review) (target; not implemented).

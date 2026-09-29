@@ -1,6 +1,7 @@
 # Runtime-only dependencies for the container image (requirements.txt is the dev superset
 # and pulls pandas/scipy/scikit-learn/questdb, none of which the runner imports).
-# ADR-002: LLM calls go through Bedrock with IAM-role auth, so no provider API-key SDKs.
+# ADR-003 Option 2: LLM calls go to the internal LLM gateway over plain HTTP (httpx); no provider
+# API-key SDKs. langchain-aws/boto3 remain only for the legacy COGNITIVE_LLM_ROUTE=bedrock path.
 pydantic>=2.9,<3
 structlog>=24.4,<27
 python-dotenv>=1.0,<2
@@ -8,6 +9,7 @@ langgraph>=0.2
 langchain-core>=0.3,<2
 langchain-aws>=0.2,<2
 boto3>=1.35,<2
+httpx>=0.27,<1
 grpcio>=1.67,<2
 protobuf>=5.28
 redis>=5.2,<9

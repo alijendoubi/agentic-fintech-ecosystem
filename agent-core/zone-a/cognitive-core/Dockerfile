@@ -52,8 +52,9 @@ RUN useradd --system --no-create-home --shell /bin/false cognitive \
     && chown cognitive:cognitive /var/run/afe
 USER cognitive
 
-# Safe defaults: quantity 0 means every debate abstains; memory is opt-in. LLM access is via
-# the Bedrock IAM role (ADR-002): no API keys belong in this image or its environment.
+# Safe defaults: quantity 0 means every debate abstains; memory is opt-in. LLM access is via the
+# internal LLM gateway (ADR-003 Option 2, COGNITIVE_LLM_GATEWAY_URL/_KEY set by compose): no
+# provider credentials belong in this image or its environment.
 ENV PYTHONPATH=/app \
     AFE_PROTO_DIR=/app/generated \
     COGNITIVE_HEALTH_HOST=0.0.0.0 \
