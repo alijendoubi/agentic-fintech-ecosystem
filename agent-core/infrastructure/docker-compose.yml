@@ -596,8 +596,9 @@ services:
       - ALL
     restart: unless-stopped
     healthcheck:
-      # The proxy's own TLS listener; busybox wget does not verify the certificate, so this is liveness only.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "https://127.0.0.1:8443/proxy-healthz"]
+      # The proxy's own TLS listener. This image's busybox wget verifies certificates and cannot be given
+      # the CA, so verification is switched off here: liveness only, over loopback inside the container.
+      test: ["CMD", "wget", "-q", "--no-check-certificate", "-O", "/dev/null", "https://127.0.0.1:8443/proxy-healthz"]
       interval: 15s
       timeout: 5s
       retries: 5
