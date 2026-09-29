@@ -18,6 +18,7 @@ developer's own machine.**
 | `execution-motor`     | client | Reports executions and watches kill-switch state — roles `state-reader` + `execution-reporter`. |
 | `refdata-bridge`      | client | Pushes reference data — role `market-data-writer`.    |
 | `aegis-supervisor`    | client | Liveness probe / kill-trigger — roles `state-reader` + `kill-trigger`. |
+| `localhost` / `hitl-proxy` | server | `hitl-proxy` TLS: `server.pem` (SAN `localhost`, `127.0.0.1`, `::1`) for the operator listener `https://localhost:8443`, `internal.pem` (SAN `DNS:hitl-proxy`) for the terminal's calls to hitl-backend. Keys are world-readable (the proxy runs as uid 101). |
 
 All certs are P-256 ECDSA, 30 days validity by default, and every generated
 directory carries its own `README.md` stamped DEV ONLY plus a copy of `ca.pem`
@@ -34,8 +35,13 @@ out/
 ├── execution-motor/     ca.pem  server.pem  server.key  client.pem  client.key
 │                        attestation-keys.json  README.md   (public key matching aegis-signer)
 ├── refdata-bridge/      ca.pem  client.pem  client.key  README.md
-└── aegis-supervisor/    ca.pem  client.pem  client.key  README.md
+├── aegis-supervisor/    ca.pem  client.pem  client.key  README.md
+└── hitl-proxy/          ca.pem  server.pem  server.key  internal.pem  internal.key  README.md
 ```
+
+To open the terminal in a browser at `https://localhost:8443`, trust `out/hitl-proxy/ca.pem` (or
+`curl --cacert out/hitl-proxy/ca.pem https://localhost:8443/api/health`). The proxy sends HSTS, which
+some browsers apply to every port on `localhost`.
 
 The pinned dev signing key matters (ALI-167): with `AEGIS_SIGNER=dev` and no
 seed file Aegis generates a random key at every start, so execution-motor (which

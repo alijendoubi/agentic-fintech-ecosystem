@@ -18,23 +18,23 @@ terminal (Next.js, server side) --REST--> hitl-backend --mTLS gRPC--> Aegis  (Li
   `HITL_FOUR_EYES_NOTIONAL_THRESHOLD_USD`), or when Aegis itself requires a second approver. Aegis
   (ALI-164) then needs an `afe-hold-v1` approval signed with the second approver's own key, and no
   signing method exists yet. Such approvals are refused with `second_approver_signing_unavailable`;
-  REJECT still works. TODO(owner): choose a signing method (for example WebAuthn or a hardware key).
-* **No distress classifier.** `ResolveHold` carries `reverse_guardrail_distress_score`, and none is
-  computed anywhere. Approvals are refused with `distress_classifier_unavailable` unless
-  `HITL_UNSCORED_DEV=1`, which sends 0.0 and is refused in production. The audit record marks it
-  `distress_scored: false`.
+  REJECT still works. Owner decision 2026-09-29: the second approval is a distinct authenticated OIDC subject recorded in the hash-chained audit log (not implemented yet; Aegis's signed `afe-hold-v1` requirement must be reconciled).
+* **No distress classifier (out of scope).** The owner ruled a reverse-guardrail distress classifier
+  out of scope on 2026-09-29. `ResolveHold.reverse_guardrail_distress_score` is always 0.0, and the
+  audit record says `distress_scored: false, distress_classifier: out_of_scope`. The human-oversight
+  controls are the four-eyes threshold and the cooling period.
 * **Aegis identity.** Aegis binds `ResolveHold.operator_id` to the caller's certificate CN, so Aegis
   records `hitl-backend`, and the human (JWT `sub`) goes into the `note` and into every audit record.
 * **Released holds lose the market snapshot.** The debate's snapshot is not retained for held signals,
   so the context sent to execution-motor carries a snapshot built from the held signal only (symbol,
   regime, time), labelled `snapshot-source: hold-signal-only` in the manifest's model versions.
-  TODO(owner): retain the debate snapshot with the hold.
+  Owner decision 2026-09-29: retain it in Zone C for the audit retention period (not implemented yet).
 * **State is in memory.** This matches Aegis's hold store. After a restart, final holds and
   idempotency keys are forgotten; Aegis has already dropped any resolved hold, so a replayed
   request cannot decide twice.
-* **No TLS server.** The service runs on a private network. The terminal refuses plain http to a
-  non-loopback host in production, so compose keeps this service behind the `hitl-backend`
-  profile. TODO(owner): TLS or mTLS between the terminal and this service.
+* **No TLS server of its own.** The service speaks plain HTTP on the internal `zone-c-hitl` network
+  only; TLS is terminated by `hitl-proxy` (owner decision 2026-09-29, `infrastructure/hitl-proxy/hitl.conf`).
+  The terminal calls `https://hitl-proxy:9443`, which forwards `/v1/*` and `/healthz` here. No host port.
 
 ## Rules enforced (contract section 6)
 
@@ -66,7 +66,6 @@ terminal (Next.js, server side) --REST--> hitl-backend --mTLS gRPC--> Aegis  (Li
 | `MOTOR_TARGET`, `HITL_MOTOR_TLS_CA/CERT/KEY` | production | Relay released decisions |
 | `HITL_FOUR_EYES_QUANTITY_THRESHOLD`, `HITL_FOUR_EYES_NOTIONAL_THRESHOLD_USD` | quantity: default 0 | Four-eyes thresholds (shares, USD) |
 | `HITL_COOLING_PERIOD_S` | no | Default 0 (none) |
-| `HITL_UNSCORED_DEV` | no | Dev only; see above |
 | `POSTGRES_HOST/PORT/DB/USER/PASSWORD` | yes | Audit DB as `afe_audit_app` |
 | `AFE_PROTO_DIR` | no | Generated stubs (set in the image) |
 

@@ -30,7 +30,9 @@ DEV_ENV_FILE = AGENT_CORE / "infrastructure" / ".env"
 AEGIS_ADDR = os.environ.get("AFE_LIVE_AEGIS", "127.0.0.1:50051")
 MOTOR_ADDR = os.environ.get("AFE_LIVE_MOTOR", "127.0.0.1:50052")
 REDIS_HOST_PORT = os.environ.get("AFE_LIVE_REDIS", "127.0.0.1:6379")
-HITL_URL = os.environ.get("AFE_LIVE_HITL", "http://127.0.0.1:3000")
+# The terminal is reached only through hitl-proxy (HTTPS, dev certificate issued by the dev CA).
+HITL_URL = os.environ.get("AFE_LIVE_HITL", "https://localhost:8443")
+HITL_CA = DEV_TLS / "hitl-proxy" / "ca.pem"
 
 # Redis ACL users (ALI-20) and the .env key holding each one's password. Each test publishes
 # as the service that owns the channel, exactly as the real producers do.

@@ -2,20 +2,21 @@
 #
 #   Zone A  thinking   : cognitive-core, regime-detector, vector-db (Chroma). No general internet.
 #   Zone B  execution  : sensory-array, aegis (execution-motor is not runnable yet, see below).
-#   Zone C  compliance : postgres-audit (hash-chained audit DB), hitl-interface.
+#   Zone C  compliance : postgres-audit (hash-chained audit DB), hitl-interface, hitl-backend, hitl-proxy (TLS).
 #
 # Usage (paths are relative to this directory):
 #   cp .env.example .env            # then fill EVERY empty value; nothing here has a default secret
 #   docker compose config           # validate (fails loudly on any missing ${VAR:?} secret)
-#   docker compose up -d            # base file only: secure defaults, no host ports except HITL on loopback
+#   docker compose up -d            # base file only: secure defaults, no host ports except HITL HTTPS on loopback
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # local dev (insecure Aegis, host ports)
 #
 # Design rules enforced by this file:
 #   * Secrets come only from the environment via ${VAR:?message}; there are no default secrets.
 #   * Zone networks are `internal: true`. Only sensory-array (Polygon) and, when enabled, execution-motor
 #     (broker) get a non-internal egress network; cognitive-core's LLM egress network is PROPOSED in ADR-003.
-#   * Host ports: only hitl-interface (bound to 127.0.0.1). Everything else is published by
-#     docker-compose.dev.yml for local development only.
+#   * Host ports: only hitl-proxy (HTTPS, bound to ${HITL_HTTPS_BIND_ADDR:-127.0.0.1}). The terminal and
+#     hitl-backend are internal-only behind it. Everything else is published by docker-compose.dev.yml
+#     for local development only.
 #   * Images are pinned (no :latest). Health checks that need no curl/wget use bash /dev/tcp because the
 #     chroma and questdb images ship neither curl nor wget (verified on the pinned tags).
 #
@@ -32,7 +33,9 @@ networks:
     internal: true # Zone B/C audit path and audit database
   zone-b-egress: {} # Zone B market-data / broker egress (sensory-array). Restrict at the host firewall.
   zone-a-llm-egress: {} # PROPOSED (ADR-003 option 1): Bedrock egress for cognitive-core. Restrict at the host firewall.
-  zone-c-external: {} # Zone C: operator access (HITL)
+  zone-c-external: {} # Zone C: operator access (HITL); only hitl-proxy is on it
+  zone-c-hitl:
+    internal: true # Zone C: hitl-proxy <-> hitl-interface, and the proxy <-> hitl-backend
 
 services:
   # -------------------------------------------------------------
@@ -464,9 +467,9 @@ services:
 
   # hitl-backend (agent-core/zone-c/hitl-backend, ALI-156): REST contract behind the operator terminal;
   # fronts Aegis holds (ListHolds/GetHold/ResolveHold as CN hitl-backend, role hold-resolver), relays
-  # released decisions to execution-motor, audits every attempt as afe_audit_app. Behind a profile:
-  # TODO(owner): TLS between the terminal and this service (the terminal refuses plain http to a
-  # non-loopback host in production), and a distress classifier before approvals work in production.
+  # released decisions to execution-motor, audits every attempt as afe_audit_app. Behind a profile.
+  # Plain HTTP on the internal zone-c-hitl network only: the terminal reaches it through hitl-proxy's
+  # TLS listener (https://hitl-proxy:9443), owner decision 2026-09-29.
   hitl-backend:
     profiles: ["hitl-backend"]
     build:
@@ -505,6 +508,7 @@ services:
     networks:
       - zone-ab-grpc
       - zone-bc-audit
+      - zone-c-hitl
     restart: unless-stopped
     read_only: true
     security_opt:
@@ -521,24 +525,84 @@ services:
       # Server-side variables only; there are no NEXT_PUBLIC_* variables. The app exits at startup if the
       # secret is unset, < 32 chars or a placeholder.
       HITL_JWT_SECRET: ${HITL_JWT_SECRET:?set HITL_JWT_SECRET (>= 32 chars, e.g. openssl rand -base64 48)}
-      # No HITL backend exists in this repo yet (docs/api-contract.md is PROPOSED). Until one does, every
-      # decision fails closed as "not approved".
-      HITL_API_BASE_URL: ${HITL_API_BASE_URL:?set HITL_API_BASE_URL to the https:// URL of the HITL backend}
+      # hitl-backend (profile `hitl-backend`) through hitl-proxy's internal TLS listener. Without the
+      # profile the proxy answers 502 and every decision fails closed as "not approved".
+      HITL_API_BASE_URL: https://hitl-proxy:9443
+      # Trust the CA that issued hitl-proxy's internal certificate (only that file is mounted).
+      NODE_EXTRA_CA_CERTS: /etc/afe/hitl-proxy-ca.pem
+      # hitl-proxy overwrites X-Forwarded-For with the client address; key the login limiter on it.
+      HITL_TRUSTED_PROXY_COUNT: "1"
       HITL_JWT_ISSUER: ${HITL_JWT_ISSUER:?set HITL_JWT_ISSUER (required in production)}
       HITL_JWT_AUDIENCE: ${HITL_JWT_AUDIENCE:?set HITL_JWT_AUDIENCE (required in production)}
       HITL_API_TOKEN: ${HITL_API_TOKEN:-}
       HITL_ALLOWED_ORIGINS: ${HITL_ALLOWED_ORIGINS:-}
-    ports:
-      - "127.0.0.1:${HITL_HOST_PORT:-3000}:3000" # operator terminal; put a TLS-terminating proxy in front
+    volumes:
+      - type: bind
+        source: ${HITL_TLS_DIR:-./secrets/hitl-tls}/ca.pem
+        target: /etc/afe/hitl-proxy-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false # a missing file is an error, not an empty directory
+    # No host port: operators reach the terminal only through hitl-proxy (HTTPS).
     networks:
-      - zone-bc-audit
-      - zone-c-external
+      - zone-c-hitl
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     restart: unless-stopped
     # HEALTHCHECK is defined in the image (GET /api/health).
+
+  # hitl-proxy: the only HITL service with a host port. TLS 1.2+ termination (owner decision 2026-09-29,
+  # DECISIONS-2026-09-29.md row 6) for the operator browser (:8443 -> hitl-interface) and for the
+  # terminal's server-side calls to hitl-backend (:9443, internal network only). Routing, headers and
+  # timeouts: hitl-proxy/hitl.conf. Same pinned nginx image as the vector-db gate on the compose-hardening
+  # branch (PR #36). HITL_TLS_DIR (default ./secrets/hitl-tls; `up` fails if it or a file is missing,
+  # create_host_path: false) holds server.pem/server.key (operator-facing name),
+  # internal.pem/internal.key (SAN DNS:hitl-proxy) and ca.pem (issuer of internal.pem); the keys must be
+  # readable by uid 101. TODO(owner): the operator-facing host name, its certificate, CA and rotation,
+  # and the bind address (HITL_HTTPS_BIND_ADDR).
+  hitl-proxy:
+    image: nginx:1.28.3-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    container_name: afe-hitl-proxy
+    user: "101:101" # nginx; no root master, so no CAP_SETUID/SETGID needed (the `user` directive is ignored)
+    volumes:
+      - type: bind
+        source: ./hitl-proxy
+        target: /etc/nginx/conf.d # replaces the image's default.conf (plain :80) with hitl.conf
+        read_only: true
+      - type: bind
+        source: ${HITL_TLS_DIR:-./secrets/hitl-tls}
+        target: /etc/nginx/tls
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /var/cache/nginx:uid=101,gid=101,mode=0700
+      - /run:uid=101,gid=101,mode=0755 # nginx.pid
+      - /tmp:uid=101,gid=101,mode=0700
+    read_only: true
+    ports:
+      - "${HITL_HTTPS_BIND_ADDR:-127.0.0.1}:${HITL_HTTPS_PORT:-8443}:8443" # HTTPS only; no plaintext listener
+    depends_on:
+      hitl-interface:
+        condition: service_started
+    networks:
+      - zone-c-external
+      - zone-c-hitl
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      # The proxy's own TLS listener. This image's busybox wget verifies certificates and cannot be given
+      # the CA, so verification is switched off here: liveness only, over loopback inside the container.
+      test: ["CMD", "wget", "-q", "--no-check-certificate", "-O", "/dev/null", "https://127.0.0.1:8443/proxy-healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
 volumes:
   chroma-data:

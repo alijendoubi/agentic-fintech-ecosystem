@@ -1,7 +1,7 @@
 # HITL backend REST contract (ASSUMED, PROPOSED)
 
 Status: **PROPOSED**. Implemented by `zone-c/hitl-backend` (ALI-156) for single-approver holds; see its README for
-what is not implemented yet (signed second approvals, a distress classifier, terminal-to-backend TLS). It is the contract the operator terminal
+what is not implemented yet (second approvals). Terminal-to-backend TLS is terminated by `hitl-proxy` (compose). A distress classifier is out of scope (owner decision 2026-09-29). It is the contract the operator terminal
 (`zone-c/hitl-interface`) was built and tested against (`HttpHitlApiClient`, `MockHitlApiClient`).
 The owner of the HITL backend must confirm or change it (`TODO(owner)`).
 
@@ -20,7 +20,7 @@ operator browser --> hitl-interface (Next.js, server side) --REST--> HITL backen
 * Approve maps to `Aegis.ResolveHold(hold_id, operator_id, second_approver_id, approve=true, note)`.
   Reject maps to `ResolveHold(..., approve=false, note)`. Aegis **re-runs all hard controls at release time**: a human can
   release a soft block but never override a hard block. If Aegis rejects at release the hold becomes `RELEASE_DENIED`.
-* Fields the terminal deliberately does **not** send and the backend must own: `reverse_guardrail_distress_score`,
+* Fields the terminal deliberately does **not** send and the backend must own: `reverse_guardrail_distress_score` (always 0.0: no classifier, out of scope),
   `cooling_period_enforced`. Whether a second approver or a cooling period is mandatory is `TODO(owner)` in the Aegis spec;
   the terminal enforces four-eyes by a configurable size threshold (section 6) and the backend may require more.
 * Approving a hold never bypasses Aegis: "approved" here means "released to Aegis for hard-control re-check and

@@ -53,5 +53,8 @@ cannot make an expired signal look live; the server re-checks on every action.
   `HITL_JWT_MAX_LIFETIME_SEC`), and a restart forgets every revocation. Use a shared denylist (Redis or a gateway) before
   running more than one replica; until then keep the lifetime cap short. The list is bounded (10 000 entries, closest-to-expiry evicted first).
 * No mTLS to the backend, no persistent storage, no metrics. TLS must be terminated in front (cookies are `Secure` in production).
+  In compose this is `hitl-proxy` (`infrastructure/hitl-proxy/hitl.conf`): operators use `https://<host>:8443` (the terminal
+  has no host port), and the terminal calls the backend at `HITL_API_BASE_URL=https://hitl-proxy:9443`, trusting the proxy's
+  internal CA via `NODE_EXTRA_CA_CERTS`. The proxy overwrites `X-Forwarded-For`, so compose sets `HITL_TRUSTED_PROXY_COUNT=1`.
 * Accessibility was designed for (labels, roles, focus styles, contrast) and tested via Testing Library roles, but no
   screen-reader or automated axe audit was run.

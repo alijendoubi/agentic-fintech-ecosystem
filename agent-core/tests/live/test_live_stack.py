@@ -21,6 +21,7 @@ credentials, ALI-154 / ALI-165). See README.md.
 from __future__ import annotations
 
 import json
+import ssl
 import time
 import urllib.request
 import uuid
@@ -31,7 +32,7 @@ from typing import Any
 import grpc
 import pytest
 
-from conftest import AEGIS_ADDR, HITL_URL, ca_only_channel, redis_as
+from conftest import AEGIS_ADDR, HITL_CA, HITL_URL, ca_only_channel, redis_as
 
 SHARE = 1_000_000_000
 SYMBOL = "AAPL"  # on the dev limits allowlist (Aegis testkit limits)
@@ -223,5 +224,8 @@ def test_motor_health_over_mtls(motor: Any, pb: dict[str, ModuleType]) -> None:
 
 
 def test_hitl_terminal_health() -> None:
-    with urllib.request.urlopen(f"{HITL_URL}/api/health", timeout=5) as resp:  # noqa: S310
+    # Through hitl-proxy's TLS listener, verified against the dev CA (no fallback to plain http).
+    context = ssl.create_default_context(cafile=str(HITL_CA))
+    with urllib.request.urlopen(f"{HITL_URL}/api/health", timeout=5, context=context) as resp:  # noqa: S310
         assert resp.status == 200
+        assert resp.headers.get("Strict-Transport-Security", "").startswith("max-age=")

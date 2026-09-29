@@ -102,7 +102,7 @@ bash generate.sh                          # Python stubs (needs: pip install grp
 cd agent-core/infrastructure
 cp .env.example .env                      # fill every empty value; the file has no real secrets
 docker compose config                     # fails loudly on a missing ${VAR:?} secret
-docker compose up -d                      # base file: no host ports except HITL on 127.0.0.1:3000
+docker compose up -d                      # base file: no host ports except HITL HTTPS (hitl-proxy) on 127.0.0.1:8443
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # local dev: host ports, plaintext Aegis
 ```
 

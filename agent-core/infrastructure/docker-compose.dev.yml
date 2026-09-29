@@ -4,7 +4,8 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 #
 # What it changes (and why it is unsafe for anything else):
-#   * publishes host ports (loopback only) for QuestDB, Redis, Chroma and Aegis,
+#   * publishes host ports (loopback only) for QuestDB, Redis, Chroma, Aegis and execution-motor (the HITL
+#     terminal is reached only through hitl-proxy's HTTPS port, as in the base file),
 #   * attaches those services to a non-internal `dev-host` network (Docker cannot publish ports of
 #     containers that are only on `internal: true` networks) which weakens zone isolation,
 #   * runs Aegis with AEGIS_ENV=development and the software dev signer instead of the HSM,
@@ -135,16 +136,36 @@ services:
     networks:
       - dev-host
 
-  # hitl-backend (ALI-156), started with `--profile hitl-backend`. Dev only: no distress classifier,
-  # so HITL_UNSCORED_DEV sends a 0.0 "unscored" value (refused in production). CN hitl-backend has
-  # role hold-resolver in dev-tls/identities.json.
+  # hitl-backend (ALI-156), started with `--profile hitl-backend`. CN hitl-backend has role
+  # hold-resolver in dev-tls/identities.json.
+  # No host port: the terminal reaches it through hitl-proxy (https://hitl-proxy:9443).
   hitl-backend:
     environment:
       HITL_ENV: development
-      HITL_UNSCORED_DEV: "1"
     volumes: !override
       - ./dev-tls/out/hitl-backend:/aegis-tls:ro
-    ports:
-      - "127.0.0.1:8090:8090"
-    networks:
-      - dev-host
+
+  # hitl-proxy with the dev-tls certificates: https://localhost:8443 (server.pem, SAN localhost /
+  # 127.0.0.1 / ::1) and https://hitl-proxy:9443 (internal.pem), both issued by the dev CA
+  # (dev-tls/out/hitl-proxy/ca.pem; trust it in the browser or pass it to curl --cacert).
+  hitl-proxy:
+    volumes: !override
+      - type: bind
+        source: ./hitl-proxy
+        target: /etc/nginx/conf.d
+        read_only: true
+      - type: bind
+        source: ./dev-tls/out/hitl-proxy
+        target: /etc/nginx/tls
+        read_only: true
+        bind:
+          create_host_path: false
+
+  hitl-interface:
+    volumes: !override
+      - type: bind
+        source: ./dev-tls/out/hitl-proxy/ca.pem
+        target: /etc/afe/hitl-proxy-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
