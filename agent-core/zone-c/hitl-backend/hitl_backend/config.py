@@ -56,6 +56,8 @@ class Settings:
     four_eyes_notional_threshold_usd: Decimal | None
     cooling_period_s: float
     audit_actor: str
+    attestor_id: str | None = None
+    attestor_key_file: Path | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -85,6 +87,20 @@ class Settings:
             raise ConfigError(
                 "MOTOR_TARGET is required in production (released holds must execute)"
             )
+        # DECISIONS row 4: the key that attests each OIDC-authenticated approval to Aegis
+        # (identities.json "hold_attestors"). Without it, two-approver releases cannot pass an
+        # Aegis that requires a second approver, so production refuses to start without it.
+        attestor_id = env.get("HITL_APPROVAL_ATTESTOR_ID", "").strip() or None
+        attestor_raw = env.get("HITL_APPROVAL_ATTESTOR_KEY_FILE", "").strip()
+        attestor_key = Path(attestor_raw) if attestor_raw else None
+        if (attestor_id is None) != (attestor_key is None):
+            raise ConfigError(
+                "set HITL_APPROVAL_ATTESTOR_ID and HITL_APPROVAL_ATTESTOR_KEY_FILE together"
+            )
+        if production and attestor_id is None:
+            raise ConfigError(
+                "production requires HITL_APPROVAL_ATTESTOR_ID and HITL_APPROVAL_ATTESTOR_KEY_FILE"
+            )
         token = env.get("HITL_API_TOKEN", "").strip() or None
         if token is not None and len(token) < 16:
             raise ConfigError("HITL_API_TOKEN must be at least 16 characters when set")
@@ -109,6 +125,8 @@ class Settings:
             ),
             cooling_period_s=_non_negative(env, "HITL_COOLING_PERIOD_S", "0"),
             audit_actor=env.get("HITL_AUDIT_ACTOR", "hitl-backend").strip() or "hitl-backend",
+            attestor_id=attestor_id,
+            attestor_key_file=attestor_key,
         )
 
 

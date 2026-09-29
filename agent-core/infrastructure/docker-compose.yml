@@ -463,10 +463,11 @@ services:
       retries: 5
 
   # hitl-backend (agent-core/zone-c/hitl-backend, ALI-156): REST contract behind the operator terminal;
-  # fronts Aegis holds (ListHolds/GetHold/ResolveHold as CN hitl-backend, role hold-resolver), relays
-  # released decisions to execution-motor, audits every attempt as afe_audit_app. Behind a profile:
-  # TODO(owner): TLS between the terminal and this service (the terminal refuses plain http to a
-  # non-loopback host in production), and a distress classifier before approvals work in production.
+  # fronts Aegis holds (ListHolds/GetHold/ResolveHold as CN hitl-backend, role hold-resolver), collects
+  # two distinct approvers where four-eyes applies and attests them to Aegis, relays released decisions
+  # (with the debate context retained in the audit DB) to execution-motor, audits every step as
+  # afe_audit_app. Behind a profile: TODO(owner): TLS between the terminal and this service (owner
+  # decision 2026-09-29: a TLS reverse proxy; not built). The distress classifier is out of scope.
   hitl-backend:
     profiles: ["hitl-backend"]
     build:
@@ -490,6 +491,10 @@ services:
       HITL_MOTOR_TLS_CERT: /aegis-tls/client.pem
       HITL_MOTOR_TLS_KEY: /aegis-tls/client.key
       HITL_FOUR_EYES_QUANTITY_THRESHOLD: ${HITL_FOUR_EYES_QUANTITY_THRESHOLD:?set HITL_FOUR_EYES_QUANTITY_THRESHOLD (shares)}
+      # Attests each OIDC-authenticated approval to Aegis (DECISIONS row 4): the id of this key's entry in
+      # Aegis's identities.json "hold_attestors"; the 64-hex Ed25519 seed is an owner-supplied file.
+      HITL_APPROVAL_ATTESTOR_ID: ${HITL_APPROVAL_ATTESTOR_ID:?set HITL_APPROVAL_ATTESTOR_ID (hold_attestors id in Aegis identities.json)}
+      HITL_APPROVAL_ATTESTOR_KEY_FILE: /attestor/attestor.seed
       POSTGRES_HOST: postgres-audit
       POSTGRES_PORT: "5432"
       POSTGRES_DB: ${AUDIT_DB_NAME:-trading_audit}
@@ -497,6 +502,7 @@ services:
       POSTGRES_PASSWORD: ${AFE_AUDIT_APP_PASSWORD:?set AFE_AUDIT_APP_PASSWORD}
     volumes:
       - ${HITL_BACKEND_TLS_DIR:-./secrets/hitl-backend-tls}:/aegis-tls:ro
+      - ${HITL_ATTESTOR_DIR:-./secrets/hitl-attestor}:/attestor:ro
     depends_on:
       aegis:
         condition: service_healthy

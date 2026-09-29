@@ -22,5 +22,14 @@ class AuditWriteError(AuditError):
     either way, and the caller must not retry blindly (use ChainVerifier to reconcile)."""
 
 
+class AuditIntegrityError(AuditError):
+    """A record read back failed its hash/canonical/link check: the audit table was altered."""
+
+    def __init__(self, seq: int, defect: str) -> None:
+        super().__init__(f"audit record {seq} failed its integrity check: {defect}")
+        self.seq = seq
+        self.defect = defect
+
+
 class AnchorError(AuditError):
     """An anchor sink failed to emit/read, or an anchor file is malformed/tampered."""

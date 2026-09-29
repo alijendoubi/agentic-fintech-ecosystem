@@ -72,6 +72,8 @@ PROD = {
     "HITL_MOTOR_TLS_CA": "/m/ca.pem",
     "HITL_MOTOR_TLS_CERT": "/m/c.pem",
     "HITL_MOTOR_TLS_KEY": "/m/c.key",
+    "HITL_APPROVAL_ATTESTOR_ID": "hitl-oidc",
+    "HITL_APPROVAL_ATTESTOR_KEY_FILE": "/keys/attestor.seed",
 }
 
 
@@ -83,7 +85,13 @@ def test_dev_config_and_defaults() -> None:
 
 def test_production_config_is_complete_and_refuses_dev_shortcuts() -> None:
     assert Settings.from_env(PROD).production
-    for missing in ("HITL_JWT_ISSUER", "MOTOR_TARGET", "HITL_AEGIS_TLS_CA"):
+    for missing in (
+        "HITL_JWT_ISSUER",
+        "MOTOR_TARGET",
+        "HITL_AEGIS_TLS_CA",
+        "HITL_APPROVAL_ATTESTOR_ID",
+        "HITL_APPROVAL_ATTESTOR_KEY_FILE",
+    ):
         with pytest.raises(ConfigError):
             Settings.from_env({k: v for k, v in PROD.items() if k != missing})
     unset_env = {k: v for k, v in PROD.items() if k != "HITL_ENV"}
@@ -101,6 +109,7 @@ def test_production_config_is_complete_and_refuses_dev_shortcuts() -> None:
         {"HITL_AEGIS_TLS_CA": "/only/one"},
         {"HITL_FOUR_EYES_QUANTITY_THRESHOLD": "-1"},
         {"HITL_API_TOKEN": "short"},
+        {"HITL_APPROVAL_ATTESTOR_ID": "hitl-oidc"},  # without its key file
     ],
 )
 def test_invalid_config_is_refused(over: dict[str, str]) -> None:

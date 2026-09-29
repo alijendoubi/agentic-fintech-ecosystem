@@ -33,6 +33,13 @@ service ExecutionMotor {
   // Manifest and the SHARP promotion gate (ALI-161). When the motor enforces compliance
   // (always in production), plain Execute is refused and this is the only way to trade.
   rpc ExecuteWithContext(ExecuteRequest) returns (ExecuteAck);
+  // Additive (owner decision 2026-09-29, DECISIONS row 7): retain the debate context of a
+  // signal Aegis HELD for a human, in the Zone C audit log (hash-chained, as afe_audit_app),
+  // keyed by hold_id and signal_id. `decision` must be DECISION_HELD_FOR_HUMAN with a hold_id,
+  // and `context.signal` must be that signal. Nothing is executed. hitl-backend reads the record
+  // back when a human releases the hold. The caller is trusted as for ExecuteWithContext (mTLS);
+  // hitl-backend binds the record to Aegis's own copy of the held signal before using it.
+  rpc RetainHeldContext(ExecuteRequest) returns (RetainAck);
   // Liveness/readiness probe. No policy requirement beyond mTLS (mirrors Aegis's
   // GetKillSwitchState-style read RPC); reports the local kill-switch state.
   rpc Health(Empty) returns (HealthStatus);
@@ -66,6 +73,13 @@ message ExecuteAck {
   string status = 3;         // ExecutionStatus value, e.g. "accepted", "rejected", "unknown"
   string reject_reason = 4;  // RejectReason value; empty when not rejected/unknown
   string detail = 5;
+}
+
+message RetainAck {
+  bool retained = 1;         // true iff the audit record was committed
+  int64 audit_seq = 2;       // audit.audit_events.seq of the record (0 when not retained)
+  string record_hash = 3;    // its chain hash (empty when not retained)
+  string detail = 4;         // refusal reason when not retained
 }
 
 message HealthStatus {

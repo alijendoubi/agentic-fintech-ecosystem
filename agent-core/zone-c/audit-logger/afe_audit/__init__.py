@@ -10,8 +10,15 @@ from afe_audit.drift import (
     DriftThresholds,
     kl_divergence,
 )
-from afe_audit.errors import AnchorError, AuditError, AuditValidationError, AuditWriteError
+from afe_audit.errors import (
+    AnchorError,
+    AuditError,
+    AuditIntegrityError,
+    AuditValidationError,
+    AuditWriteError,
+)
 from afe_audit.logger import AuditLogger
+from afe_audit.lookup import RecordLookup
 from afe_audit.models import Anchor, AuditEvent, AuditRecord, ChainBreak, VerificationResult
 from afe_audit.verifier import ChainVerifier
 
@@ -21,6 +28,7 @@ __all__ = [
     "AnchorPublisher",
     "AnchorSink",
     "AuditError",
+    "AuditIntegrityError",
     "AuditEvent",
     "AuditLogger",
     "AuditRecord",
@@ -36,6 +44,7 @@ __all__ = [
     "DriftThresholds",
     "DsnConnectionSource",
     "FileAnchorSink",
+    "RecordLookup",
     "VerificationResult",
     "kl_divergence",
 ]

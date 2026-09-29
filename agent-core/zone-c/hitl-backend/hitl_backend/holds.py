@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from .attest import Attestation
+
 NANOS = Decimal(10) ** 9
 FINAL_STATUSES = frozenset({"APPROVED", "REJECTED", "EXPIRED", "RELEASE_DENIED"})
 
@@ -89,11 +91,36 @@ class FinalRecord:
     hold: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class PendingApproval:
+    """The first of two required approvals (owner decision 2026-09-29, DECISIONS row 4). Kept
+    until the second distinct approver decides, a rejection, or ``expires_at_ns`` (the hold's
+    own expiry). ``attestation`` is the Aegis ``Authorization`` signed when it was given (None
+    when no attestor key is configured, dev only)."""
+
+    sub: str
+    reason: str
+    decided_at_ns: int
+    expires_at_ns: int
+    attestation: Attestation | None
+
+    def json(self) -> dict[str, Any]:
+        return {
+            "approverSub": self.sub,
+            "decision": "APPROVE",
+            "reason": self.reason,
+            "decidedAtNs": str(self.decided_at_ns),
+        }
+
+
 @dataclass
 class DecisionBook:
-    """In-memory, like Aegis's own hold store: a restart forgets finished holds and idempotency
-    keys (Aegis has dropped the resolved hold by then, so a replay cannot decide twice)."""
+    """In-memory, like Aegis's own hold store: a restart forgets finished holds, idempotency
+    keys and pending first approvals (Aegis has dropped a resolved hold by then, so a replay
+    cannot decide twice; a forgotten first approval must simply be given again, and the
+    audit log still records it)."""
 
     finals: dict[str, FinalRecord] = field(default_factory=dict)
+    pending: dict[str, PendingApproval] = field(default_factory=dict)
     replies: dict[str, tuple[int, dict[str, Any]]] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)

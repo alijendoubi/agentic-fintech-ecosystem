@@ -72,6 +72,13 @@ except AuditError:
 `ChainVerifier(source).verify_chain()` / `verify_chain(from_seq, to_seq)`;
 `AnchorPublisher(verifier, FileAnchorSink(path)).run_periodic(interval_s, stop_event)`.
 
+`RecordLookup(source).find(event_type, key, value, limit=2)` reads records back by a payload
+key (used by hitl-backend for `hold.context.retained`). Every record returned passed the
+per-row checks of `ChainVerifier` and links to its predecessor's stored hash; otherwise it
+raises `AuditIntegrityError`. That makes an edited record tamper-evident on read, not the
+whole chain (use `ChainVerifier` + anchors for that). It is a sequential scan (no expression
+index; adding one needs the DDL-guard break-glass path). TODO(owner): index if the table grows.
+
 ## KL drift monitor (`afe_audit/drift.py`)
 
 Pure numpy functions (`kl_divergence`, `align_counts`, `classify`) and `DriftMonitor`. Thresholds

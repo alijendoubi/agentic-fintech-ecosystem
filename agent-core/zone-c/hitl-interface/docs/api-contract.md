@@ -1,7 +1,7 @@
 # HITL backend REST contract (ASSUMED, PROPOSED)
 
-Status: **PROPOSED**. Implemented by `zone-c/hitl-backend` (ALI-156) for single-approver holds; see its README for
-what is not implemented yet (second approvals, terminal-to-backend TLS). A distress classifier is out of scope (owner decision 2026-09-29). It is the contract the operator terminal
+Status: **PROPOSED**. Implemented by `zone-c/hitl-backend` (ALI-156), including two-approver holds (owner decision
+2026-09-29, DECISIONS row 4); see its README for what is not implemented yet (terminal-to-backend TLS, OIDC/JWKS). A distress classifier is out of scope (owner decision 2026-09-29). It is the contract the operator terminal
 (`zone-c/hitl-interface`) was built and tested against (`HttpHitlApiClient`, `MockHitlApiClient`).
 The owner of the HITL backend must confirm or change it (`TODO(owner)`).
 
@@ -17,7 +17,8 @@ operator browser --> hitl-interface (Next.js, server side) --REST--> HITL backen
 * A **hold** is an Aegis `AegisDecision` with `decision = DECISION_HELD_FOR_HUMAN`
   (`shared/proto/aegis.proto`, spec `docs/specs/phase_3_aegis_execution.md` section 4). The operator approves or rejects
   the **hold**; the resource id is `hold_id`.
-* Approve maps to `Aegis.ResolveHold(hold_id, operator_id, second_approver_id, approve=true, note)`.
+* Approve maps to `Aegis.ResolveHold(hold_id, operator_id, second_approver_id, approve=true, note)`, called once the
+  required number of distinct approvals is in (a first of two approvals is only recorded; see section 5).
   Reject maps to `ResolveHold(..., approve=false, note)`. Aegis **re-runs all hard controls at release time**: a human can
   release a soft block but never override a hard block. If Aegis rejects at release the hold becomes `RELEASE_DENIED`.
 * Fields the terminal deliberately does **not** send and the backend must own: `reverse_guardrail_distress_score` (always 0.0: no classifier, out of scope),
@@ -79,6 +80,13 @@ Request:
 * `clientRequestId` is an idempotency key: replaying it returns the original result and records **no second decision**.
 * The 200 body MUST contain the actor's decision in `approvals` (the terminal treats a response that does not confirm
   the decision as a denial).
+* **First of two approvals:** when `requiredApprovals = 2` and no approval is pending, an `APPROVE` is recorded (audited)
+  and answered `200` with `hitlStatus = PENDING` and `approvals = [that approval]`; Aegis is not called. The terminal
+  shows this as awaiting a second approver ("1 of 2"). `GET` and the pending list return the same `approvals`. The
+  pending approval lapses when the hold expires (the list then shows `approvals = []`). The next `APPROVE` by a
+  **different** `sub` releases the hold (`APPROVED` or `RELEASE_DENIED`, `approvals` = both); the same `sub` again gets
+  `409 duplicate_approver`. A `REJECT` by anyone, including the first approver, is final (`approvals` = the approval plus
+  the rejection).
 
 ### Errors
 
@@ -89,7 +97,7 @@ Non-2xx with body `{ "error": { "code": "<machine code>", "message": "<safe text
 | 401 | token invalid/expired | not approved; sign in again |
 | 403 | role/MFA not allowed | not approved |
 | 404 | unknown hold | not found |
-| 409 / 410 / 422 | policy refusal: expired, already final, duplicate approver, reason missing, hard control failed at release | refused, not approved (message shown) |
+| 409 / 410 / 422 | policy refusal: expired, already final, `duplicate_approver`, reason missing, `cooling_period`, `aegis_refused`, `subject_unusable` (a `sub` Aegis cannot accept), `retained_context_integrity` / `_conflict` / `_mismatch` (the retained debate context failed its checks; release refused, reject still works) | refused, not approved (message shown) |
 | 429 / 503 | throttled / unavailable | not approved |
 | other 5xx, timeout, network error, schema violation | unknown | **not approved** (deny by default) |
 
@@ -117,7 +125,8 @@ says "not approved, reload to verify" and never shows success without an explici
 | `requiredApprovals` | 1 or 2 | backend's requirement; the terminal uses the stricter of this and its size threshold |
 | `approvals` | array of `{approverSub, decision, reason, decidedAtNs}` | append-only, includes rejections |
 
-`hitlStatus`: `PENDING` = held, awaiting operators (partial approvals allowed); `APPROVED` = enough distinct approvals and
+`hitlStatus`: `PENDING` = held, awaiting operators (partial approvals allowed: one `APPROVE` in `approvals` means
+awaiting the second approver); `APPROVED` = enough distinct approvals and
 Aegis released it; `REJECTED` = an operator rejected (final; maps to `REASON_HOLD_REJECTED_BY_OPERATOR`);
 `EXPIRED` = hold window elapsed (`REASON_HOLD_EXPIRED`); `RELEASE_DENIED` = approved by operators but Aegis re-check failed.
 
@@ -129,12 +138,19 @@ Aegis released it; `REJECTED` = an operator rejected (final; maps to `REASON_HOL
 4. Reject is final; nothing changes a `REJECTED` / `APPROVED` / `EXPIRED` / `RELEASE_DENIED` hold.
 5. Four-eyes: when `quantityNanos >= HITL_FOUR_EYES_QUANTITY_THRESHOLD` (or notional over the optional USD threshold)
    `requiredApprovals = 2` distinct `sub`s. The same `sub` cannot approve twice. A prior approver may still reject.
-   On the second approval the backend calls `ResolveHold` with `operator_id` = first approver and `second_approver_id` = second.
+   On the second approval the backend calls `ResolveHold` once. `operator_id` is the backend's own certificate identity
+   (Aegis binds it to mTLS); the two humans are sent as `first_approval` / `second_approval` (`second_approver_id` = the
+   second `sub`), each an `afe-hold-v1` attestation signed by the backend's attestor key with `approver_id` = the `sub`.
+   This trusts the backend and the IdP, not per-person keys (hitl-backend and Aegis READMEs).
 6. **Audit log every attempt, including denials**, before responding: actor `sub`, role, `amr`, hold id, decision, reason,
    outcome/denial code, timestamp, `clientRequestId`, and the Aegis result (`HITLOverrideRecord` in the manifest).
    Fail closed: if the audit write fails, the decision is refused (`REASON_AUDIT_UNAVAILABLE`).
 7. Idempotent by `clientRequestId`; race-safe (two simultaneous approvals by different people must not both finalize a
    one-approval signal twice, and one person's two tabs must not count twice).
+
+8. A released hold is sent to execution-motor with the debate context retained for it in the audit log (DECISIONS
+   row 7); only when none was retained does it carry a snapshot built from the held signal, labelled `hold-signal-only`.
+   `execution.snapshotSource` in the 200 body says which (informational; the terminal ignores unknown fields).
 
 ## 7. Environment consumed by the terminal (all server-side)
 

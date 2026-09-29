@@ -60,7 +60,7 @@ Implemented (see the README status table for what was and was not re-run):
 - `agent-core/zone-b/refdata-bridge/` - Redis -> `Aegis.PushReferenceData` over mTLS
 - `agent-core/zone-c/audit-logger|compliance-manifest|sharp-gate/` - Python libraries (`afe_audit`, `afe_manifest`, `afe_sharp`)
 - `agent-core/zone-c/hitl-interface/` - Next.js terminal (`docs/api-contract.md` PROPOSED)
-- `agent-core/zone-c/hitl-backend/` - REST backend for the terminal (ALI-156): Aegis ListHolds/GetHold/ResolveHold, relay to execution-motor, audited; single-approver holds only, no distress classifier (compose profile `hitl-backend`)
+- `agent-core/zone-c/hitl-backend/` - REST backend for the terminal (ALI-156): Aegis ListHolds/GetHold/ResolveHold, relay to execution-motor, audited; four-eyes holds take two distinct OIDC subjects (JWT `sub`), attested to Aegis with a hitl-backend key (`hold_attestors`, trusts hitl-backend + IdP, not per-person keys); released holds carry the debate context retained in the audit DB (`hold.context.retained`); no distress classifier (compose profile `hitl-backend`)
 - `agent-core/backtesting/` - engine, WFA, Monte Carlo, calibration machinery; synthetic data only, no calibrated result
 
 All specs are in `agent-core/docs/specs/`; decisions are in `agent-core/docs/adr/` (ADR-003 and ADR-004 were accepted 2026-09-29 but are not yet implemented; see `DECISIONS-2026-09-29.md`).

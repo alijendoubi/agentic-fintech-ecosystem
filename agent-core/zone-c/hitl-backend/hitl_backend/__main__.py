@@ -8,10 +8,12 @@ from typing import Any
 
 import structlog
 
+from .attest import ApprovalAttestor
 from .auth import Authenticator
 from .config import ConfigError, Settings
 from .grpc_clients import AegisHolds, MotorRelay, load_protos, open_channel
 from .http_api import build_server
+from .retained import RetainedContexts
 from .service import HitlService, Policy
 
 log = structlog.get_logger("hitl_backend.main")
@@ -20,10 +22,26 @@ log = structlog.get_logger("hitl_backend.main")
 def build(env: dict[str, str]) -> tuple[Settings, Any]:
     settings = Settings.from_env(env)
     pb = load_protos(env.get("AFE_PROTO_DIR", "").strip() or None)
-    from afe_audit import AuditLogger  # type: ignore[import-not-found]
+    from afe_audit import (  # type: ignore[import-not-found]
+        AuditIntegrityError,
+        AuditLogger,
+        RecordLookup,
+    )
     from afe_audit.db import DsnConnectionSource  # type: ignore[import-not-found]
 
-    audit = AuditLogger(DsnConnectionSource.from_env(env))  # POSTGRES_* as afe_audit_app
+    source = DsnConnectionSource.from_env(env)  # POSTGRES_* as afe_audit_app
+    audit = AuditLogger(source)
+    retained = RetainedContexts(RecordLookup(source), pb, integrity_errors=(AuditIntegrityError,))
+    attestor = None
+    if settings.attestor_id is not None and settings.attestor_key_file is not None:
+        attestor = ApprovalAttestor.from_seed_file(
+            settings.attestor_id, settings.attestor_key_file, issuer=settings.jwt_issuer
+        )
+        log.info(
+            "approval_attestor_loaded",
+            attestor_id=attestor.attestor_id,
+            public_key_hex=attestor.public_key_hex(),  # what Aegis's hold_attestors must list
+        )
     aegis_stub = pb["aegis_pb2_grpc"].AegisStub(
         open_channel(settings.aegis_target, settings.aegis_tls)
     )
@@ -47,6 +65,8 @@ def build(env: dict[str, str]) -> tuple[Settings, Any]:
             cooling_period_s=settings.cooling_period_s,
         ),
         relay=relay,
+        attestor=attestor,
+        retained=retained,
     )
     auth = Authenticator(
         settings.jwt_secret,
