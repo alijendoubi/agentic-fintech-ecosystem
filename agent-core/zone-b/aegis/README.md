@@ -91,7 +91,7 @@ the spec's table are UNSUBSTANTIATED until Phase 4 calibration.
 | `rate_global`, `rate_per_symbol` | C16 | Token bucket `capacity` and `refill_per_sec`. |
 | `omega_min` | C17 | [EXISTING 0.55] UNSUBSTANTIATED. Below it the signal is an abstain (hard reject). |
 | `regime.min_confidence`, `regime.allowed` | C18 | `C_MIN` (PROPOSED 0.6) and the regime names the strategy is validated for. |
-| `hold_requires_second_approver`, `hold_requires_cooling_period`, `hold_max_distress_score` | ResolveHold | TODO(owner): whether a second approver / cooling period is mandatory. |
+| `hold_requires_second_approver`, `hold_requires_cooling_period`, `hold_max_distress_score` | ResolveHold | TODO(owner): whether a second approver / cooling period is mandatory. The distress classifier is out of scope (2026-09-29): hitl-backend always sends 0.0, so `hold_max_distress_score` never blocks. |
 | `audit_mandatory` | audit | If true a sink failure rejects the decision (`REASON_AUDIT_UNAVAILABLE`) and refuses a kill reset. |
 | `timings` (optional) | various | PROPOSED defaults, all TODO(owner): `clock_skew_ms` 250, `max_signal_age_ms` 5000, `max_ref_age_ms` 1000, `max_regime_age_ms` 60000 (not in spec), `attestation_ttl_ms` 5000, `hold_window_ms` 60000, `replay_retention_ms` 86400000, `operator_heartbeat_interval_ms` 14400000, `operator_heartbeat_warn_ms` 12600000, `liveness_trip_ms` 60000, `approval_max_age_ms` 300000, `unusual_size_min_history` 30, `unusual_size_window_days` 30. |
 

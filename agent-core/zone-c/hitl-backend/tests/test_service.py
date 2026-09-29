@@ -31,7 +31,6 @@ def policy(**over: Any) -> Policy:
         "quantity_threshold": Decimal(1000),
         "notional_threshold_usd": None,
         "cooling_period_s": 0.0,
-        "unscored_dev": True,
     }
     fields.update(over)
     return Policy(**fields)
@@ -119,8 +118,8 @@ def test_approve_releases_audits_and_relays_with_the_hitl_record(pb: dict[str, A
     assert rig.service.get(HOLD_ID)["hitlStatus"] == "APPROVED"  # final state kept for GET
 
 
-def test_reject_is_final_and_needs_no_classifier(pb: dict[str, Any]) -> None:
-    rig = Rig(pb, unscored_dev=False)
+def test_reject_is_final(pb: dict[str, Any]) -> None:
+    rig = Rig(pb)
     status, hold = rig.decide("REJECT")
     assert status == 200 and hold["hitlStatus"] == "REJECTED" and "execution" not in hold
     assert code(rig.decide("APPROVE")) == (409, "already_final")
@@ -165,10 +164,14 @@ def test_notional_threshold_counts_for_limit_orders(pb: dict[str, Any]) -> None:
     assert code(rig.decide()) == (422, "second_approver_signing_unavailable")
 
 
-def test_no_distress_classifier_refuses_approval_outside_dev(pb: dict[str, Any]) -> None:
-    rig = Rig(pb, unscored_dev=False)
-    assert code(rig.decide()) == (422, "distress_classifier_unavailable")
-    assert rig.holds.resolved == []
+def test_distress_score_is_unscored_and_audited_as_out_of_scope(pb: dict[str, Any]) -> None:
+    rig = Rig(pb)
+    assert rig.decide()[0] == 200
+    assert rig.holds.resolved[0]["reverse_guardrail_distress_score"] == 0.0
+    override = rig.audit.events[-1][2]["hitl_override"]
+    assert isinstance(override, dict)
+    assert override["distress_scored"] is False
+    assert override["distress_classifier"] == "out_of_scope"
 
 
 def test_cooling_period(pb: dict[str, Any]) -> None:
