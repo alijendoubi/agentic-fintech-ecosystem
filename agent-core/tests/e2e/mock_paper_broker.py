@@ -62,6 +62,14 @@ class MockPaperBroker(Broker):
     def get_order_by_client_id(self, client_order_id: str) -> BrokerOrder | None:
         return self._orders.get(client_order_id)
 
+    def list_open_orders(self) -> tuple[BrokerOrder, ...]:
+        # Same definition of "open" as execution_motor.mock_broker (ALI-162 kill-switch sweep).
+        return tuple(
+            o
+            for o in self._orders.values()
+            if o.status in (ExecutionStatus.ACCEPTED, ExecutionStatus.PARTIALLY_FILLED)
+        )
+
     def cancel_order(self, broker_order_id: str) -> None:
         return None
 
