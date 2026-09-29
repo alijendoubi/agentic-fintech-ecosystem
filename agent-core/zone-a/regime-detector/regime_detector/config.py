@@ -10,13 +10,18 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 #: Valid ticker symbols. Enforced on every symbol read from QuestDB (ALI-30).
 SYMBOL_PATTERN = re.compile(r"[A-Z.\-]{1,10}")
 _IDENTIFIER_PATTERN = re.compile(r"[a-z_][a-z0-9_]{0,62}")
+#: QuestDB HTTP basic-auth user: no ':' (it separates user and password in the header).
+_HTTP_USER_PATTERN = re.compile(r"[A-Za-z0-9._\-]{1,64}")
+#: Printable ASCII without whitespace, so the value cannot be mangled by env/compose quoting.
+_HTTP_PASSWORD_PATTERN = re.compile(r"[\x21-\x7e]{1,256}")
 MIN_HMAC_KEY_CHARS = 32
+MIN_QUESTDB_PASSWORD_CHARS = 16
 MIN_HMAC_KEY_DISTINCT_CHARS = 8
 #: Same list as the HITL terminal (zone-c/hitl-interface/src/lib/config.ts), ALI-21.
 PLACEHOLDER_FRAGMENTS = (
@@ -68,11 +73,15 @@ class Settings:
     max_symbols: int
     heartbeat_path: Path
     log_level: str
+    #: QuestDB HTTP basic auth (ALI-20). Both None only when neither variable is set.
+    questdb_http_user: str | None = None
+    questdb_http_password: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         """Build settings from ``env`` (defaults to ``os.environ``)."""
         source = os.environ if env is None else env
+        questdb_user, questdb_password = _questdb_basic_auth(source)
         return cls(
             questdb_host=_text(source, "QUESTDB_HOST", "localhost"),
             questdb_port=_int(source, "QUESTDB_PORT", 9000, 1, 65535),
@@ -93,6 +102,8 @@ class Settings:
             max_symbols=_int(source, "MAX_SYMBOLS", 100, 1, 10_000),
             heartbeat_path=Path(_text(source, "HEARTBEAT_PATH", DEFAULT_HEARTBEAT_PATH)),
             log_level=_text(source, "LOG_LEVEL", "info").upper(),
+            questdb_http_user=questdb_user,
+            questdb_http_password=questdb_password,
         )
 
 
@@ -143,6 +154,40 @@ def _model_dir(env: Mapping[str, str]) -> Path:
     return Path(DEFAULT_MODEL_DIR)
 
 
+def _is_placeholder(value: str) -> bool:
+    lowered = value.lower()
+    return any(fragment in lowered for fragment in PLACEHOLDER_FRAGMENTS)
+
+
+def _questdb_basic_auth(env: Mapping[str, str]) -> tuple[str | None, str | None]:
+    """``QUESTDB_HTTP_USER`` / ``QUESTDB_HTTP_PASSWORD``: both or neither (ALI-20).
+
+    Neither means no ``Authorization`` header (a QuestDB without auth, e.g. unit tests); compose
+    requires both. The password is a credential: errors never echo it.
+    """
+    user = env.get("QUESTDB_HTTP_USER", "").strip()
+    password = env.get("QUESTDB_HTTP_PASSWORD", "").strip()
+    if not user and not password:
+        return None, None
+    if not user or not password:
+        raise ConfigError("QUESTDB_HTTP_USER and QUESTDB_HTTP_PASSWORD must be set together")
+    if _HTTP_USER_PATTERN.fullmatch(user) is None:
+        raise ConfigError(
+            "QUESTDB_HTTP_USER must be 1-64 letters, digits, '.', '_' or '-' (no ':')"
+        )
+    if _HTTP_PASSWORD_PATTERN.fullmatch(password) is None:
+        raise ConfigError(
+            "QUESTDB_HTTP_PASSWORD must be 1-256 printable ASCII characters without whitespace"
+        )
+    if len(password) < MIN_QUESTDB_PASSWORD_CHARS:
+        raise ConfigError(
+            f"QUESTDB_HTTP_PASSWORD must be at least {MIN_QUESTDB_PASSWORD_CHARS} characters"
+        )
+    if _is_placeholder(password):
+        raise ConfigError("QUESTDB_HTTP_PASSWORD looks like a placeholder; set a random value")
+    return user, password
+
+
 def _hmac_key(env: Mapping[str, str]) -> bytes | None:
     """``MODEL_HMAC_KEY``. Absent means models are never loaded or persisted."""
     raw = env.get("MODEL_HMAC_KEY", "").strip()
@@ -150,8 +195,7 @@ def _hmac_key(env: Mapping[str, str]) -> bytes | None:
         return None
     if len(raw) < MIN_HMAC_KEY_CHARS:
         raise ConfigError(f"MODEL_HMAC_KEY must be at least {MIN_HMAC_KEY_CHARS} characters")
-    lowered = raw.lower()
-    if any(fragment in lowered for fragment in PLACEHOLDER_FRAGMENTS):
+    if _is_placeholder(raw):
         raise ConfigError("MODEL_HMAC_KEY looks like a placeholder; set a random key")
     if len(set(raw)) < MIN_HMAC_KEY_DISTINCT_CHARS:
         raise ConfigError(

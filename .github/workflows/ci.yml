@@ -426,3 +426,15 @@ jobs:
           if jq -r '.services[] | select(.build == null) | .image // empty' "${RUNNER_TEMP}/base.json" | grep -E ':latest$|^[^:]+$'; then
             echo "::error::unpinned image"; exit 1
           fi
+      - name: Every service has resource limits, cap_drop ALL and no-new-privileges (ALI-20)
+        run: |
+          set -euo pipefail
+          docker compose --env-file "${RUNNER_TEMP}/ci.env" -f docker-compose.yml --profile hitl-backend config --format json > "${RUNNER_TEMP}/all.json"
+          bad=$(jq -r '.services | to_entries[] | select(
+                  (.value.mem_limit == null) or (.value.cpus == null) or (.value.pids_limit == null)
+                  or ((.value.cap_drop // []) | index("ALL") | not)
+                  or ((.value.security_opt // []) | index("no-new-privileges:true") | not)
+                ) | .key' "${RUNNER_TEMP}/all.json")
+          if [ -n "${bad}" ]; then
+            echo "::error::services missing limits or hardening: ${bad}"; exit 1
+          fi

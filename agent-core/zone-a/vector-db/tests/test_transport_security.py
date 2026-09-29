@@ -35,7 +35,8 @@ def _install_fake_chromadb(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return seen
 
 
-PROD = {"ENVIRONMENT": "production"}
+# A production env with a valid token (ALI-20 makes the token mandatory there).
+PROD = {"ENVIRONMENT": "production", "CHROMA_AUTH_TOKEN": "0123456789abcdef0123456789abcdef"}
 
 
 class TestProductionRefusesPlaintext:
@@ -99,6 +100,24 @@ class TestAuthToken:
         with pytest.raises(MemoryConfigError, match="CHROMA_AUTH_TOKEN") as info:
             VectorMemorySettings.from_env({"CHROMA_AUTH_TOKEN": value})
         assert value not in str(info.value)
+
+    @pytest.mark.parametrize(
+        "value",
+        ["change-me-chroma-token", "PLACEHOLDER0123456789", "my-default-token-0123", "example123"],
+    )
+    def test_placeholder_tokens_are_rejected_without_echoing(self, value: str) -> None:
+        """ALI-20/ALI-21: the proxy would accept a placeholder as readily as a real token."""
+        with pytest.raises(MemoryConfigError, match="placeholder") as info:
+            VectorMemorySettings.from_env({"CHROMA_AUTH_TOKEN": value})
+        assert value not in str(info.value)
+
+    def test_production_requires_a_token(self) -> None:
+        env = {"ENVIRONMENT": "production", "CHROMA_SSL": "true"}
+        with pytest.raises(MemoryConfigError, match="requires CHROMA_AUTH_TOKEN"):
+            VectorMemorySettings.from_env(env)
+        token = "0123456789abcdef0123456789abcdef"
+        settings = VectorMemorySettings.from_env({**env, "CHROMA_AUTH_TOKEN": token})
+        assert settings.auth_token == token
 
 
 class TestHttpClientConstruction:

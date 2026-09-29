@@ -7,7 +7,9 @@ Variables (names match agent-core/infrastructure/docker-compose.yml where they e
     CHROMA_SSL                         default false; must be true when ENVIRONMENT=production
     CHROMA_SSL_VERIFY                  default true; "false" or a path to a CA bundle (PEM).
                                        "false" is refused when ENVIRONMENT=production
-    CHROMA_AUTH_TOKEN                  optional; sent as "Authorization: Bearer <token>"
+    CHROMA_AUTH_TOKEN                  sent as "Authorization: Bearer <token>"; required when
+                                       ENVIRONMENT=production; placeholders are refused. Compose
+                                       requires it: the vector-db proxy enforces it (ALI-20)
     CHROMA_TIMEOUT_S                   default 2.0, range [0.1, 60]  (per-call deadline)
     CHROMA_CONNECT_TIMEOUT_S           default 30, range [1, 300]  (client init + heartbeat)
     MEMORY_COLLECTION                  default "afe_memory"
@@ -32,6 +34,20 @@ _TOKEN = re.compile(r"[\x21-\x7e]{1,4096}")  # printable ASCII, no whitespace: c
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 MAX_RESULTS_CEILING = 100
+#: Same list as regime_detector/config.py and the HITL terminal (ALI-21).
+_PLACEHOLDER_FRAGMENTS = (
+    "change-me",
+    "change_me",
+    "changeme",
+    "replace-me",
+    "replaceme",
+    "placeholder",
+    "your-secret",
+    "yoursecret",
+    "example",
+    "default",
+    "password",
+)
 MAX_PORT = 65_535
 
 
@@ -91,18 +107,27 @@ def _auth_token(source: Mapping[str, str]) -> str | None:
     """Read CHROMA_AUTH_TOKEN. Never echoes the value in an error (it is a credential)."""
     raw = source.get("CHROMA_AUTH_TOKEN", "").strip()
     if not raw:
+        if _is_production(source):
+            raise MemoryConfigError("ENVIRONMENT=production requires CHROMA_AUTH_TOKEN")
         return None
     if _TOKEN.fullmatch(raw) is None:
         raise MemoryConfigError(
             "CHROMA_AUTH_TOKEN must be 1-4096 printable ASCII characters without whitespace"
         )
+    lowered = raw.lower()
+    if any(fragment in lowered for fragment in _PLACEHOLDER_FRAGMENTS):
+        raise MemoryConfigError("CHROMA_AUTH_TOKEN looks like a placeholder; set a random value")
     return raw
+
+
+def _is_production(source: Mapping[str, str]) -> bool:
+    return source.get("ENVIRONMENT", "").strip().lower() == "production"
 
 
 def _refuse_plaintext_in_production(
     source: Mapping[str, str], ssl: bool, verify: bool | str
 ) -> None:
-    if source.get("ENVIRONMENT", "").strip().lower() != "production":
+    if not _is_production(source):
         return
     if not ssl:
         raise MemoryConfigError("ENVIRONMENT=production requires CHROMA_SSL=true (no plaintext)")

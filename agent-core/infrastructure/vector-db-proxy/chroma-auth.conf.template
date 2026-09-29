@@ -1,0 +1,29 @@
+# Bearer-token gate in front of Chroma (ALI-20). Rendered at container start by the nginx image's
+# envsubst step (NGINX_ENVSUBST_FILTER limits it to CHROMA_AUTH_TOKEN; every other $name below is an
+# nginx variable and is left alone).
+#
+# Why a proxy: the pinned chroma image (1.5.9, the Rust server) ignores the CHROMA_SERVER_AUTHN_*
+# variables. Verified 2026-09-29: with them set, collections were listed without any token. So the
+# Chroma container sits alone on an internal network and only this proxy can reach it.
+#
+# CHROMA_AUTH_TOKEN is hex (check-env.sh enforces it) so it cannot break out of the quoted string.
+# The comparison is a plain string match, not constant-time. TODO(owner): acceptable on an internal
+# network? A timing-safe check needs njs or a different proxy.
+
+server {
+    listen 8000;
+    server_tokens off;
+    # nginx's default 1 MiB request-body limit applies: a larger write fails with 413 (fail closed).
+    # TODO(owner): raise it if memory seeding ever needs bigger batches.
+
+    location / {
+        # Exact string match (a `map` would need map_hash_bucket_size tuning for long tokens).
+        if ($http_authorization != "Bearer ${CHROMA_AUTH_TOKEN}") {
+            return 401;
+        }
+        proxy_pass http://vector-db-store:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization ""; # Chroma does not need the token; do not forward it
+    }
+}

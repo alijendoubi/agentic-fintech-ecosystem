@@ -242,6 +242,39 @@ printf '[{"key_id": "%s", "algorithm": "ED25519", "public_key_hex": "%s"}]
 echo "  dev attestation signer: key_id=$KEY_ID (seed in $SIGNER_DIR, public key in execution-motor/)"
 
 # ----------------------------------------------------------------------------
+# 3d. DEV ONLY QuestDB ILP auth key (ALI-20)
+#     QuestDB's ILP/TCP listener authenticates writers with an ECDSA P-256 key:
+#     the server holds the PUBLIC key in auth.conf (QDB_LINE_TCP_AUTH_DB_PATH),
+#     sensory-array holds the private scalar `d` (QUESTDB_ILP_AUTH_TOKEN, a
+#     secret that compose reads from .env). The SEC1 DER of a P-256 key with
+#     named-curve parameters is exactly 121 bytes: d is bytes 8-39, the public
+#     point x||y is the last 64 bytes. Values are base64url without padding.
+# ----------------------------------------------------------------------------
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+QDB_ILP_DIR="$OUT_DIR/questdb-ilp"
+mkdir -p "$QDB_ILP_DIR"
+openssl ecparam -name prime256v1 -genkey -noout -out "$WORK_DIR/qdb-ilp.pem"
+openssl ec -in "$WORK_DIR/qdb-ilp.pem" -outform DER -out "$WORK_DIR/qdb-ilp.der" 2>/dev/null
+if [ "$(wc -c < "$WORK_DIR/qdb-ilp.der" | tr -d ' ')" -ne 121 ]; then
+    echo "error: unexpected P-256 DER layout for the QuestDB ILP key" >&2
+    exit 1
+fi
+QDB_ILP_D=$(tail -c +8 "$WORK_DIR/qdb-ilp.der" | head -c 32 | b64url)
+QDB_ILP_X=$(tail -c 64 "$WORK_DIR/qdb-ilp.der" | head -c 32 | b64url)
+QDB_ILP_Y=$(tail -c 32 "$WORK_DIR/qdb-ilp.der" | b64url)
+if [ ${#QDB_ILP_D} -ne 43 ] || [ ${#QDB_ILP_X} -ne 43 ] || [ ${#QDB_ILP_Y} -ne 43 ]; then
+    echo "error: could not derive the QuestDB ILP key" >&2
+    exit 1
+fi
+printf 'sensory-array ec-p-256-sha256 %s %s\n' "$QDB_ILP_X" "$QDB_ILP_Y" > "$QDB_ILP_DIR/auth.conf"
+chmod 644 "$QDB_ILP_DIR/auth.conf" 2>/dev/null || true # read by the questdb user (uid 10001)
+printf '%s\n' "$QDB_ILP_D" > "$QDB_ILP_DIR/ilp-token"
+chmod 600 "$QDB_ILP_DIR/ilp-token" 2>/dev/null || true
+echo "  dev QuestDB ILP key: kid=sensory-array; put the content of $QDB_ILP_DIR/ilp-token"
+echo "    into .env as QUESTDB_ILP_AUTH_TOKEN (and QUESTDB_ILP_AUTH_KEY_ID=sensory-array)"
+
+# ----------------------------------------------------------------------------
 # 4. Per-directory DEV ONLY README (also see ./README.md for the full guide)
 # ----------------------------------------------------------------------------
 # ----------------------------------------------------------------------------
@@ -286,7 +319,7 @@ cat > "$OUT_DIR/identities.json" <<EOF
 EOF
 echo "  dev operator identity + 3 reset approvers: $OUT_DIR/identities.json, seeds in $APPROVER_DIR"
 
-for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor hitl-backend operator approvers; do
+for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor hitl-backend operator approvers questdb-ilp; do
     cat > "$OUT_DIR/$d/README.md" <<EOF
 # DEV ONLY - NOT FOR PRODUCTION
 

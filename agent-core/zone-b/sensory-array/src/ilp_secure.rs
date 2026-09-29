@@ -15,8 +15,11 @@
 //! DER ECDSA/SHA-256 signature of the challenge bytes followed by `\n`.
 //!
 //! STATUS: the signing/handshake logic is unit-tested against an in-process
-//! mock that follows the protocol above. It has NOT been verified against a
-//! real QuestDB server, and the TLS path has not been exercised at all.
+//! mock that follows the protocol above. The auth handshake (without TLS) was
+//! verified against a real QuestDB 8.0.3 server with `auth.conf`
+//! (`QDB_LINE_TCP_AUTH_DB_PATH`) on 2026-09-29 (ALI-20): rows land with the
+//! right key, and nothing lands with a wrong key or without auth (see
+//! `tests/live_sinks.rs`). The TLS path has not been exercised at all.
 
 use std::time::Duration;
 
