@@ -3,6 +3,9 @@ syntax = "proto3";
 package afe.shared;
 
 import "aegis.proto";
+import "compliance_manifest.proto";
+import "market_snapshot.proto";
+import "trade_signal.proto";
 
 // Execution Motor gRPC contract (PKG-X3). Additive to the Phase 3 spec, NOT part of
 // Appendix A.1 (that appendix only fixes the Aegis contract). Source of the flow this
@@ -26,9 +29,32 @@ service ExecutionMotor {
   // Execute one Aegis-approved decision. See execution_motor/motor.py for the full
   // pipeline (halt -> attestation -> expiry -> notional caps -> idempotency -> broker).
   rpc Execute(AegisDecision) returns (ExecuteAck);
+  // Same pipeline, plus the decision context the motor needs for the per-trade Compliance
+  // Manifest and the SHARP promotion gate (ALI-161). When the motor enforces compliance
+  // (always in production), plain Execute is refused and this is the only way to trade.
+  rpc ExecuteWithContext(ExecuteRequest) returns (ExecuteAck);
   // Liveness/readiness probe. No policy requirement beyond mTLS (mirrors Aegis's
   // GetKillSwitchState-style read RPC); reports the local kill-switch state.
   rpc Health(Empty) returns (HealthStatus);
+}
+
+// What the decision was based on, as seen by the component that asked Aegis (ALI-161).
+// None of this is signed: the motor binds it to the attestation by signal_id/symbol and
+// otherwise trusts its mTLS-authenticated caller (see execution-motor README "Compliance").
+message ExecutionContext {
+  MarketSnapshot snapshot = 1;          // the inputs the debate used
+  TradeSignal signal = 2;               // exactly what was sent to Aegis.SubmitSignal
+  map<string, string> model_versions = 3;  // component -> version id; at least one
+  string blue_node_thesis = 4;
+  string red_node_challenge = 5;
+  string judge_synthesis = 6;
+  repeated string compression_summaries = 7;
+  HITLOverrideRecord hitl_override = 8; // required when a soft-block control failed
+}
+
+message ExecuteRequest {
+  AegisDecision decision = 1;
+  ExecutionContext context = 2;
 }
 
 // Outcome of one Execute call. ``status``/``reject_reason`` mirror the string values of

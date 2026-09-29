@@ -63,8 +63,40 @@ bash agent-core/shared/proto/generate.sh
   translation. `ExecuteAck.status`/`reject_reason` are the string values of
   `execution_motor.models.ExecutionStatus`/`RejectReason` (not a new proto enum — see
   "Known limitations").
+* `rpc ExecuteWithContext(ExecuteRequest) returns (ExecuteAck)` (ALI-161) — the same
+  pipeline plus an `ExecutionContext` (snapshot, the `TradeSignal` sent to Aegis, model
+  versions, debate texts, optional HITL record) for the compliance gates below. When the
+  motor enforces compliance (always in production), plain `Execute` is refused with
+  `context_missing` and this is the only way to trade. cognitive-core's relay uses it.
 * `rpc Health(Empty) returns (HealthStatus)` — liveness/readiness; reflects the local
   kill-switch state only, no policy requirement beyond mTLS.
+
+## Compliance gates (ALI-161, `compliance.py`)
+
+Order of checks for `ExecuteWithContext`: decision checks -> the context must name the signed
+order (`signal_id` and `symbol` equal to the attested order, non-empty `strategy_id`, else
+`context_mismatch`) -> **SHARP gate** -> the normal pipeline, whose last step before the broker
+is the **Compliance Manifest**.
+
+* **SHARP gate.** `TradeSignal.strategy_id` must map (owner-supplied
+  `MOTOR_SHARP_STRATEGY_MAP`, JSON `{"<strategy_id>": "<proposal_id>"}`) to a SHARP proposal whose
+  state, re-verified against the audit log (`afe_sharp` `fold`), is `PROMOTED` (`CANARY` too with
+  `MOTOR_SHARP_ALLOW_CANARY=true`). Anything else — unmapped, unknown, unverifiable, not promoted —
+  is `strategy_not_promoted`. Checked before the idempotency claim: a refusal does not burn the signal.
+* **Manifest.** After every motor check passed and the claim/reservation are held, one manifest is
+  built (`afe_manifest.build_manifest`) from the decision (order, every `ControlResult` as a
+  `PTCCheckResult`, Aegis version and limits hash) and the context, and stored write-once in
+  `MOTOR_MANIFEST_DIR` with one `manifest.stored` audit record. Any failure (build refusal, store,
+  audit) refuses the order with `manifest_failed`; the claim stays consumed (no silent retry).
+  A soft-block approval without an approved `hitl_override` in the context is refused by the
+  builder: that path needs the HITL backend (ALI-156) to relay the operator's record.
+* **Trust.** The context is not signed. It is bound to the attestation only by `signal_id`/`symbol`;
+  `strategy_id` and the texts are trusted because the caller authenticated over mTLS.
+  TODO(owner): sign `strategy_id` into `afe-attest-v1` if a compromised Zone A must not relabel a
+  strategy. Manifests of held or rejected decisions are not written here (they never reach the motor).
+* **What a manifest proves.** It records the decision to release, written before the final halt check
+  and the broker call: a kill-switch trip in between, or a broker rejection, leaves a manifest for an
+  order that never filled. Fills are in the execution report sent to Aegis, not in the manifest.
 
 ## Kill-switch reaction (ALI-162)
 
@@ -142,6 +174,20 @@ Production refuses to start without `AEGIS_CLIENT_TLS_CA` configured.
 | `MOTOR_MAX_ORDER_AGE_MS`, `MOTOR_MAX_CLOCK_SKEW_MS`, `MOTOR_MAX_QUOTE_AGE_MS` | no | Defaults 5000 / 1000 / 2000 ms. |
 | `MOTOR_SHORT_SELLING_ENABLED` | no | `true`/`false` (default `false`). |
 | `MOTOR_STATE_DIR` | yes (production) | Durable idempotency claims (`idempotency.jsonl`, file-backed, fsynced before a claim is acknowledged — see `limits.py`). |
+
+### Environment variables — compliance gates (`compliance.py`, ALI-161)
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `MOTOR_MANIFEST_DIR` | yes, unless `MOTOR_MANIFEST_DISABLED` | Write-once manifest store (TODO(owner): WORM/object-lock storage in production). |
+| `MOTOR_SHARP_STRATEGY_MAP` | yes, unless `MOTOR_SHARP_DISABLED` | JSON file `{"<strategy_id>": "<SHARP proposal_id>"}`. |
+| `MOTOR_SHARP_ALLOW_CANARY` | no | `true` also admits `CANARY` (default: `PROMOTED` only). |
+| `MOTOR_MANIFEST_DISABLED`, `MOTOR_SHARP_DISABLED` | no | `1` turns a gate off. **Refused when `MOTOR_ENV` is production.** Dev compose sets only `MOTOR_SHARP_DISABLED`. |
+| `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | yes, if any gate is on | Audit DB as `afe_audit_app` (INSERT+SELECT). Manifest audit records and SHARP reads. |
+| `MOTOR_AUDIT_ACTOR` | no | Actor on `manifest.stored` records (default `execution-motor`). |
+
+The sharp-gate migrations (`zone-c/sharp-gate/sql`) are not mounted by compose; with the SHARP gate
+on, whoever deploys must apply them (see that package's README), or every order is refused.
 
 ### Attestation key registry (`MOTOR_ATTESTATION_KEYS_FILE`)
 

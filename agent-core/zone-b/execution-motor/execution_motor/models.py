@@ -65,6 +65,11 @@ class RejectReason(StrEnum):
     BROKER_REJECTED = "broker_rejected"
     SUBMIT_OUTCOME_UNKNOWN = "submit_outcome_unknown"
     INTERNAL_ERROR = "internal_error"
+    # ALI-161: compliance gates (see execution_motor/compliance.py)
+    CONTEXT_MISSING = "context_missing"
+    CONTEXT_MISMATCH = "context_mismatch"
+    STRATEGY_NOT_PROMOTED = "strategy_not_promoted"
+    MANIFEST_FAILED = "manifest_failed"
 
 
 class _Frozen(BaseModel):

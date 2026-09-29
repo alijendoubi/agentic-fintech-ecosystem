@@ -251,13 +251,23 @@ def test_build_sink_log_and_memory_disabled_paths() -> None:
 def test_build_sink_grpc_uses_generated_stubs(
     generated_dir: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """With the real generated stubs (execution_motor.proto included since ALI-161's
+    ExecuteWithContext), build_sink wires the Aegis -> execution-motor relay."""
     from cognitive_core.runner_config import RunnerSettings
-    from cognitive_core.sinks import AegisGrpcSink
+    from cognitive_core.sinks import AegisRelaySink
 
     monkeypatch.setattr(entrypoint, "open_aegis_channel", lambda host, port, env=None: object())
+    import grpc
+
+    # A real (lazy, never connected) channel: the generated stub needs its unary_unary method.
+    channel = grpc.insecure_channel("127.0.0.1:9")
+    monkeypatch.setattr(entrypoint, "open_motor_channel", lambda target, env=None: channel)
     settings = RunnerSettings.from_env({"AFE_PROTO_DIR": str(generated_dir)})
     monkeypatch.setattr(entrypoint, "load_generated_protos", lambda _d: _stub_protos(generated_dir))
-    assert isinstance(entrypoint.build_sink(settings), AegisGrpcSink)
+    try:
+        assert isinstance(entrypoint.build_sink(settings), AegisRelaySink)
+    finally:
+        channel.close()
 
 
 def _stub_protos(generated_dir: Any) -> dict[str, Any]:
@@ -308,7 +318,11 @@ def test_build_sink_wires_the_relay_once_motor_protos_are_available(
     monkeypatch.setattr(
         entrypoint,
         "load_generated_motor_protos",
-        lambda _d: {"execution_motor_pb2_grpc": _MotorGrpc},
+        lambda _d: {
+            "execution_motor_pb2_grpc": _MotorGrpc,
+            "execution_motor_pb2": object(),
+            "market_snapshot_pb2": object(),
+        },
     )
     settings = RunnerSettings.from_env({"AFE_PROTO_DIR": str(generated_dir)})
     assert isinstance(entrypoint.build_sink(settings), AegisRelaySink)

@@ -6,7 +6,14 @@ import pytest
 from grpc_tools import protoc
 
 PROTO_DIR = Path(__file__).resolve().parents[3] / "shared" / "proto"
-PROTOS = ("market_snapshot", "trade_signal", "order_request", "aegis")
+PROTOS = (
+    "market_snapshot",
+    "trade_signal",
+    "order_request",
+    "aegis",
+    "compliance_manifest",
+    "execution_motor",
+)
 
 
 @pytest.fixture(scope="session")

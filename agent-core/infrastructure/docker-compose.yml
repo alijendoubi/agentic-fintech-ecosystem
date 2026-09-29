@@ -265,13 +265,25 @@ services:
       # No defaults for the caps: an empty cap is a startup error in the motor (fail closed). TODO(owner): choose values.
       MOTOR_MAX_ORDER_NOTIONAL_USD: ${MOTOR_MAX_ORDER_NOTIONAL_USD:?set MOTOR_MAX_ORDER_NOTIONAL_USD}
       MOTOR_MAX_SESSION_NOTIONAL_USD: ${MOTOR_MAX_SESSION_NOTIONAL_USD:?set MOTOR_MAX_SESSION_NOTIONAL_USD}
+      # Compliance gates (ALI-161): one write-once manifest per released order, and the SHARP promotion
+      # gate. Both use the audit DB as the least-privilege app role (INSERT+SELECT only).
+      MOTOR_MANIFEST_DIR: /var/lib/afe-manifests
+      MOTOR_SHARP_STRATEGY_MAP: /cfg/sharp-strategies.json # owner-supplied {"<strategy_id>": "<proposal_id>"}
+      POSTGRES_HOST: postgres-audit
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${AUDIT_DB_NAME:-trading_audit}
+      POSTGRES_USER: afe_audit_app
+      POSTGRES_PASSWORD: ${AFE_AUDIT_APP_PASSWORD:?set AFE_AUDIT_APP_PASSWORD (>= 16 chars, differs from owner)}
     volumes:
       - execution-motor-state:/var/lib/execution-motor
+      - execution-motor-manifests:/var/lib/afe-manifests # TODO(owner): WORM/object-lock storage in production
       - ${MOTOR_TLS_DIR:-./secrets/motor-tls}:/tls:ro
       - ${MOTOR_AEGIS_TLS_DIR:-./secrets/motor-aegis-tls}:/aegis-tls:ro
       - ${MOTOR_CONFIG_DIR:-./secrets/motor-config}:/cfg:ro
     depends_on:
       aegis:
+        condition: service_healthy
+      postgres-audit:
         condition: service_healthy
     networks:
       - zone-ab-grpc
@@ -480,4 +492,5 @@ volumes:
   regime-models:
   aegis-state:
   execution-motor-state:
+  execution-motor-manifests:
   postgres-audit-data:

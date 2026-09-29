@@ -42,7 +42,7 @@ from .memory import (
 )
 from .models import DebateState, SignalStatus, TradeSignal
 from .runner_config import RunnerSettings
-from .sinks import SignalSink, SinkError
+from .sinks import DecisionContext, SignalSink, SinkError
 
 log = structlog.get_logger(__name__)
 
@@ -144,7 +144,8 @@ class CognitiveRunner:
         if self._halted():
             log.warning("signal_discarded_halted", signal_id=signal.signal_id, symbol=symbol)
             return CycleOutcome.HALTED
-        return await self._deliver(signal, recordable=is_recordable(final_state))
+        context = decision_context(debate_input, final_state, self._cognitive)
+        return await self._deliver(signal, recordable=is_recordable(final_state), context=context)
 
     # -- steps -----------------------------------------------------------------------
 
@@ -184,11 +185,17 @@ class CognitiveRunner:
             return None
         return apply_recall(state, recall)
 
-    async def _deliver(self, signal: TradeSignal, *, recordable: bool) -> CycleOutcome:
+    async def _deliver(
+        self,
+        signal: TradeSignal,
+        *,
+        recordable: bool,
+        context: DecisionContext | None = None,
+    ) -> CycleOutcome:
         actionable = signal.status != SignalStatus.SIGNAL_ABSTAIN
         if actionable or self._settings.emit_abstain:
             try:
-                receipt = await self._sink.send(signal)
+                receipt = await self._sink.send(signal, context)
             except SinkError as exc:
                 log.error(
                     "signal_send_failed",
@@ -244,3 +251,50 @@ class CognitiveRunner:
         exc = None if pump.cancelled() else pump.exception()
         if exc is not None:
             raise SourceError(f"context source failed: {type(exc).__name__}: {exc}") from exc
+
+
+def decision_context(
+    debate_input: DebateInput, final_state: DebateState | None, cognitive: CognitiveSettings
+) -> DecisionContext:
+    """The snapshot fields the debate used plus its own outputs (ALI-161, Compliance Manifest).
+
+    A failed graph (``final_state`` None) or a forced node leaves the texts empty or marked
+    forced; nothing is invented to fill the gap.
+    """
+    market = debate_input.market_context
+    blue = red = judge = ""
+    if final_state is not None:
+        if final_state.blue_thesis is not None:
+            thesis = final_state.blue_thesis
+            blue = f"{thesis.side.value}: {thesis.rationale}"
+            if thesis.key_factors:
+                blue += " | factors: " + "; ".join(thesis.key_factors)
+            if thesis.forced_completion:
+                blue += " | FORCED"
+        if final_state.red_challenge is not None:
+            challenge = final_state.red_challenge
+            red = "counter: " + "; ".join(challenge.counter_factors)
+            red += " | failure patterns: " + "; ".join(challenge.failure_patterns)
+            if challenge.forced_completion:
+                red += " | FORCED"
+        judge = final_state.debate_summary or ""
+    return DecisionContext(
+        symbol=market.symbol,
+        ingestion_ts_ns=debate_input.ingestion_ts_ns,
+        mid_price=market.mid_price,
+        z_score=market.z_score,
+        mad_score=market.mad_score,
+        order_flow_imbalance=market.ofi,
+        realized_volatility=market.realized_vol,
+        adv_30d=market.adv_30d,
+        regime=debate_input.regime.value,
+        blue_node_thesis=blue,
+        red_node_challenge=red,
+        judge_synthesis=judge,
+        model_versions={
+            "cognitive-core/blue": cognitive.blue_model,
+            "cognitive-core/red": cognitive.red_model,
+            "cognitive-core/judge": cognitive.judge_model,
+            "cognitive-core/compression": cognitive.compression_model,
+        },
+    )
