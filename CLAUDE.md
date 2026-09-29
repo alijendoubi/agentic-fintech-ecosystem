@@ -58,7 +58,8 @@ Implemented (see the README status table for what was and was not re-run):
 - `agent-core/zone-b/execution-motor/` - gRPC service over mTLS: attestation-verified execution, Alpaca paper client, mock broker
 - `agent-core/zone-b/refdata-bridge/` - Redis -> `Aegis.PushReferenceData` over mTLS
 - `agent-core/zone-c/audit-logger|compliance-manifest|sharp-gate/` - Python libraries (`afe_audit`, `afe_manifest`, `afe_sharp`)
-- `agent-core/zone-c/hitl-interface/` - Next.js terminal; the backend it talks to does not exist (`docs/api-contract.md` PROPOSED)
+- `agent-core/zone-c/hitl-interface/` - Next.js terminal (`docs/api-contract.md` PROPOSED)
+- `agent-core/zone-c/hitl-backend/` - REST backend for the terminal (ALI-156): Aegis ListHolds/GetHold/ResolveHold, relay to execution-motor, audited; single-approver holds only, no distress classifier (compose profile `hitl-backend`)
 - `agent-core/backtesting/` - engine, WFA, Monte Carlo, calibration machinery; synthetic data only, no calibrated result
 
 All specs are in `agent-core/docs/specs/`; open decisions are in `agent-core/docs/adr/` (ADR-003, ADR-004 are Proposed).

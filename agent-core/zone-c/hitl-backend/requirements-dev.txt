@@ -1,0 +1,6 @@
+-r requirements.txt
+grpcio-tools>=1.67,<2
+pytest>=8.3,<10
+pytest-cov>=6.0,<8
+ruff==0.16.8
+mypy>=1.13,<3

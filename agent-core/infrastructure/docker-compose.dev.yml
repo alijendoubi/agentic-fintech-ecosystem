@@ -134,3 +134,17 @@ services:
       - ./dev-tls/out/refdata-bridge:/aegis-tls:ro
     networks:
       - dev-host
+
+  # hitl-backend (ALI-156), started with `--profile hitl-backend`. Dev only: no distress classifier,
+  # so HITL_UNSCORED_DEV sends a 0.0 "unscored" value (refused in production). CN hitl-backend has
+  # role hold-resolver in dev-tls/identities.json.
+  hitl-backend:
+    environment:
+      HITL_ENV: development
+      HITL_UNSCORED_DEV: "1"
+    volumes: !override
+      - ./dev-tls/out/hitl-backend:/aegis-tls:ro
+    ports:
+      - "127.0.0.1:8090:8090"
+    networks:
+      - dev-host

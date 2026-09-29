@@ -1,6 +1,7 @@
 # HITL backend REST contract (ASSUMED, PROPOSED)
 
-Status: **PROPOSED**. No service implements this yet. It is the contract the operator terminal
+Status: **PROPOSED**. Implemented by `zone-c/hitl-backend` (ALI-156) for single-approver holds; see its README for
+what is not implemented yet (signed second approvals, a distress classifier, terminal-to-backend TLS). It is the contract the operator terminal
 (`zone-c/hitl-interface`) was built and tested against (`HttpHitlApiClient`, `MockHitlApiClient`).
 The owner of the HITL backend must confirm or change it (`TODO(owner)`).
 
