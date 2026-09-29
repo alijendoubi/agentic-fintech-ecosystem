@@ -100,9 +100,17 @@ hardcodes the `dev-tls/out/...` paths as bind-mount sources, same idea as the
   `docker-compose.dev.yml` with the same mount/env-var pattern ready to
   uncomment once those services exist.
 
+* `questdb` gets `dev-tls/out/questdb-ilp` mounted at `/var/lib/questdb/ilp-auth`
+  (ALI-20): `auth.conf` holds the PUBLIC half of a throwaway P-256 key for the
+  ILP writer `sensory-array`. The private half is `out/questdb-ilp/ilp-token`;
+  compose reads it from `.env` only, so set `QUESTDB_ILP_AUTH_KEY_ID=sensory-array`
+  and `QUESTDB_ILP_AUTH_TOKEN=<content of ilp-token>` there (and again after every
+  re-run of the script, which rotates the key).
+
 You still need to fill in the other `${VAR:?}` secrets in `.env` (Bedrock
 region, `MODEL_HMAC_KEY`, `POLYGON_API_KEY`, audit DB passwords, HITL secret,
-etc. — see `.env.example`); TLS is the only piece this directory solves.
+QuestDB HTTP/PG credentials, `CHROMA_AUTH_TOKEN`, etc. — see `.env.example`);
+TLS and the QuestDB ILP key are the only pieces this directory solves.
 
 ## Do not
 

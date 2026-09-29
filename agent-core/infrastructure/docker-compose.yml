@@ -1,6 +1,7 @@
 # Three-zone trading infrastructure (local / staging shape, NOT a production deployment).
 #
-#   Zone A  thinking   : cognitive-core, regime-detector, vector-db (Chroma). No general internet.
+#   Zone A  thinking   : cognitive-core, regime-detector, vector-db (token proxy) + vector-db-store (Chroma).
+#                        No general internet.
 #   Zone B  execution  : sensory-array, aegis, execution-motor, broker-gateway, refdata-bridge.
 #   Zone C  compliance : postgres-audit (hash-chained audit DB), hitl-interface.
 #
@@ -18,6 +19,13 @@
 #     docker-compose.dev.yml for local development only.
 #   * Images are pinned (no :latest). Health checks that need no curl/wget use bash /dev/tcp because the
 #     chroma and questdb images ship neither curl nor wget (verified on the pinned tags).
+#   * Resource limits (owner decision, ALI-20): every service has mem_limit, cpus and pids_limit from
+#     required <SERVICE>_MEM_LIMIT / <SERVICE>_CPUS / <SERVICE>_PIDS_LIMIT variables with no defaults.
+#     .env.example carries PROPOSED, unprofiled starting values. pids_limit counts threads too.
+#   * Data stores authenticate every client (ALI-20): Redis per-service ACL users, QuestDB HTTP basic
+#     auth + PG-wire credentials + ILP ECDSA key, Chroma behind a bearer-token proxy, Postgres roles.
+#   * Third-party images run with cap_drop ALL, no-new-privileges and, where verified to start,
+#     read_only + tmpfs and a fixed non-root uid (so the entrypoints never need chown/setuid caps).
 #
 # Requires Docker Compose >= 2.24 (the dev override uses the !reset tag).
 
@@ -26,6 +34,8 @@ name: afe
 networks:
   zone-a-internal:
     internal: true # Zone A: no route out of the host
+  zone-a-chroma:
+    internal: true # Chroma (vector-db-store) <-> its token proxy (vector-db) only
   zone-ab-grpc:
     internal: true # Zone A <-> B (gRPC to Aegis, Redis pub/sub, QuestDB)
   zone-bc-audit:
@@ -46,6 +56,9 @@ services:
       context: ..
       dockerfile: zone-a/cognitive-core/Dockerfile
     container_name: afe-cognitive-core
+    mem_limit: ${COGNITIVE_CORE_MEM_LIMIT:?set COGNITIVE_CORE_MEM_LIMIT (see .env.example)}
+    cpus: ${COGNITIVE_CORE_CPUS:?set COGNITIVE_CORE_CPUS (see .env.example)}
+    pids_limit: ${COGNITIVE_CORE_PIDS_LIMIT:?set COGNITIVE_CORE_PIDS_LIMIT (see .env.example)}
     environment:
       PYTHONUNBUFFERED: "1"
       # LLM access is AWS Bedrock (ADR-002, IAM role auth). Region has no safe default.
@@ -58,6 +71,7 @@ services:
       COGNITIVE_MEMORY_ENABLED: "true"
       CHROMA_HOST: vector-db
       CHROMA_PORT: "8000"
+      CHROMA_AUTH_TOKEN: ${CHROMA_AUTH_TOKEN:?set CHROMA_AUTH_TOKEN (hex, >= 32 chars)}
       # 0 => every debate abstains. TODO(owner): replace with the position sizer before live use.
       COGNITIVE_ORDER_QUANTITY: ${COGNITIVE_ORDER_QUANTITY:-0}
       # Position sizer (ALI-160). vol_scaled needs all three values below; no defaults (startup fails).
@@ -86,9 +100,14 @@ services:
       context: ../zone-a/regime-detector
       dockerfile: Dockerfile
     container_name: afe-regime-detector
+    mem_limit: ${REGIME_DETECTOR_MEM_LIMIT:?set REGIME_DETECTOR_MEM_LIMIT (see .env.example)}
+    cpus: ${REGIME_DETECTOR_CPUS:?set REGIME_DETECTOR_CPUS (see .env.example)}
+    pids_limit: ${REGIME_DETECTOR_PIDS_LIMIT:?set REGIME_DETECTOR_PIDS_LIMIT (see .env.example)}
     environment:
       QUESTDB_HOST: questdb
       QUESTDB_PORT: "9000"
+      QUESTDB_HTTP_USER: ${QUESTDB_HTTP_USER:?set QUESTDB_HTTP_USER}
+      QUESTDB_HTTP_PASSWORD: ${QUESTDB_HTTP_PASSWORD:?set QUESTDB_HTTP_PASSWORD (>= 16 chars)}
       REDIS_URL: redis://regime-detector:${REDIS_REGIME_PASSWORD:?}@redis:6379
       MODEL_DIR: /app/models
       # Without a key (>= 32 chars) models are trained in memory only and never persisted.
@@ -110,14 +129,70 @@ services:
     restart: unless-stopped
     # HEALTHCHECK is defined in the image (heartbeat file).
 
+  # vector-db is a bearer-token gate (nginx) in front of Chroma (ALI-20). The pinned Chroma 1.5.9 (Rust
+  # server) ignores CHROMA_SERVER_AUTHN_* (verified 2026-09-29: collections listed with no token), so
+  # Chroma itself (vector-db-store) sits alone on zone-a-chroma and only this proxy reaches it. Clients
+  # keep CHROMA_HOST=vector-db and send "Authorization: Bearer ${CHROMA_AUTH_TOKEN}" (afe_vector_memory).
   vector-db:
-    # Keep the tag on the same major.minor as the chromadb client pin in zone-a/vector-db/requirements.txt.
-    image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+    image: nginx:1.28.3-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
     container_name: afe-vector-db
+    mem_limit: ${VECTOR_DB_MEM_LIMIT:?set VECTOR_DB_MEM_LIMIT (see .env.example)}
+    cpus: ${VECTOR_DB_CPUS:?set VECTOR_DB_CPUS (see .env.example)}
+    pids_limit: ${VECTOR_DB_PIDS_LIMIT:?set VECTOR_DB_PIDS_LIMIT (see .env.example)}
+    user: "101:101" # nginx; no root master, so no CAP_SETUID/SETGID needed (the `user` directive is ignored)
+    environment:
+      CHROMA_AUTH_TOKEN: ${CHROMA_AUTH_TOKEN:?set CHROMA_AUTH_TOKEN (hex, >= 32 chars; openssl rand -hex 32)}
+      NGINX_ENVSUBST_FILTER: CHROMA_AUTH_TOKEN # render only this variable into the template
     volumes:
-      - chroma-data:/data # persist_path in the image config is /data
+      - ./vector-db-proxy:/etc/nginx/templates:ro
+    tmpfs:
+      - /etc/nginx/conf.d:uid=101,gid=101,mode=0755 # rendered template
+      - /var/cache/nginx:uid=101,gid=101,mode=0700
+      - /run:uid=101,gid=101,mode=0755 # nginx.pid
+      - /tmp:uid=101,gid=101,mode=0700
+    read_only: true # verified 2026-09-29 with cap_drop ALL and the tmpfs mounts above
+    depends_on:
+      vector-db-store:
+        condition: service_healthy
     networks:
       - zone-a-internal
+      - zone-a-chroma
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      # Goes through the token check and on to Chroma's v2 heartbeat (busybox wget is in the image).
+      test:
+        - CMD-SHELL
+        - 'wget -q -O /dev/null --header "Authorization: Bearer $$CHROMA_AUTH_TOKEN" http://127.0.0.1:8000/api/v2/heartbeat'
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  vector-db-store:
+    # Keep the tag on the same major.minor as the chromadb client pin in zone-a/vector-db/requirements.txt.
+    image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+    container_name: afe-vector-db-store
+    mem_limit: ${VECTOR_DB_STORE_MEM_LIMIT:?set VECTOR_DB_STORE_MEM_LIMIT (see .env.example)}
+    cpus: ${VECTOR_DB_STORE_CPUS:?set VECTOR_DB_STORE_CPUS (see .env.example)}
+    pids_limit: ${VECTOR_DB_STORE_PIDS_LIMIT:?set VECTOR_DB_STORE_PIDS_LIMIT (see .env.example)}
+    volumes:
+      - chroma-data:/data # persist_path in the image config is /data
+    tmpfs:
+      - /tmp
+    # Verified 2026-09-29: starts and serves reads/writes with read_only + cap_drop ALL. It still runs as
+    # root inside the container (the image has no other user; chroma-data is root-owned).
+    # TODO(owner): run as a non-root uid (needs a chown of the existing chroma-data volume).
+    read_only: true
+    networks:
+      - zone-a-chroma # only the vector-db proxy is on this network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
       # /api/v1 is gone in 1.x (410); v2 heartbeat verified on 1.5.9. No curl/wget in the image.
@@ -139,11 +214,20 @@ services:
     build:
       context: ../zone-b/sensory-array
       dockerfile: Dockerfile
+      args:
+        CARGO_FEATURES: ilp-secure # ILP ECDSA auth to QuestDB (src/ilp_secure.rs)
     container_name: afe-sensory-array
+    mem_limit: ${SENSORY_ARRAY_MEM_LIMIT:?set SENSORY_ARRAY_MEM_LIMIT (see .env.example)}
+    cpus: ${SENSORY_ARRAY_CPUS:?set SENSORY_ARRAY_CPUS (see .env.example)}
+    pids_limit: ${SENSORY_ARRAY_PIDS_LIMIT:?set SENSORY_ARRAY_PIDS_LIMIT (see .env.example)}
     environment:
       POLYGON_API_KEY: ${POLYGON_API_KEY:?set POLYGON_API_KEY}
       QUESTDB_ILP_HOST: questdb
       QUESTDB_ILP_PORT: "9009"
+      # ALI-20: ECDSA challenge/response on the ILP socket; QuestDB drops unauthenticated writers
+      # (verified against questdb 8.0.3, tests/live_sinks.rs). No TLS on this hop (internal network).
+      QUESTDB_ILP_AUTH_KEY_ID: ${QUESTDB_ILP_AUTH_KEY_ID:?set QUESTDB_ILP_AUTH_KEY_ID (the kid in auth.conf)}
+      QUESTDB_ILP_AUTH_TOKEN: ${QUESTDB_ILP_AUTH_TOKEN:?set QUESTDB_ILP_AUTH_TOKEN (base64url P-256 private scalar)}
       REDIS_URL: redis://sensory-array:${REDIS_SENSORY_PASSWORD:?}@redis:6379
       FRESHNESS_L2_MS: "1"
       FRESHNESS_PRINT_MS: "5"
@@ -172,6 +256,9 @@ services:
         AEGIS_FEATURES: ${AEGIS_FEATURES:-pkcs11}
     image: afe-aegis:local # also used by aegis-supervisor
     container_name: afe-aegis
+    mem_limit: ${AEGIS_MEM_LIMIT:?set AEGIS_MEM_LIMIT (see .env.example)}
+    cpus: ${AEGIS_CPUS:?set AEGIS_CPUS (see .env.example)}
+    pids_limit: ${AEGIS_PIDS_LIMIT:?set AEGIS_PIDS_LIMIT (see .env.example)}
     environment:
       AEGIS_ENV: production
       AEGIS_LISTEN_ADDR: 0.0.0.0:50051
@@ -211,6 +298,9 @@ services:
     image: afe-aegis:local
     command: ["supervisor"]
     container_name: afe-aegis-supervisor
+    mem_limit: ${AEGIS_SUPERVISOR_MEM_LIMIT:?set AEGIS_SUPERVISOR_MEM_LIMIT (see .env.example)}
+    cpus: ${AEGIS_SUPERVISOR_CPUS:?set AEGIS_SUPERVISOR_CPUS (see .env.example)}
+    pids_limit: ${AEGIS_SUPERVISOR_PIDS_LIMIT:?set AEGIS_SUPERVISOR_PIDS_LIMIT (see .env.example)}
     environment:
       AEGIS_ENV: production
       AEGIS_SUPERVISOR_TARGET: https://aegis:50051
@@ -255,6 +345,9 @@ services:
       context: ..
       dockerfile: zone-b/execution-motor/Dockerfile
     container_name: afe-execution-motor
+    mem_limit: ${EXECUTION_MOTOR_MEM_LIMIT:?set EXECUTION_MOTOR_MEM_LIMIT (see .env.example)}
+    cpus: ${EXECUTION_MOTOR_CPUS:?set EXECUTION_MOTOR_CPUS (see .env.example)}
+    pids_limit: ${EXECUTION_MOTOR_PIDS_LIMIT:?set EXECUTION_MOTOR_PIDS_LIMIT (see .env.example)}
     environment:
       PYTHONUNBUFFERED: "1"
       MOTOR_ENV: production
@@ -319,6 +412,9 @@ services:
       context: ..
       dockerfile: zone-b/broker-gateway/Dockerfile
     container_name: afe-broker-gateway
+    mem_limit: ${BROKER_GATEWAY_MEM_LIMIT:?set BROKER_GATEWAY_MEM_LIMIT (see .env.example)}
+    cpus: ${BROKER_GATEWAY_CPUS:?set BROKER_GATEWAY_CPUS (see .env.example)}
+    pids_limit: ${BROKER_GATEWAY_PIDS_LIMIT:?set BROKER_GATEWAY_PIDS_LIMIT (see .env.example)}
     environment:
       GATEWAY_ENV: production
       GATEWAY_LISTEN_ADDR: 0.0.0.0:50071
@@ -352,6 +448,9 @@ services:
       context: ..
       dockerfile: zone-b/refdata-bridge/Dockerfile
     container_name: afe-refdata-bridge
+    mem_limit: ${REFDATA_BRIDGE_MEM_LIMIT:?set REFDATA_BRIDGE_MEM_LIMIT (see .env.example)}
+    cpus: ${REFDATA_BRIDGE_CPUS:?set REFDATA_BRIDGE_CPUS (see .env.example)}
+    pids_limit: ${REFDATA_BRIDGE_PIDS_LIMIT:?set REFDATA_BRIDGE_PIDS_LIMIT (see .env.example)}
     environment:
       PYTHONUNBUFFERED: "1"
       ENVIRONMENT: production
@@ -384,23 +483,49 @@ services:
   questdb:
     image: questdb/questdb:8.0.3@sha256:1178c2d0fdbeece163078b56b88c185c269b7c3ad04c3dce6513dad868a3c127
     container_name: afe-questdb
+    mem_limit: ${QUESTDB_MEM_LIMIT:?set QUESTDB_MEM_LIMIT (see .env.example)}
+    cpus: ${QUESTDB_CPUS:?set QUESTDB_CPUS (see .env.example)}
+    pids_limit: ${QUESTDB_PIDS_LIMIT:?set QUESTDB_PIDS_LIMIT (see .env.example)}
+    # questdb (uid 10001): with a fixed non-root user the entrypoint skips its chown + gosu step, so no
+    # capability is needed. The image's own data dir and the volume are owned by that uid.
+    user: "10001:10001"
     environment:
       QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE: "4194304"
       QDB_TELEMETRY_ENABLED: "false"
+      # ALI-20 auth (all verified on 8.0.3, 2026-09-29): HTTP REST/console basic auth (401 without it),
+      # PG wire credentials (the default admin/quest is refused), ILP/TCP ECDSA keys from auth.conf.
+      QDB_HTTP_USER: ${QUESTDB_HTTP_USER:?set QUESTDB_HTTP_USER}
+      QDB_HTTP_PASSWORD: ${QUESTDB_HTTP_PASSWORD:?set QUESTDB_HTTP_PASSWORD (>= 16 chars)}
+      QDB_PG_USER: ${QUESTDB_PG_USER:?set QUESTDB_PG_USER}
+      QDB_PG_PASSWORD: ${QUESTDB_PG_PASSWORD:?set QUESTDB_PG_PASSWORD (>= 16 chars)}
+      # Resolved against the data root (/var/lib/questdb). A missing file stops QuestDB (fail closed).
+      QDB_LINE_TCP_AUTH_DB_PATH: ilp-auth/auth.conf
+      # Only /status on the min health server (9003) skips auth; it reveals liveness, nothing else.
+      QDB_HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED: "false"
     volumes:
       - questdb-data:/var/lib/questdb # image WORKDIR / data root (not /root/.questdb)
+      # auth.conf: `<kid> ec-p-256-sha256 <x> <y>` (public keys only). dev-tls/generate-dev-certs.sh
+      # shows the format; production keys are owner-supplied.
+      - ${QUESTDB_ILP_AUTH_DIR:-./secrets/questdb-ilp-auth}:/var/lib/questdb/ilp-auth:ro
+    tmpfs:
+      - /tmp:exec,uid=10001,gid=10001,mode=0700 # JNI library is unpacked here, so it must allow exec
+    read_only: true # verified 2026-09-29 with cap_drop ALL and the tmpfs above
     networks:
       - zone-a-internal
       - zone-ab-grpc
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
-      # No curl/wget in the image. /exec on the HTTP port (9000) answers 200 when the server is up.
+      # No curl/wget in the image. The min health server (9003) answers "Status: Healthy" with 200.
       test:
         - CMD
         - bash
         - -c
         - |-
-          exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /exec?query=select%%201 HTTP/1.0\r\n\r\n' >&3 && read -r line <&3 && [[ $$line == *" 200 "* ]]
+          exec 3<>/dev/tcp/127.0.0.1/9003 && printf 'GET /status HTTP/1.0\r\n\r\n' >&3 && read -r line <&3 && [[ $$line == *" 200 "* ]]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -413,6 +538,9 @@ services:
   redis:
     image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
     container_name: afe-redis
+    mem_limit: ${REDIS_MEM_LIMIT:?set REDIS_MEM_LIMIT (see .env.example)}
+    cpus: ${REDIS_CPUS:?set REDIS_CPUS (see .env.example)}
+    pids_limit: ${REDIS_PIDS_LIMIT:?set REDIS_PIDS_LIMIT (see .env.example)}
     command:
       - redis-server
       - --appendonly
@@ -461,10 +589,19 @@ services:
       - "+time"
     environment:
       REDISCLI_AUTH: ${REDIS_HEALTHCHECK_PASSWORD:?set REDIS_HEALTHCHECK_PASSWORD (hex)}
+    # redis (uid 999, gid 1000): a fixed non-root user makes the entrypoint skip chown + su-exec.
+    # Verified 2026-09-29: starts, writes the AOF and answers the ACL healthcheck with read_only +
+    # cap_drop ALL. REDIS_MEM_LIMIT must stay above --maxmemory (512mb) plus Redis overhead.
+    user: "999:1000"
+    read_only: true
     volumes:
       - redis-data:/data
     networks:
       - zone-ab-grpc
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "--user", "healthcheck", "--no-auth-warning", "ping"]
@@ -481,6 +618,9 @@ services:
   postgres-audit:
     image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
     container_name: afe-postgres-audit
+    mem_limit: ${POSTGRES_AUDIT_MEM_LIMIT:?set POSTGRES_AUDIT_MEM_LIMIT (see .env.example)}
+    cpus: ${POSTGRES_AUDIT_CPUS:?set POSTGRES_AUDIT_CPUS (see .env.example)}
+    pids_limit: ${POSTGRES_AUDIT_PIDS_LIMIT:?set POSTGRES_AUDIT_PIDS_LIMIT (see .env.example)}
     environment:
       # Bootstrap superuser: used by the init script only. Services connect as afe_audit_app.
       POSTGRES_DB: ${AUDIT_DB_NAME:-trading_audit}
@@ -494,12 +634,24 @@ services:
       -c wal_level=logical
       -c max_wal_senders=3
       -c max_replication_slots=3
+    # postgres (uid 70 on alpine): a fixed non-root user makes the entrypoint skip chown + su-exec.
+    # Verified 2026-09-29: first init (incl. init-audit-db.sh roles) works with read_only + cap_drop
+    # ALL, and afe_audit_app can log in.
+    user: "70:70"
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql:uid=70,gid=70,mode=0775 # unix socket + lock file
+      - /tmp:uid=70,gid=70,mode=1777
     volumes:
       - postgres-audit-data:/var/lib/postgresql/data
       # The image runs the top-level *.sh on first initialisation only (files must have LF endings).
       - ../zone-c/audit-logger/sql:/docker-entrypoint-initdb.d:ro
     networks:
       - zone-bc-audit
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -518,6 +670,9 @@ services:
       context: ..
       dockerfile: zone-c/hitl-backend/Dockerfile
     container_name: afe-hitl-backend
+    mem_limit: ${HITL_BACKEND_MEM_LIMIT:?set HITL_BACKEND_MEM_LIMIT (see .env.example)}
+    cpus: ${HITL_BACKEND_CPUS:?set HITL_BACKEND_CPUS (see .env.example)}
+    pids_limit: ${HITL_BACKEND_PIDS_LIMIT:?set HITL_BACKEND_PIDS_LIMIT (see .env.example)}
     environment:
       HITL_ENV: production
       HITL_BACKEND_LISTEN: 0.0.0.0:8090
@@ -562,6 +717,9 @@ services:
       context: ../zone-c/hitl-interface
       dockerfile: Dockerfile
     container_name: afe-hitl-interface
+    mem_limit: ${HITL_INTERFACE_MEM_LIMIT:?set HITL_INTERFACE_MEM_LIMIT (see .env.example)}
+    cpus: ${HITL_INTERFACE_CPUS:?set HITL_INTERFACE_CPUS (see .env.example)}
+    pids_limit: ${HITL_INTERFACE_PIDS_LIMIT:?set HITL_INTERFACE_PIDS_LIMIT (see .env.example)}
     environment:
       # Server-side variables only; there are no NEXT_PUBLIC_* variables. The app exits at startup if the
       # secret is unset, < 32 chars or a placeholder.

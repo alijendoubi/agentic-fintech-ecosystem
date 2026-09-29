@@ -9,6 +9,9 @@ Column names follow what the Rust sensory-array writes
 (``questdb_writer.rs``): ``mid_price``, ``spread``, ``order_flow_imbalance``,
 ``is_stale``. The designated timestamp column is ILP's default ``timestamp``
 and is configurable via ``QUESTDB_TS_COLUMN``.
+
+Auth (ALI-20): with ``QUESTDB_HTTP_USER``/``QUESTDB_HTTP_PASSWORD`` set, every request carries
+HTTP basic auth; a 401 is a failure like any other non-200 (``None``, never a guess).
 """
 
 from __future__ import annotations
@@ -117,7 +120,7 @@ class QuestDbClient:
     async def _http_get_json(self, url: str, params: Mapping[str, str]) -> Mapping[str, Any]:
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=self._settings.questdb_timeout_s)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession(timeout=timeout, auth=_basic_auth(self._settings))
         try:
             async with self._session.get(url, params=dict(params)) as response:
                 if response.status != 200:
@@ -128,6 +131,13 @@ class QuestDbClient:
         if not isinstance(body, dict):
             raise QuestDbError("response is not a JSON object")
         return body
+
+
+def _basic_auth(settings: Settings) -> aiohttp.BasicAuth | None:
+    """HTTP basic auth for QuestDB (ALI-20); config guarantees user and password come together."""
+    if settings.questdb_http_user is None or settings.questdb_http_password is None:
+        return None
+    return aiohttp.BasicAuth(settings.questdb_http_user, settings.questdb_http_password)
 
 
 def _dataset(payload: Mapping[str, Any]) -> Sequence[Sequence[Any]]:

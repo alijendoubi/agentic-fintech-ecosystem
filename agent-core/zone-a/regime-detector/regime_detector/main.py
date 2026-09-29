@@ -67,6 +67,7 @@ async def amain(settings: Settings) -> int:
     log.info(
         "regime_detector_starting",
         questdb=f"{settings.questdb_host}:{settings.questdb_port}",
+        questdb_auth=settings.questdb_http_user is not None,
         channel=settings.redis_channel,
         model_dir=str(settings.model_dir),
     )

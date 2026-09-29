@@ -6,6 +6,12 @@
 //!   cargo test --test live_sinks -- --ignored --test-threads=1
 //! ```
 //! (`QUESTDB_TEST_ILP_PORT` / `QUESTDB_TEST_HTTP_PORT` default to 9009 / 9000.)
+//!
+//! Against a QuestDB with auth enabled (ALI-20, the compose configuration) also set
+//! `QUESTDB_TEST_HTTP_USER` / `QUESTDB_TEST_HTTP_PASSWORD` (HTTP basic auth for the
+//! verification queries) and `QUESTDB_TEST_ILP_AUTH_KEY_ID` / `QUESTDB_TEST_ILP_AUTH_TOKEN`
+//! (ILP ECDSA auth; needs `--features ilp-secure`). With the ILP key set,
+//! `questdb_drops_unauthenticated_ilp` checks that a writer WITHOUT the key lands nothing.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -201,11 +207,102 @@ fn urlencode(q: &str) -> String {
         .collect()
 }
 
+/// Standard base64 with padding (RFC 4648), for the HTTP basic-auth header only.
+fn base64_std(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in input.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// A valid symbol (`[A-Z]{10}`) unique per run, so rows left by an earlier run
+/// (or by a writer with other credentials) can never satisfy a later assertion.
+fn unique_symbol(prefix: &str) -> String {
+    let digits = format!("{:08}", unix_ns().rem_euclid(100_000_000));
+    let tail: String = digits
+        .bytes()
+        .map(|d| (b'A' + (d - b'0')) as char)
+        .collect();
+    format!("{prefix}{tail}")
+}
+
+fn optional_env(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.is_empty())
+}
+
+fn questdb_auth_header() -> String {
+    match (
+        optional_env("QUESTDB_TEST_HTTP_USER"),
+        optional_env("QUESTDB_TEST_HTTP_PASSWORD"),
+    ) {
+        (Some(user), Some(password)) => format!(
+            "Authorization: Basic {}\r\n",
+            base64_std(format!("{user}:{password}").as_bytes())
+        ),
+        _ => String::new(),
+    }
+}
+
+fn test_secure_ilp() -> SecureIlp {
+    SecureIlp {
+        key_id: optional_env("QUESTDB_TEST_ILP_AUTH_KEY_ID"),
+        token: optional_env("QUESTDB_TEST_ILP_AUTH_TOKEN"),
+        ..SecureIlp::default()
+    }
+}
+
+fn questdb_ports() -> (u16, u16) {
+    let ilp: u16 = std::env::var("QUESTDB_TEST_ILP_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9009);
+    let http: u16 = std::env::var("QUESTDB_TEST_HTTP_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9000);
+    (ilp, http)
+}
+
+fn writer_settings(host: &str, ilp: u16, secure: SecureIlp) -> WriterSettings {
+    WriterSettings {
+        host: host.to_string(),
+        port: ilp,
+        connect_timeout: Duration::from_secs(2),
+        write_timeout: Duration::from_secs(2),
+        linger: Duration::from_millis(10),
+        batch_max: 256,
+        backoff_base: Duration::from_millis(100),
+        backoff_max: Duration::from_secs(2),
+        secure,
+    }
+}
+
+async fn questdb_count(host: &str, http: u16, symbol: &str) -> Option<i64> {
+    let sql = format!("select count() from market_data where symbol = '{symbol}'");
+    let v = questdb_query(host, http, &sql).await?;
+    v["dataset"][0][0].as_i64()
+}
+
 async fn questdb_query(host: &str, http_port: u16, sql: &str) -> Option<serde_json::Value> {
     let mut s = TcpStream::connect((host, http_port)).await.ok()?;
     let req = format!(
-        "GET /exec?query={} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n",
-        urlencode(sql)
+        "GET /exec?query={} HTTP/1.1\r\nHost: {host}\r\n{}Connection: close\r\n\r\n",
+        urlencode(sql),
+        questdb_auth_header()
     );
     s.write_all(req.as_bytes()).await.ok()?;
     let mut buf = Vec::new();
@@ -220,29 +317,12 @@ async fn questdb_query(host: &str, http_port: u16, sql: &str) -> Option<serde_js
 #[ignore = "needs QUESTDB_TEST_HOST"]
 async fn questdb_receives_spec_schema_rows() {
     let host = env("QUESTDB_TEST_HOST");
-    let ilp: u16 = std::env::var("QUESTDB_TEST_ILP_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(9009);
-    let http: u16 = std::env::var("QUESTDB_TEST_HTTP_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(9000);
+    let (ilp, http) = questdb_ports();
 
     let queue: SnapshotQueue = Arc::new(BoundedQueue::new(1024));
     let metrics = Arc::new(Metrics::default());
     let (tx, rx) = tokio::sync::watch::channel(false);
-    let settings = WriterSettings {
-        host: host.clone(),
-        port: ilp,
-        connect_timeout: Duration::from_secs(2),
-        write_timeout: Duration::from_secs(2),
-        linger: Duration::from_millis(10),
-        batch_max: 256,
-        backoff_base: Duration::from_millis(100),
-        backoff_max: Duration::from_secs(2),
-        secure: SecureIlp::default(),
-    };
+    let settings = writer_settings(&host, ilp, test_secure_ilp());
     let task = tokio::spawn(run_writer(
         settings,
         Arc::clone(&queue),
@@ -250,16 +330,16 @@ async fn questdb_receives_spec_schema_rows() {
         rx,
     ));
 
+    let symbol = unique_symbol("LT");
     let base = unix_ns();
     for i in 0..50 {
-        queue.push(Arc::new(sample_snapshot("LIVETEST", base + i)));
+        queue.push(Arc::new(sample_snapshot(&symbol, base + i)));
     }
     let mut count = 0_i64;
     let deadline = Instant::now() + Duration::from_secs(20);
     while count < 50 && Instant::now() < deadline {
-        let sql = "select count() from market_data where symbol = 'LIVETEST'";
-        if let Some(v) = questdb_query(&host, http, sql).await {
-            count = v["dataset"][0][0].as_i64().unwrap_or(0);
+        if let Some(n) = questdb_count(&host, http, &symbol).await {
+            count = n;
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
@@ -293,4 +373,38 @@ async fn questdb_receives_spec_schema_rows() {
     tx.send(true).expect("send");
     task.await.expect("join");
     assert_eq!(Metrics::get(&metrics.ilp_invalid), 0);
+}
+
+#[tokio::test]
+#[ignore = "needs QUESTDB_TEST_HOST and QUESTDB_TEST_ILP_AUTH_KEY_ID (auth-enabled QuestDB)"]
+async fn questdb_drops_unauthenticated_ilp() {
+    let host = env("QUESTDB_TEST_HOST");
+    env("QUESTDB_TEST_ILP_AUTH_KEY_ID"); // only meaningful against an auth-enabled server
+    let (ilp, http) = questdb_ports();
+    // The HTTP side must answer, or "0 rows" below would prove nothing.
+    assert!(
+        questdb_query(&host, http, "select 1").await.is_some(),
+        "QuestDB HTTP must answer (check QUESTDB_TEST_HTTP_USER/PASSWORD)"
+    );
+
+    let queue: SnapshotQueue = Arc::new(BoundedQueue::new(1024));
+    let metrics = Arc::new(Metrics::default());
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(run_writer(
+        writer_settings(&host, ilp, SecureIlp::default()),
+        Arc::clone(&queue),
+        Arc::clone(&metrics),
+        rx,
+    ));
+    let symbol = unique_symbol("NA");
+    let base = unix_ns();
+    for i in 0..20 {
+        queue.push(Arc::new(sample_snapshot(&symbol, base + i)));
+    }
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    tx.send(true).expect("send");
+    task.await.expect("join");
+    // Either the table does not exist yet (None) or it holds no unauthenticated row.
+    let count = questdb_count(&host, http, &symbol).await.unwrap_or(0);
+    assert_eq!(count, 0, "unauthenticated ILP rows must not land");
 }

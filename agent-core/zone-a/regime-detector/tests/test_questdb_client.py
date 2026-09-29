@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping
 from typing import Any
 
@@ -188,3 +189,51 @@ async def test_http_error_status_and_unreachable_fail_closed() -> None:
         assert await dead.list_symbols() is None
     finally:
         await dead.close()
+
+
+@pytest.mark.asyncio
+async def test_basic_auth_header_is_sent_when_configured() -> None:
+    """ALI-20: QuestDB runs with HTTP basic auth in compose; the client must authenticate."""
+    seen: list[str | None] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen.append(request.headers.get("Authorization"))
+        return web.json_response({"columns": COLUMNS, "dataset": []})
+
+    app = web.Application()
+    app.router.add_get("/exec", handler)
+    async with TestServer(app) as server:
+        settings = _settings(
+            QUESTDB_HOST="127.0.0.1",
+            QUESTDB_PORT=str(server.port),
+            QUESTDB_HTTP_USER="afe_reader",
+            QUESTDB_HTTP_PASSWORD="Zq8vN2kLx7Rt4bWm",
+        )
+        client = QuestDbClient(settings)
+        try:
+            assert await client.list_symbols() == []
+            assert await client.fetch_rows("AAPL") is None  # empty dataset
+        finally:
+            await client.close()
+    expected = "Basic " + base64.b64encode(b"afe_reader:Zq8vN2kLx7Rt4bWm").decode("ascii")
+    assert seen == [expected, expected]
+
+
+@pytest.mark.asyncio
+async def test_no_auth_header_without_credentials_and_401_fails_closed() -> None:
+    seen: list[str | None] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen.append(request.headers.get("Authorization"))
+        return web.Response(status=401, text="Unauthorized")
+
+    app = web.Application()
+    app.router.add_get("/exec", handler)
+    async with TestServer(app) as server:
+        client = QuestDbClient(_settings(QUESTDB_HOST="127.0.0.1", QUESTDB_PORT=str(server.port)))
+        try:
+            assert await client.list_symbols() is None
+            assert await client.fetch_rows("AAPL") is None
+        finally:
+            await client.close()
+    assert seen == [None, None]

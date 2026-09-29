@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Preflight for .env before `docker compose up` (ALI-21). `docker compose config` only proves a
 # required variable is non-empty; this also refuses template values, short secrets, non-hex Redis
-# passwords and a shared audit password. Services re-check their own secrets at startup; this
+# passwords / Chroma token, a malformed QuestDB ILP key, a shared audit password and malformed
+# resource limits (ALI-20). Services re-check their own secrets at startup; this
 # catches the whole file at once, before any container (or database volume) is created.
 #
 #   bash check-env.sh            # checks ./.env
@@ -45,7 +46,10 @@ is_placeholder() {
   return 1
 }
 
-# check NAME MIN_LEN [hex] [optional]
+# check NAME MIN_LEN [any|hex|name|b64url] [optional]
+#   hex    : [0-9a-fA-F]+ (Redis passwords sit in redis:// URLs; the Chroma token in the proxy config)
+#   name   : [A-Za-z0-9._-]+ (user names; HTTP basic auth forbids ':')
+#   b64url : exactly 43 base64url chars (a P-256 private scalar without padding)
 check() {
   local name="$1" min="$2" kind="${3:-any}" presence="${4:-required}"
   local value="${VALUES[$name]-}"
@@ -58,7 +62,29 @@ check() {
   elif [ "${#value}" -lt "$min" ]; then
     fail "$name must be at least $min characters"
   elif [ "$kind" = hex ] && ! [[ "$value" =~ ^[0-9a-fA-F]+$ ]]; then
-    fail "$name must be hex (it is embedded in a redis:// URL); use openssl rand -hex 24"
+    fail "$name must be hex; use openssl rand -hex 24"
+  elif [ "$kind" = name ] && ! [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    fail "$name may only contain letters, digits, '.', '_' and '-'"
+  elif [ "$kind" = b64url ] && ! [[ "$value" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+    fail "$name must be 43 base64url characters (the P-256 private scalar, no padding)"
+  fi
+}
+
+# Resource limits (owner decision, ALI-20): required, no defaults. Values are not judged, only
+# their form: compose would otherwise fail late or, for pids, accept -1 (= unlimited).
+check_limits() {
+  local prefix="$1" mem cpus pids
+  mem="${VALUES[${prefix}_MEM_LIMIT]-}"
+  cpus="${VALUES[${prefix}_CPUS]-}"
+  pids="${VALUES[${prefix}_PIDS_LIMIT]-}"
+  if ! [[ "$mem" =~ ^[1-9][0-9]*[kmg]$ ]]; then
+    fail "${prefix}_MEM_LIMIT must be a positive integer with a k/m/g suffix (e.g. 512m)"
+  fi
+  if ! [[ "$cpus" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$cpus" =~ [1-9] ]]; then
+    fail "${prefix}_CPUS must be a positive decimal number (e.g. 0.5)"
+  fi
+  if ! [[ "$pids" =~ ^[1-9][0-9]*$ ]]; then
+    fail "${prefix}_PIDS_LIMIT must be a positive integer (it counts threads too)"
   fi
 }
 
@@ -75,6 +101,19 @@ done
 check ALPACA_API_KEY 1
 check ALPACA_SECRET_KEY 1
 check HITL_API_TOKEN 16 any optional
+# QuestDB (ALI-20): HTTP basic auth + PG wire credentials, ILP ECDSA key; Chroma bearer token.
+check QUESTDB_HTTP_USER 1 name
+check QUESTDB_HTTP_PASSWORD 16
+check QUESTDB_PG_USER 1 name
+check QUESTDB_PG_PASSWORD 16
+check QUESTDB_ILP_AUTH_KEY_ID 1 name
+check QUESTDB_ILP_AUTH_TOKEN 43 b64url
+check CHROMA_AUTH_TOKEN 32 hex
+for service in COGNITIVE_CORE REGIME_DETECTOR VECTOR_DB VECTOR_DB_STORE SENSORY_ARRAY AEGIS \
+  AEGIS_SUPERVISOR EXECUTION_MOTOR BROKER_GATEWAY REFDATA_BRIDGE QUESTDB REDIS POSTGRES_AUDIT HITL_BACKEND \
+  HITL_INTERFACE; do
+  check_limits "$service"
+done
 
 if [ -n "${VALUES[AFE_AUDIT_OWNER_PASSWORD]-}" ] &&
   [ "${VALUES[AFE_AUDIT_OWNER_PASSWORD]-}" = "${VALUES[AFE_AUDIT_APP_PASSWORD]-}" ]; then
@@ -90,6 +129,17 @@ if [ -f "$config_dir/hsm_pin" ]; then
     fail "$config_dir/hsm_pin is empty"
   elif is_placeholder "$pin"; then
     fail "$config_dir/hsm_pin looks like a placeholder"
+  fi
+fi
+
+# QuestDB ILP auth.conf (public keys): when present, it must list QUESTDB_ILP_AUTH_KEY_ID, or
+# sensory-array can never authenticate. The dev override mounts dev-tls/out/questdb-ilp instead.
+ilp_dir="${VALUES[QUESTDB_ILP_AUTH_DIR]:-./secrets/questdb-ilp-auth}"
+case "$ilp_dir" in /*) ;; *) ilp_dir="$(dirname "$ENV_FILE")/$ilp_dir" ;; esac
+kid="${VALUES[QUESTDB_ILP_AUTH_KEY_ID]-}"
+if [ -f "$ilp_dir/auth.conf" ] && [ -n "$kid" ]; then
+  if ! awk -v k="$kid" '$1 == k && $2 == "ec-p-256-sha256" { found = 1 } END { exit !found }' "$ilp_dir/auth.conf"; then
+    fail "$ilp_dir/auth.conf has no ec-p-256-sha256 entry for QUESTDB_ILP_AUTH_KEY_ID"
   fi
 fi
 
