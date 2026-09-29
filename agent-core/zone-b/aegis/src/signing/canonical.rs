@@ -1,11 +1,12 @@
-//! Canonical attestation text `afe-attest-v1` (spec section 7).
+//! Canonical attestation text `afe-attest-v2` (spec section 7).
 //!
 //! One `key=value` per line, fixed order, `\n`-terminated, integers in
 //! decimal, no whitespace padding:
 //!
 //! ```text
-//! afe-attest-v1
+//! afe-attest-v2
 //! signal_id=<uuid>
+//! strategy_id=<string>
 //! symbol=<SYM>
 //! side=<BUY|SELL|SELL_SHORT>
 //! order_type=<LIMIT|...>
@@ -23,18 +24,29 @@
 //! (`execution_motor/proto_adapter.py`) rebuilds. The client order id is bound
 //! indirectly: Aegis sets `order_id == signal_id` and verifiers enforce it
 //! (see `attest` and `verify`).
+//!
+//! v2 = v1 plus the `strategy_id` line, right after `signal_id` (owner
+//! decision: a compromised Zone A must not be able to relabel the strategy
+//! the execution-motor's SHARP gate checks). It uses the same free-text
+//! guard as every other string field (non-empty, no control character, no
+//! `=`); C02 refuses a signal whose `strategy_id` would fail it. The value is
+//! echoed in `Attestation.strategy_id` so a verifier can rebuild the text.
+//! `afe-attest-v1` is retired: Aegis never signs it and verifiers refuse it
+//! (nothing was deployed with v1, so no v1 attestation needs honouring).
 
 use sha2::{Digest, Sha256};
 
 use super::SignError;
 use crate::domain::Side;
 
-pub const CANONICAL_VERSION: &str = "afe-attest-v1";
+pub const CANONICAL_VERSION: &str = "afe-attest-v2";
 
 /// Everything the signature binds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttestationFields {
     pub signal_id: String,
+    /// `TradeSignal.strategy_id` (new in v2), echoed in `Attestation.strategy_id`.
+    pub strategy_id: String,
     pub symbol: String,
     pub side: Side,
     /// `OrderType` proto name without prefix, e.g. `LIMIT`.
@@ -72,6 +84,7 @@ impl AttestationFields {
         Ok(format!(
             "{CANONICAL_VERSION}\n\
              signal_id={}\n\
+             strategy_id={}\n\
              symbol={}\n\
              side={}\n\
              order_type={}\n\
@@ -84,6 +97,7 @@ impl AttestationFields {
              limits_config_sha256={}\n\
              key_id={}\n",
             clean("signal_id", &self.signal_id)?,
+            clean("strategy_id", &self.strategy_id)?,
             clean("symbol", &self.symbol)?,
             side_text(self.side),
             clean("order_type", &self.order_type)?,
@@ -109,6 +123,7 @@ impl AttestationFields {
 pub(crate) fn sample_fields() -> AttestationFields {
     AttestationFields {
         signal_id: "0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11".into(),
+        strategy_id: "AFE-STRATEGY-001".into(),
         symbol: "AAPL".into(),
         side: Side::Buy,
         order_type: "LIMIT".into(),
@@ -133,8 +148,9 @@ mod tests {
     #[test]
     fn golden_vector_text_and_digest() {
         let f = sample_fields();
-        let expected = "afe-attest-v1\n\
+        let expected = "afe-attest-v2\n\
 signal_id=0b4e7c9e-6a61-4b0e-9a54-0e1e5d3f9a11\n\
+strategy_id=AFE-STRATEGY-001\n\
 symbol=AAPL\n\
 side=BUY\n\
 order_type=LIMIT\n\
@@ -160,6 +176,7 @@ key_id=dev-ed25519-1234abcd\n";
         type Mutation = Box<dyn Fn(&mut AttestationFields)>;
         let mutations: Vec<Mutation> = vec![
             Box::new(|f| f.signal_id.push('0')),
+            Box::new(|f| f.strategy_id = "AFE-STRATEGY-002".into()),
             Box::new(|f| f.symbol = "MSFT".into()),
             Box::new(|f| f.side = Side::Sell),
             Box::new(|f| f.side = Side::SellShort),
@@ -190,6 +207,9 @@ key_id=dev-ed25519-1234abcd\n";
             let mut f = sample_fields();
             f.symbol = bad.into();
             assert!(f.canonical_text().is_err(), "{bad:?}");
+            let mut f = sample_fields();
+            f.strategy_id = bad.into();
+            assert!(f.canonical_text().is_err(), "strategy_id {bad:?}");
         }
     }
 }

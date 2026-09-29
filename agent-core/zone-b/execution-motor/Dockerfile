@@ -9,7 +9,8 @@
 # The context filter is Dockerfile.dockerignore (next to this file, BuildKit).
 #
 # Risk-relevant settings have NO defaults in this image: TLS material, the attestation key
-# registry, broker credentials and MOTOR_ENV are all left for the operator (see README.md).
+# registry, the broker-gateway target and MOTOR_ENV are all left for the operator (see README.md).
+# The motor holds no broker credentials (ADR-004): broker-gateway does.
 # MOTOR_ENV is deliberately unset (treated as production, same convention as Aegis's
 # AEGIS_ENV).
 

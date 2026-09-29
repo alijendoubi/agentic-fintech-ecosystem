@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package afe.shared;
+
+// Broker gateway contract (ADR-004 Option C, separate container). Additive; not part of
+// the Phase 3 spec's Appendix A. Implemented by agent-core/zone-b/broker-gateway; the only
+// client is execution-motor (execution_motor/gateway_client.py).
+//
+// The gateway is the ONLY component that holds broker credentials. It exposes exactly the
+// broker operations execution-motor needs and nothing else:
+//   * SubmitOrder: needs a valid Aegis attestation (afe-attest-v2, spec section 7). The
+//     gateway verifies the signature with Aegis's PUBLIC key, checks expiry and single use,
+//     checks that every order field equals the attested value, and only then adds broker
+//     authentication and forwards. The broker request body is built from the attested
+//     fields.
+//   * CancelOrder and the read-only queries (one order by client order id, open orders,
+//     positions, account): no attestation. Cancels are risk-reducing (the kill-switch sweep,
+//     spec section 5.2); reads change nothing. Each maps to one fixed broker endpoint.
+//
+// Transport: mTLS is REQUIRED (no plaintext mode exists) and the client certificate CN must
+// be on the gateway's allow-list (GATEWAY_ALLOWED_CLIENT_CNS).
+//
+// Outcomes are carried in BrokerReply, never as gRPC errors, so the caller can tell
+// "refused, nothing was sent" (refusal set) from "forwarded, no answer" (transport_error)
+// from "the broker answered" (http_status/body, passed through unparsed). A non-OK gRPC
+// status (e.g. PERMISSION_DENIED for a client not on the allow-list, UNAVAILABLE when the
+// gateway is down) means the gateway did not evaluate the request; for a submit the caller
+// must still treat the outcome as unknown and reconcile.
+service BrokerGatewayService {
+  rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+  rpc GetOrderByClientOrderId(GetOrderByClientOrderIdRequest) returns (GetOrderByClientOrderIdResponse);
+  rpc ListOpenOrders(ListOpenOrdersRequest) returns (ListOpenOrdersResponse);
+  rpc GetPositions(GetPositionsRequest) returns (GetPositionsResponse);
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+}
+
+// The signed attestation exactly as Aegis produced it: the canonical afe-attest-v2 text
+// (spec section 7), the signature over it and the signing key id. The gateway re-parses and
+// re-serialises the text and refuses anything that is not byte-identical canonical v2.
+message AttestationProof {
+  bytes canonical_text = 1;
+  bytes signature = 2;
+  string key_id = 3; // must equal the key_id line of canonical_text
+}
+
+// The order the caller wants sent, in broker vocabulary. Every field must equal the attested
+// value (side BUY -> "buy", SELL/SELL_SHORT -> "sell"; order_type lower case; client_order_id
+// equal to the attested signal_id). Quantities and prices are int64 nanos (1e-9), as in
+// order_request.proto; 0 means "not set" for the prices.
+message OrderIntent {
+  string client_order_id = 1;
+  string symbol = 2;
+  string side = 3;
+  string order_type = 4;
+  int64 qty_nanos = 5;
+  int64 limit_price_nanos = 6;
+  int64 stop_price_nanos = 7;
+  string time_in_force = 8; // only "day" is accepted
+}
+
+message BrokerReply {
+  // Non-empty: the gateway refused the request and sent NOTHING to the broker. A stable
+  // snake_case reason code (e.g. "signature_invalid", "replayed", "order_mismatch").
+  string refusal = 1;
+  string detail = 2; // human-readable context for a refusal; never contains credentials
+  // True: the request was (or may have been) sent but no HTTP response came back (timeout,
+  // connection error). For a submit the outcome is UNKNOWN: reconcile, never resubmit.
+  bool transport_error = 3;
+  int32 http_status = 4; // broker HTTP status; 0 when refused or on a transport error
+  bytes body = 5;        // broker response body, unparsed
+  string base_url = 6;   // broker endpoint the gateway is pinned to (paper or gated live)
+}
+
+message SubmitOrderRequest {
+  AttestationProof attestation = 1;
+  OrderIntent intent = 2;
+}
+
+message SubmitOrderResponse {
+  BrokerReply reply = 1;
+}
+
+message CancelOrderRequest {
+  string broker_order_id = 1;
+}
+
+message CancelOrderResponse {
+  BrokerReply reply = 1;
+}
+
+message GetOrderByClientOrderIdRequest {
+  string client_order_id = 1;
+}
+
+message GetOrderByClientOrderIdResponse {
+  BrokerReply reply = 1;
+}
+
+message ListOpenOrdersRequest {}
+
+message ListOpenOrdersResponse {
+  BrokerReply reply = 1;
+}
+
+message GetPositionsRequest {}
+
+message GetPositionsResponse {
+  BrokerReply reply = 1;
+}
+
+message GetAccountRequest {}
+
+message GetAccountResponse {
+  BrokerReply reply = 1;
+}

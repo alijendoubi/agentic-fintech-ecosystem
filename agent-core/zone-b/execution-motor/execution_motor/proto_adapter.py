@@ -11,7 +11,8 @@ Signing contract: Aegis is the source of truth (``canonical.py`` documents the t
 verified against fixtures produced by the real Aegis crate). Not signed, hence untrusted hints
 only: created_at_ns, preferred_venue, max_venue_toxicity, algo and the other algo fields.
 ``order_id`` is not in the text, but Aegis sets ``order_id == signal_id``; this adapter refuses
-any order where they differ.
+any order where they differ. ``strategy_id`` is signed (``afe-attest-v2``) and read from
+``Attestation.strategy_id``; ``compliance.bind_context`` binds the caller's context to it.
 """
 
 from __future__ import annotations
@@ -76,6 +77,7 @@ def canonical_attestation_text(
         side_name = candidate_side_names(int(order.side), allow_short=False)[0]
     return build_canonical_text(
         signal_id=order.signal_id,
+        strategy_id=attestation.strategy_id,
         symbol=order.symbol,
         side=side_name,
         order_type=type_name,
@@ -173,5 +175,6 @@ def attested_order_from_proto(
             decided_at_ns=int(attestation.decided_at_ns),
             expires_at_ns=int(attestation.expires_at_ns),
             attested_side=side_name,
+            strategy_id=attestation.strategy_id,
         ),
     )

@@ -198,6 +198,9 @@ issue_cert() {
 # ----------------------------------------------------------------------------
 issue_cert server aegis aegis "DNS:aegis"
 issue_cert server execution-motor execution-motor "DNS:execution-motor"
+# ADR-004: the broker gateway's listener. Its only allowed client is CN=execution-motor (the
+# execution-motor client cert below, reused for this channel).
+issue_cert server broker-gateway broker-gateway "DNS:broker-gateway"
 
 # ----------------------------------------------------------------------------
 # 3. Client certs — CN must match the "peers" keys in identities.json
@@ -239,6 +242,8 @@ printf '%s
 chmod 600 "$SIGNER_DIR/seed.hex" 2>/dev/null || true
 printf '[{"key_id": "%s", "algorithm": "ED25519", "public_key_hex": "%s"}]
 '     "$KEY_ID" "$PUB_HEX" > "$OUT_DIR/execution-motor/attestation-keys.json"
+# The broker gateway verifies the same attestations with its own copy of the public key.
+cp "$OUT_DIR/execution-motor/attestation-keys.json" "$OUT_DIR/broker-gateway/attestation-keys.json"
 echo "  dev attestation signer: key_id=$KEY_ID (seed in $SIGNER_DIR, public key in execution-motor/)"
 
 # ----------------------------------------------------------------------------
@@ -286,7 +291,7 @@ cat > "$OUT_DIR/identities.json" <<EOF
 EOF
 echo "  dev operator identity + 3 reset approvers: $OUT_DIR/identities.json, seeds in $APPROVER_DIR"
 
-for d in aegis aegis-signer cognitive-core execution-motor refdata-bridge aegis-supervisor hitl-backend operator approvers; do
+for d in aegis aegis-signer cognitive-core execution-motor broker-gateway refdata-bridge aegis-supervisor hitl-backend operator approvers; do
     cat > "$OUT_DIR/$d/README.md" <<EOF
 # DEV ONLY - NOT FOR PRODUCTION
 

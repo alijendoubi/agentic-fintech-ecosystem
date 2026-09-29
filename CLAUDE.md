@@ -15,6 +15,7 @@ cd agent-core/zone-a/regime-detector && ruff check --config ../../../ruff.toml .
 cd agent-core/zone-a/cognitive-core  && python -m pytest
 cd agent-core/zone-a/regime-detector && pip install -r requirements-dev.txt && python -m pytest   # hmm.py is only a shim over regime_detector/
 cd agent-core/zone-b/execution-motor && pip install -r requirements-dev.txt && python -m pytest && python -m mypy .
+cd agent-core/zone-b/broker-gateway  && pip install -r requirements-dev.txt && python -m pytest && python -m mypy .   # imports ../execution-motor's attestation modules
 cd agent-core/zone-c/audit-logger    && python -m pytest        # integration tests start postgres:16-alpine via Docker
 
 # Backtesting (run from agent-core/)
@@ -56,19 +57,20 @@ Implemented (see the README status table for what was and was not re-run):
 - `agent-core/zone-b/sensory-array/` - Rust WebSocket L2 ingestor, QuestDB ILP + Redis sinks (hot path, no MCP)
 - `agent-core/zone-a/vector-db/` - `afe_vector_memory` Chroma memory layer (no seed scenarios yet, ALI-157)
 - `agent-core/zone-b/aegis/` - Rust risk gate: controls C01-C19, kill switches, attestation signing, gRPC/mTLS, `aegis supervisor`
-- `agent-core/zone-b/execution-motor/` - gRPC service over mTLS: attestation-verified execution, Alpaca paper client, mock broker
+- `agent-core/zone-b/execution-motor/` - gRPC service over mTLS: attestation-verified execution, Alpaca client logic without credentials (via broker-gateway), mock broker
+- `agent-core/zone-b/broker-gateway/` - ADR-004 Option C: the only holder of the Alpaca credentials; re-verifies the attestation (signature, expiry, single use, exact fields) before a submit; cancels/reads only otherwise
 - `agent-core/zone-b/refdata-bridge/` - Redis -> `Aegis.PushReferenceData` over mTLS
 - `agent-core/zone-c/audit-logger|compliance-manifest|sharp-gate/` - Python libraries (`afe_audit`, `afe_manifest`, `afe_sharp`)
 - `agent-core/zone-c/hitl-interface/` - Next.js terminal (`docs/api-contract.md` PROPOSED)
 - `agent-core/zone-c/hitl-backend/` - REST backend for the terminal (ALI-156): Aegis ListHolds/GetHold/ResolveHold, relay to execution-motor, audited; single-approver holds only, no distress classifier (compose profile `hitl-backend`)
 - `agent-core/backtesting/` - engine, WFA, Monte Carlo, calibration machinery; synthetic data only, no calibrated result
 
-All specs are in `agent-core/docs/specs/`; open decisions are in `agent-core/docs/adr/` (ADR-003, ADR-004 are Proposed).
+All specs are in `agent-core/docs/specs/`; open decisions are in `agent-core/docs/adr/` (ADR-003 is Proposed; ADR-004 is Accepted as Option C with a separate gateway container, implemented; its broker/HSM verification items stay open).
 
 ## Conventions
 - Intended: Zone A holds no trading/signing/broker credentials — only Aegis authorises orders. Compose no longer injects LLM provider keys (cognitive-core uses Bedrock/IAM, ADR-002); the LLM egress route is still open in ADR-003 (Proposed).
 - Hot path is MCP-free — direct socket connections only
-- All orders must carry a valid Aegis attestation: execution-motor verifies it before the broker (a separate broker gateway, ADR-004, is not implemented)
+- All orders must carry a valid Aegis attestation: execution-motor verifies it, then broker-gateway (ADR-004, separate container, the only holder of broker credentials) verifies it again with its own public-key copy before forwarding. execution-motor refuses to start with `ALPACA_*` credentials in its env
 - Every order execution-motor releases gets a write-once Compliance Manifest first, and its strategy must be SHARP-`PROMOTED` (ALI-161, `execution_motor/compliance.py`; the SHARP gate is off in dev compose). Held/rejected decisions get no manifest; a soft-block approval needs the HITL backend (ALI-156)
 - Compose/CI: secrets only via `${VAR:?}` env (`agent-core/infrastructure/.env.example` has blanks); zone networks are `internal: true`; `*.sh`/`*.sql`/Dockerfiles must be LF (`.gitattributes`)
 - No floating point for money on the decision path (Phase 3 spec §3)

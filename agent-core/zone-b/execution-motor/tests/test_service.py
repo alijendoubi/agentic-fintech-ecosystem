@@ -18,7 +18,7 @@ from execution_motor.service import handle_decision, to_aegis_execution_report, 
 from execution_motor.sor import RouterConfig, SmartOrderRouter, UnscoredPolicy
 
 from .helpers import NOW_NS, HmacTestVerifier
-from .test_alpaca_http import CID, CREDS, Script, jresp, order_json, timeout
+from .test_alpaca_http import CID, Script, jresp, order_json, timeout
 from .test_proto_adapter import build
 
 D = Decimal
@@ -26,7 +26,6 @@ D = Decimal
 
 def motor_over(script: Script, kill: KillSwitch | None = None) -> ExecutionMotor:
     broker = AlpacaPaperBroker(
-        CREDS,
         transport=httpx.MockTransport(script),
         sleep=lambda _s: None,
         rng=lambda: 0.0,
@@ -95,7 +94,7 @@ def test_default_motor_denies_decision(pb2: dict[str, ModuleType]) -> None:
     script = Script()
     motor = ExecutionMotor(
         config=MotorConfig(D("25000"), D("100000"), environment="test"),
-        brokers={"v": AlpacaPaperBroker(CREDS, transport=httpx.MockTransport(script))},
+        brokers={"v": AlpacaPaperBroker(transport=httpx.MockTransport(script))},
         router=SmartOrderRouter(RouterConfig(unscored_policy=UnscoredPolicy.ALLOW)),
         kill_switch=KillSwitch(start_halted=False),
         clock_ns=lambda: NOW_NS,

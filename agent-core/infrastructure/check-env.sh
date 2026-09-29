@@ -71,9 +71,9 @@ check AFE_AUDIT_APP_PASSWORD 16
 for service in SENSORY REGIME COGNITIVE REFDATA HEALTHCHECK; do
   check "REDIS_${service}_PASSWORD" 32 hex
 done
-# Optional: only checked when set (the dev stack runs the motor on its mock broker).
-check ALPACA_API_KEY 1 any optional
-check ALPACA_SECRET_KEY 1 any optional
+# Broker credentials: required by broker-gateway, the only service that receives them (ADR-004).
+check ALPACA_API_KEY 1
+check ALPACA_SECRET_KEY 1
 check HITL_API_TOKEN 16 any optional
 
 if [ -n "${VALUES[AFE_AUDIT_OWNER_PASSWORD]-}" ] &&

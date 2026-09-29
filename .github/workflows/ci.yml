@@ -50,6 +50,7 @@ jobs:
           - agent-core/zone-a/regime-detector
           - agent-core/zone-a/vector-db
           - agent-core/zone-b/execution-motor
+          - agent-core/zone-b/broker-gateway
           - agent-core/zone-b/refdata-bridge
           - agent-core/zone-c/audit-logger
           - agent-core/zone-c/compliance-manifest
@@ -103,6 +104,14 @@ jobs:
             dir: agent-core/zone-b/execution-motor
             requirements: -r requirements-dev.txt
             cache-paths: agent-core/zone-b/execution-motor/requirements*.txt
+            test: python -m pytest -q
+            types: python -m mypy .
+          # broker-gateway (ADR-004): imports execution-motor's attestation modules from ../execution-motor
+          # (conftest.py / mypy.ini put it on the path), so it needs no extra requirements.
+          - name: broker-gateway
+            dir: agent-core/zone-b/broker-gateway
+            requirements: -r requirements-dev.txt
+            cache-paths: agent-core/zone-b/broker-gateway/requirements*.txt
             test: python -m pytest -q
             types: python -m mypy .
           # refdata-bridge (ALI-15: was missing from CI). Its mTLS/gRPC tests import the generated stubs.
@@ -297,6 +306,7 @@ jobs:
           - agent-core/zone-a/regime-detector/requirements.txt
           - agent-core/zone-a/vector-db/requirements.txt
           - agent-core/zone-b/execution-motor/requirements.txt
+          - agent-core/zone-b/broker-gateway/requirements.txt
           - agent-core/zone-b/refdata-bridge/requirements.txt
           - agent-core/zone-c/audit-logger/requirements.txt
           - agent-core/zone-c/compliance-manifest/requirements.txt
@@ -377,6 +387,10 @@ jobs:
           - image: refdata-bridge
             context: agent-core
             file: agent-core/zone-b/refdata-bridge/Dockerfile
+          # ADR-004 broker gateway; builds from agent-core/ (shared/proto + execution-motor attestation modules).
+          - image: broker-gateway
+            context: agent-core
+            file: agent-core/zone-b/broker-gateway/Dockerfile
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0

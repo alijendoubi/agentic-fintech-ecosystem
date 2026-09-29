@@ -247,12 +247,13 @@ Fail-closed rules (tests in `src/killswitch/tests.rs`, `src/engine/tests.rs`,
 
 An approved decision carries an `OrderRequest` and an `Attestation`.
 
-Canonical text `afe-attest-v1` (exactly spec section 7; UTF-8, `\n`-terminated,
+Canonical text `afe-attest-v2` (exactly spec section 7; UTF-8, `\n`-terminated,
 decimal integers, this field order):
 
 ```
-afe-attest-v1
+afe-attest-v2
 signal_id=<uuid>
+strategy_id=<string>
 symbol=<SYM>
 side=<BUY|SELL|SELL_SHORT>
 order_type=<LIMIT|MARKET|STOP|STOP_LIMIT>
@@ -266,12 +267,19 @@ limits_config_sha256=<hex>
 key_id=<string>
 ```
 
+* `strategy_id` (new in v2) is the signal's `strategy_id`, echoed in
+  `Attestation.strategy_id` so verifiers can rebuild the text; C02 refuses a
+  signal without a usable one (empty, > 128 bytes, control character or `=`).
+  A consumer acting on a strategy id (the motor's SHARP gate) must use the
+  attested value. `afe-attest-v1` is retired: never signed, refused by
+  `verify_attestation` (fail closed; nothing was deployed with v1).
 * `payload_sha256 = SHA-256(text)`. The signature is over those 32 bytes.
   ECDSA P-256 (HSM, raw `r || s`, 64 bytes): ECDSA over the SHA-256 digest is
   what standard ECDSA-SHA256 verification of the text checks, so a verifier may
   verify either `(text, sig)` with SHA-256 or `(digest, sig)` prehashed. The DEV
   Ed25519 signer signs the 32 digest bytes as its message (verify over the
-  digest, NOT the text). `Attestation` has no algorithm field (frozen proto):
+  digest, NOT the text). `Attestation` has no algorithm field (the proto only
+  changes by spec-owner decision, e.g. the additive `strategy_id` of v2):
   the verifier selects the algorithm by `key_id` from its key registry.
 * Aegis only emits LIMIT orders: a market signal is converted to a marketable
   limit at `mid +/- collar` (spec 4.5; TODO(owner) confirm), and that price is
@@ -371,7 +379,7 @@ signal; a hold release re-runs the rate limit control.
 | Every control implemented with unit tests, C-IDs in names | Done: `src/controls/tests.rs` (C01-C19), `src/validate.rs` (C02). |
 | Kill-switch machine, invariants 5.4 tested, persistence verified | Done: `src/killswitch/tests.rs`, `src/engine/tests.rs`, `tests/app_startup.rs`. |
 | Supervisor + liveness watchdog trips HARD in a recorded test | Done for the trip: `aegis supervisor` (see above) latches HARD as `supervisor/liveness` after >60 s of failed probes, tested on a fake clock against a real in-process Aegis. Supervising the Supervisor: heartbeat + `aegis supervisor-healthcheck` (ALI-163); alerting on unhealthy is deployment-side. NOT done: cutting the broker egress, a recorded drill on real infrastructure. |
-| Attestation + broker gateway; unattested/tampered order cannot reach the mock broker | Attestation, verification helper and tamper tests done. The broker gateway is not part of this crate. |
+| Attestation + broker gateway; unattested/tampered order cannot reach the mock broker | Attestation, verification helper and tamper tests done. The broker gateway is a separate container, `zone-b/broker-gateway` (ADR-004), with its own tamper/replay tests and `agent-core/tests/e2e`. |
 | No `f64` for money on the decision path (grep/CI check) | Holds by construction (`Nanos`). Only the legacy-double boundary and reference-data conversion use `f64`. No CI/grep check added (CI is out of scope). |
 | Measured latency evidence for section 8 | Measured, see below. The 50 ms budget is NOT demonstrated for the tail with fsyncs. |
 | Owner confirmed PROPOSED items | Not done (owner action). |
@@ -412,7 +420,7 @@ AEGIS_SOFTHSM_KEY=attest-test AEGIS_SOFTHSM_PIN_FILE=/tmp/pin \
   `double`-based `MarketSnapshot`.
 * Reference data is in memory: a restart clears it, so C08 fails until the next
   push (safe). Pushes are not written to the audit WAL (only `tracing`).
-* No broker egress cut by the Supervisor; no broker gateway; no HITL UI (spec
+* No broker egress cut by the Supervisor (the broker gateway, `zone-b/broker-gateway`, is the only egress to the broker); no HITL UI (spec
   components owned elsewhere). The `audit.wal` tailing `AuditSink` for Zone C is
   not implemented.
 * Second approver on `ResolveHold` is self-asserted in the request (the message

@@ -174,6 +174,7 @@ class Attestation(_Frozen):
     decided_at_ns: int = 0  # signed by Aegis
     expires_at_ns: int = 0  # signed by Aegis; 0 = absent -> treated as expired
     attested_side: str = ""  # BUY | SELL | SELL_SHORT as found in the matching signed text
+    strategy_id: str = ""  # Attestation.strategy_id; part of the signed text (afe-attest-v2)
 
 
 class AttestedOrder(_Frozen):

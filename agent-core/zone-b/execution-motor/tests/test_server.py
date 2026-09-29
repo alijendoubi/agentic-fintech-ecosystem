@@ -28,6 +28,7 @@ def _config(**overrides: Any) -> ServerConfig:
         "aegis_target": None,
         "aegis_tls": None,
         "use_mock_broker": True,
+        "broker_gateway": None,
         "attestation_keys_file": Path("keys.json"),
     }
     base.update(overrides)

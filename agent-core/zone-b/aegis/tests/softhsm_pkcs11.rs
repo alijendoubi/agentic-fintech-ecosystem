@@ -50,7 +50,7 @@ fn signal() -> ValidatedSignal {
         omega: 0.8,
         regime: pb::RegimeLabel::TrendingBull,
         regime_confidence: 0.9,
-        strategy_id: String::new(),
+        strategy_id: "AFE-STRATEGY-001".into(),
     }
 }
 

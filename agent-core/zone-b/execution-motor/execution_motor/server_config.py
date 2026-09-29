@@ -6,8 +6,11 @@ Mirrors ``agent-core/zone-b/aegis/src/config.rs``'s fail-closed rules in Python:
 * No TLS material => refuse to start unless ``MOTOR_INSECURE_DEV=1`` AND ``MOTOR_ENV`` is
   not production AND ``MOTOR_LISTEN_ADDR`` is explicitly set to a loopback address
   (plaintext is also refused at bind time off-loopback, see ``server.py``).
-* No real broker credentials in production => refuse (``MOTOR_USE_MOCK_BROKER=1`` is
-  dev-only, the same shape as Aegis's dev signer refusal).
+* The broker is reached only through the broker gateway (ADR-004 Option C):
+  ``BROKER_GATEWAY_TARGET`` plus mutual-TLS client material are required unless
+  ``MOTOR_USE_MOCK_BROKER=1`` (dev-only, the same shape as Aegis's dev signer refusal).
+* Broker credentials in the motor's environment (``ALPACA_API_KEY``/``ALPACA_SECRET_KEY``)
+  => refuse to start in EVERY environment: they belong to the gateway only.
 * No Aegis client CA in production => refuse (execution reports must not leave the motor
   over an unauthenticated channel), mirroring ``cognitive-core``'s
   ``sinks.aegis_tls_from_env`` rule for the same ``AEGIS_CLIENT_TLS_*`` variables.
@@ -48,6 +51,16 @@ class AegisClientTls:
 
 
 @dataclass(frozen=True)
+class BrokerGatewayClient:
+    """Where the broker gateway listens and the motor's mTLS client identity for it."""
+
+    target: str
+    ca: Path
+    cert: Path
+    key: Path
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     environment: str
     listen_host: str
@@ -56,6 +69,7 @@ class ServerConfig:
     aegis_target: str | None  # host:port for ReportExecution; None => reporting disabled
     aegis_tls: AegisClientTls | None
     use_mock_broker: bool
+    broker_gateway: BrokerGatewayClient | None  # None only with use_mock_broker
     attestation_keys_file: Path
 
     @property
@@ -75,7 +89,7 @@ class ServerConfig:
         listen_explicit = bool(raw_listen)
         host, port = _split_listen(raw_listen or _DEFAULT_LISTEN)
         tls = _parse_tls(env, environment, host, listen_explicit)
-        use_mock = _parse_broker(env, environment)
+        use_mock, gateway = _parse_broker(env, environment)
         aegis_target = env.get("AEGIS_TARGET", "").strip() or None
         if environment == "production" and aegis_target is None:
             raise ConfigError(
@@ -93,6 +107,7 @@ class ServerConfig:
             aegis_target=aegis_target,
             aegis_tls=aegis_tls,
             use_mock_broker=use_mock,
+            broker_gateway=gateway,
             attestation_keys_file=keys_file,
         )
 
@@ -166,25 +181,33 @@ def _parse_aegis_tls(env: Mapping[str, str], environment: str) -> AegisClientTls
     return AegisClientTls(ca=ca, cert=cert, key=key)
 
 
-def _parse_broker(env: Mapping[str, str], environment: str) -> bool:
-    mock = env.get("MOTOR_USE_MOCK_BROKER", "").strip() == "1"
-    has_creds = bool(env.get("ALPACA_API_KEY", "").strip()) and bool(
-        env.get("ALPACA_SECRET_KEY", "").strip()
-    )
-    if mock:
+_BROKER_CREDENTIAL_VARS: Final = ("ALPACA_API_KEY", "ALPACA_SECRET_KEY")
+
+
+def _parse_broker(
+    env: Mapping[str, str], environment: str
+) -> tuple[bool, BrokerGatewayClient | None]:
+    present = [name for name in _BROKER_CREDENTIAL_VARS if env.get(name, "").strip()]
+    if present:
+        raise ConfigError(
+            f"{', '.join(present)} must not be set for execution-motor: broker credentials "
+            "belong to broker-gateway only (ADR-004)"
+        )
+    if env.get("MOTOR_USE_MOCK_BROKER", "").strip() == "1":
         if environment == "production":
             raise ConfigError(
                 "MOTOR_USE_MOCK_BROKER=1 is refused when MOTOR_ENV is production (or unset)"
             )
-        return True
-    if has_creds:
-        return False
-    if environment == "production":
+        return True, None
+    target = env.get("BROKER_GATEWAY_TARGET", "").strip()
+    if not target:
         raise ConfigError(
-            "ALPACA_API_KEY/ALPACA_SECRET_KEY are required in production "
-            "(or set MOTOR_USE_MOCK_BROKER=1 outside production)"
+            "no broker configured: set BROKER_GATEWAY_TARGET (and BROKER_GATEWAY_TLS_CA/CERT/"
+            "KEY), or MOTOR_USE_MOCK_BROKER=1 outside production"
         )
-    raise ConfigError(
-        "no broker configured: set ALPACA_API_KEY/ALPACA_SECRET_KEY, or "
-        "MOTOR_USE_MOCK_BROKER=1 outside production"
+    return False, BrokerGatewayClient(
+        target=target,
+        ca=_required_path(env, "BROKER_GATEWAY_TLS_CA"),
+        cert=_required_path(env, "BROKER_GATEWAY_TLS_CERT"),
+        key=_required_path(env, "BROKER_GATEWAY_TLS_KEY"),
     )
