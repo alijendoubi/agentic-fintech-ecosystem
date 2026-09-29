@@ -40,6 +40,7 @@ from .models import (
 )
 from .parsing import ModelOutputError, parse_json_model
 from .signals import NO_SUMMARY, abstain_signal, to_trade_signal
+from .sizing import PositionSizer
 
 log = structlog.get_logger(__name__)
 
@@ -262,10 +263,11 @@ async def run_debate(
     *,
     settings: CognitiveSettings,
     quantity: float = 0.0,
+    sizer: PositionSizer | None = None,
 ) -> TradeSignal:
     """Run the graph under a hard overall deadline; any failure yields an ABSTAIN signal."""
     signal, _ = await run_debate_with_state(
-        graph, initial_state, settings=settings, quantity=quantity
+        graph, initial_state, settings=settings, quantity=quantity, sizer=sizer
     )
     return signal
 
@@ -276,8 +278,13 @@ async def run_debate_with_state(
     *,
     settings: CognitiveSettings,
     quantity: float = 0.0,
+    sizer: PositionSizer | None = None,
 ) -> tuple[TradeSignal, DebateState | None]:
-    """Like `run_debate`, also returning the final state (None if the graph itself failed)."""
+    """Like `run_debate`, also returning the final state (None if the graph itself failed).
+
+    With a `sizer` (ALI-160) the quantity is chosen after the Judge, from its omega and the
+    snapshot; `quantity` is then ignored. A sizer failure sizes to 0 (abstain).
+    """
     try:
         result = await asyncio.wait_for(
             graph.ainvoke(initial_state), timeout=settings.overall_deadline_s
@@ -292,7 +299,23 @@ async def run_debate_with_state(
             summary=f"debate aborted ({type(exc).__name__}) - abstain",
         )
         return aborted, None
+    if sizer is not None:
+        quantity = _sized_quantity(sizer, final)
     return to_trade_signal(final, settings=settings, quantity=quantity), final
+
+
+def _sized_quantity(sizer: PositionSizer, state: DebateState) -> float:
+    verdict = state.judge_verdict
+    if verdict is None:
+        return 0.0
+    market = state.market_context
+    try:
+        return sizer.size(
+            price=market.mid_price, realized_vol=market.realized_vol, omega=verdict.omega
+        )
+    except Exception as exc:  # noqa: BLE001 - a sizing bug must abstain, never trade
+        _log_failure("sizer", exc, state)
+        return 0.0
 
 
 __all__ = ["build_debate_graph", "run_debate", "run_debate_with_state", "to_trade_signal"]

@@ -140,6 +140,7 @@ class CognitiveRunner:
             state,
             settings=self._cognitive,
             quantity=self._settings.order_quantity,
+            sizer=self._settings.sizer,
         )
         if self._halted():
             log.warning("signal_discarded_halted", signal_id=signal.signal_id, symbol=symbol)
