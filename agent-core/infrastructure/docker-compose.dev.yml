@@ -105,7 +105,9 @@ services:
       AEGIS_CLIENT_TLS_CA: /aegis-tls/ca.pem
       AEGIS_CLIENT_TLS_CERT: /aegis-tls/client.pem
       AEGIS_CLIENT_TLS_KEY: /aegis-tls/client.key
-      MOTOR_USE_MOCK_BROKER: "1" # no real Alpaca credentials in dev
+      # Default: in-memory mock broker. MOTOR_DEV_USE_MOCK_BROKER=0 routes through broker-gateway instead
+      # (needs real Alpaca PAPER keys in .env; the motor itself never receives them, ADR-004).
+      MOTOR_USE_MOCK_BROKER: ${MOTOR_DEV_USE_MOCK_BROKER:-1}
       MOTOR_ATTESTATION_KEYS_FILE: /tls/attestation-keys.json # dev signer's public key (dev-tls, ALI-167)
       # Dev has no promoted SHARP proposal (and sharp-gate's migrations are not mounted): skip that gate.
       # Manifests stay ON in dev. Both opt-outs are refused when MOTOR_ENV is production (ALI-161).
@@ -116,11 +118,22 @@ services:
       - execution-motor-manifests:/var/lib/afe-manifests
       - ./dev-tls/out/execution-motor:/tls:ro
       - ./dev-tls/out/execution-motor:/aegis-tls:ro
+      - ./dev-tls/out/execution-motor:/gateway-tls:ro # same CN=execution-motor client cert
       - ${MOTOR_CONFIG_DIR:-./secrets/motor-config}:/cfg:ro
     ports:
       - "127.0.0.1:50052:50052"
     networks:
       - dev-host
+
+  # broker-gateway (ADR-004): dev-tls server identity (CN=broker-gateway, SAN=DNS:broker-gateway) and the
+  # dev signer's public key. Development only because that key is an Ed25519 dev key, which the gateway
+  # refuses in production. No host port: only execution-motor may reach it.
+  broker-gateway:
+    environment:
+      GATEWAY_ENV: development
+      GATEWAY_ATTESTATION_KEYS_FILE: /tls/attestation-keys.json
+    volumes: !override
+      - ./dev-tls/out/broker-gateway:/tls:ro
 
   # refdata-bridge (agent-core/zone-b/refdata-bridge): pushes sensory-array + regime-detector data into
   # Aegis.PushReferenceData. CN=refdata-bridge, role market-data-writer.

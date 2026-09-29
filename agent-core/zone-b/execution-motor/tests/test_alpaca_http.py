@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
-from execution_motor.alpaca import AlpacaCredentials, AlpacaPaperBroker
+from execution_motor.alpaca import ATTESTATION_EXTENSION, AlpacaPaperBroker
 from execution_motor.broker import BrokerOrderRequest
 from execution_motor.errors import (
     BrokerError,
@@ -24,7 +24,6 @@ from execution_motor.errors import (
 )
 from execution_motor.models import ExecutionStatus, OrderType, Side
 
-CREDS = AlpacaCredentials(api_key="PKTESTKEY123", secret_key="SECRETVALUE456")
 CID = "0b9c7f3e-6d0e-4a3a-9c53-0d9d5b8e1a11"
 
 
@@ -80,7 +79,6 @@ def make_broker(
     retries: int = 3,
 ) -> AlpacaPaperBroker:
     return AlpacaPaperBroker(
-        CREDS,
         transport=httpx.MockTransport(handler),
         sleep=(sleeps if sleeps is not None else []).append,
         rng=lambda: 0.5,
@@ -117,8 +115,8 @@ def test_submit_sends_expected_request_to_paper_host_only() -> None:
     assert req.url.host == "paper-api.alpaca.markets"
     assert req.url.scheme == "https"
     assert req.url.path == "/v2/orders"
-    assert req.headers["APCA-API-KEY-ID"] == "PKTESTKEY123"
-    assert req.headers["APCA-API-SECRET-KEY"] == "SECRETVALUE456"
+    assert "APCA-API-KEY-ID" not in req.headers  # credentials live in broker-gateway only
+    assert req.extensions[ATTESTATION_EXTENSION] is None  # request() carries no attestation
     body = json.loads(req.content)
     assert body == {
         "symbol": "AAPL",
@@ -411,7 +409,7 @@ def test_secrets_are_not_logged() -> None:
 
 def test_negative_read_retries_refused() -> None:
     with pytest.raises(ConfigError):
-        AlpacaPaperBroker(CREDS, read_retries=-1)
+        AlpacaPaperBroker(transport=httpx.MockTransport(Script()), read_retries=-1)
 
 
 def test_reconcile_response_for_a_different_order_is_not_trusted() -> None:
@@ -427,6 +425,6 @@ def test_cancel_transport_error_is_reported() -> None:
 
 
 def test_socket_guard_blocks_the_real_transport() -> None:
-    broker = AlpacaPaperBroker(CREDS, read_retries=0)
+    broker = AlpacaPaperBroker(transport=httpx.HTTPTransport(), read_retries=0)
     with pytest.raises(AssertionError, match="network access attempted"):
         broker.get_account()  # proves the autouse socket guard is active

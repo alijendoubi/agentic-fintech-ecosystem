@@ -14,6 +14,8 @@ generator (Python stubs, Rust `tonic-build`, `buf`).
 | `order_request.proto` | `OrderRequest`, `OrderSide`, `OrderType`, `ExecAlgo`, `OrderStatus` |
 | `compliance_manifest.proto` | `ComplianceManifest`, `PTCCheckResult`, `PTCType`, `HITLOverrideRecord`, `PostTradeMetrics` |
 | `aegis.proto` | `service Aegis` and all its messages (Phase 3, spec `docs/specs/phase_3_aegis_execution.md`, Appendix A) |
+| `execution_motor.proto` | `service ExecutionMotor` (`Execute`, `ExecuteWithContext`, `Health`) |
+| `broker_gateway.proto` | `service BrokerGatewayService` (ADR-004 Option C): attested `SubmitOrder`, plus `CancelOrder` and read-only queries; `AttestationProof`, `OrderIntent`, `BrokerReply` |
 | `buf.yaml` | buf lint + breaking-change configuration |
 | `generate.sh` | Python stub generation |
 | `check-breaking.sh` | breaking-change check against a git ref |
@@ -128,6 +130,7 @@ rule.
 | `HITLOverrideRecord` | compliance_manifest | HITL interface (Zone C) | compliance-manifest |
 | `PostTradeMetrics` | compliance_manifest | `zone-b/execution-motor` | compliance-manifest |
 | `AegisDecision`, `ControlResult`, `Attestation` | aegis | `zone-b/aegis` | cognitive-core, HITL interface, execution-motor / broker gateway, compliance-manifest |
+| `BrokerGatewayService`, `AttestationProof`, `OrderIntent`, `BrokerReply` | broker_gateway | `zone-b/execution-motor` (client) | `zone-b/broker-gateway` |
 | `DecisionStatus`, `ReasonCode` (enums) | aegis | `zone-b/aegis` | all Aegis callers |
 | `ResolveHoldRequest` | aegis | HITL interface (Zone C) | `zone-b/aegis` |
 | `KillSwitchLevel` (enum), `LatchedTrigger`, `KillSwitchState` | aegis | `zone-b/aegis` | operator UI, execution-motor, audit-logger |

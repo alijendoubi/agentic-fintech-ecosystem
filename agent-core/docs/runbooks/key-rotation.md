@@ -1,7 +1,7 @@
 # Runbook: Key Rotation
 
 > **DRAFT: not validated in any drill. UNTESTED.**
-> No HSM integration, Aegis signing, broker gateway or key inventory exists yet. This runbook is a draft based on ADR-001 and the PROPOSED ADR-004 and must be revised once ADR-004 is decided. No rotation has ever been performed. Evidence tables are intentionally blank.
+> No production HSM integration or key inventory exists yet. The broker gateway exists (`zone-b/broker-gateway`, ADR-004 Option C, accepted): its trust list is `GATEWAY_ATTESTATION_KEYS_FILE` (compose: `GATEWAY_CONFIG_DIR/attestation-keys.json`), and it holds the broker credential (`ALPACA_API_KEY`/`ALPACA_SECRET_KEY`, only in its own env). This runbook is still a draft and must be revised against those files before first use. No rotation has ever been performed. Evidence tables are intentionally blank.
 
 ## Why this draft differs from ADR-001
 

@@ -18,11 +18,11 @@ import structlog
 
 from .aegis_channel import open_aegis_channel
 from .aegis_reporter import AegisReporter, GrpcReportTransport
-from .alpaca import alpaca_broker_from_env
 from .broker import Broker
 from .compliance import ComplianceConfig, build_compliance
 from .config import MotorConfig
 from .errors import ConfigError
+from .gateway_client import gateway_paper_broker, open_gateway_channel
 from .grpc_service import ExecutionMotorServicer
 from .halt import KillSwitch
 from .keys import load_attestation_keys
@@ -43,6 +43,8 @@ _PROTO_MODULES = (
     "execution_motor_pb2",
     "execution_motor_pb2_grpc",
     "compliance_manifest_pb2",
+    "broker_gateway_pb2",
+    "broker_gateway_pb2_grpc",
 )
 _KILL_PROBE_TIMEOUT_S = 2.0  # liveness probe deadline for Aegis (see kill_watch.KillSwitchWatcher)
 
@@ -64,11 +66,16 @@ def _equity_provider(broker: Broker) -> Callable[[], Decimal]:
     return _equity
 
 
-def _build_broker(server_cfg: ServerConfig, env: dict[str, str]) -> Broker:
-    if server_cfg.use_mock_broker:
+def _build_broker(server_cfg: ServerConfig, protos: dict[str, ModuleType]) -> Broker:
+    """Mock (dev only) or Alpaca paper through the broker gateway (ADR-004): the motor never
+    holds broker credentials."""
+    gateway = server_cfg.broker_gateway
+    if server_cfg.use_mock_broker or gateway is None:
         _log.warning("using_mock_broker", note="MOTOR_USE_MOCK_BROKER=1: development only")
         return MockBroker()
-    return alpaca_broker_from_env(env)
+    channel = open_gateway_channel(gateway.target, gateway.ca, gateway.cert, gateway.key)
+    stub = protos["broker_gateway_pb2_grpc"].BrokerGatewayServiceStub(channel)
+    return gateway_paper_broker(stub, protos["broker_gateway_pb2"])
 
 
 @dataclass(frozen=True)
@@ -120,7 +127,7 @@ def build_app(env: dict[str, str]) -> MotorApp:
     protos = _load_protos()
     compliance = build_compliance(compliance_cfg, env)
 
-    broker = _build_broker(server_cfg, env)
+    broker = _build_broker(server_cfg, protos)
     brokers = {broker.venue: broker}
     keys = load_attestation_keys(server_cfg.attestation_keys_file)
     verifier = AegisAttestationVerifier(keys, production=motor_cfg.is_production)

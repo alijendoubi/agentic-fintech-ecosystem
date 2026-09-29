@@ -4,6 +4,9 @@ Receives an Aegis-approved `AegisDecision` (`Aegis.SubmitSignal`'s response, for
 unchanged per `agent-core/docs/specs/phase_3_aegis_execution.md` section 5 and section 10)
 over gRPC, re-verifies its attestation, enforces single-use and the session notional cap,
 submits the order to a broker exactly once, and reports the outcome back to Aegis.
+**It holds no broker credentials** (ADR-004 Option C): every broker call goes through
+`agent-core/zone-b/broker-gateway`, which verifies the attestation again before it adds the
+Alpaca credentials (see "Broker access").
 **Fail closed** at every step: nothing here trusts the caller, and no partial or ambiguous
 outcome is ever reported as a success. See `execution_motor/motor.py` for the full pipeline
 docstring.
@@ -132,6 +135,25 @@ A non-OK gRPC status means the motor could not even evaluate the decision (e.g. 
 is at its connection/thread-pool limit); every policy outcome (rejected, duplicate, halted,
 unknown) is always a normal `ExecuteAck`, never a transport error.
 
+## Broker access (ADR-004 Option C)
+
+`execution_motor/alpaca.py` keeps all Alpaca REST logic (request bodies, response parsing,
+reconciliation of ambiguous submits, jittered read retries, paper pinning) but has **no
+credentials** and needs an injected transport. In production that transport is
+`gateway_client.GatewayTransport`, which maps each of its six calls to one
+`BrokerGatewayService` RPC (`shared/proto/broker_gateway.proto`); any other request raises before
+an RPC is made. A submit carries the attestation the motor verified (`BrokerOrderRequest.attestation`:
+the canonical text, signature and key id), and the gateway verifies it again, checks expiry,
+single use and that every order field equals the attested one, then forwards. So the motor's own
+checks are defence in depth; a compromised motor cannot place an order Aegis did not sign.
+
+Outcome mapping: a gateway refusal (nothing sent) becomes HTTP 403 -> `BrokerRejectedError`
+(definitive reject); a gateway `transport_error`, any gRPC error or a reply naming another broker
+endpoint than paper becomes a transport error -> the submit is reconciled by client order id,
+and `SubmitOutcomeUnknown` (motor halts) if that fails too. Cancels and reads need no attestation
+(kill-switch sweep). The motor-side deadline per gateway call is 7 s (gateway broker timeout 5 s
+plus an unmeasured margin).
+
 ## mTLS requirement
 
 Mutual TLS is **required**, mirroring `agent-core/zone-b/aegis/src/config.rs` /
@@ -162,8 +184,9 @@ Production refuses to start without `AEGIS_CLIENT_TLS_CA` configured.
 | `MOTOR_INSECURE_DEV` | no | Only the literal `1`: plaintext, no authentication. Refused in production; requires an explicit loopback `MOTOR_LISTEN_ADDR`. |
 | `MOTOR_ATTESTATION_KEYS_FILE` | yes | JSON array of Aegis's public verification keys (below). |
 | `MOTOR_USE_MOCK_BROKER` | no | Only the literal `1`: use the in-memory `MockBroker` instead of Alpaca. Refused in production. |
-| `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` | yes (unless mock broker) | Alpaca paper credentials. Required in production. |
-| `ALPACA_BASE_URL` | no | Defaults to the pinned paper endpoint. Live trading needs `AFE_ENABLE_LIVE_TRADING`/`AFE_LIVE_TRADING_CONFIRM` (see `alpaca.py`) and is out of scope for this server today. |
+| `BROKER_GATEWAY_TARGET` | yes (unless mock broker) | `host:port` of broker-gateway (compose: `broker-gateway:50071`). |
+| `BROKER_GATEWAY_TLS_CA`, `BROKER_GATEWAY_TLS_CERT`, `BROKER_GATEWAY_TLS_KEY` | yes (unless mock broker) | mTLS client material for the gateway channel (mutual TLS only; the certificate CN must be on the gateway's allow-list, normally `execution-motor`). |
+| `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` | **must not be set** | Setting either refuses start-up in every environment: broker credentials belong to broker-gateway only (ADR-004). |
 | `AEGIS_TARGET` | yes (production) | `host:port` of Aegis, used for `ReportExecution` and the `WatchKillSwitchState` subscription (see "Kill-switch reaction"). Required in production. Outside production, unset disables both (logged as warnings at startup). |
 | `AEGIS_CLIENT_TLS_CA`, `AEGIS_CLIENT_TLS_CERT`, `AEGIS_CLIENT_TLS_KEY` | yes (production, if `AEGIS_TARGET` is set) | mTLS material for the outbound Aegis channel. `CERT`/`KEY` must be set together (mutual TLS) or both omitted (server-auth-only, trusting only `CA`). |
 
@@ -214,7 +237,8 @@ path (`aegis/src/signing/dev.rs` vs `aegis/src/signing/pkcs11.rs`).
 * **Not tested against a real Alpaca account or a real running Aegis process.** No Alpaca
   paper credentials or a live Aegis instance were available while building this. What was
   tested instead: (1) `AlpacaPaperBroker` against a mocked `httpx` transport (pre-existing,
-  see `tests/test_alpaca_http.py`/`test_alpaca_endpoint.py`); (2) `AegisReporter` against
+  see `tests/test_alpaca_http.py`/`test_alpaca_endpoint.py`) and over a fake gateway stub
+  (`tests/test_gateway_client.py`); the real gateway is exercised in `agent-core/tests/e2e`; (2) `AegisReporter` against
   `InMemoryReportTransport` and a fake gRPC stub (pre-existing, `test_single_use_and_reporting.py`);
   (3) the new gRPC server against a **real** `grpc.Server` bound to loopback with ephemeral
   mTLS certificates and the genuine Aegis-signed fixture in
@@ -231,10 +255,9 @@ path (`aegis/src/signing/dev.rs` vs `aegis/src/signing/pkcs11.rs`).
   real `GET /v2/orders?status=open` response shape and page limit, and the timing with a
   real broker round trip. A kill-switch drill in the paper environment is still required
   (`docs/runbooks/kill-switch-drill.md`).
-* **Broker-gateway-vs-motor-holds-credentials is ADR-004, still Proposed.** This server
-  currently holds Alpaca credentials directly (env vars), following the existing
-  `alpaca.py`/`alpaca_broker_from_env` design; it does not resolve or anticipate ADR-004's
-  outcome, and should be revisited if/when that ADR is accepted.
+* **Paper only through the gateway.** `__main__` always builds `AlpacaPaperBroker` over the
+  gateway and refuses a gateway reply that names another endpoint. Live trading would need a
+  code change here as well as the gateway's two live opt-ins (TODO(owner), out of scope today).
 * `ExecuteAck.status`/`reject_reason` are carried as plain strings (the existing Python
   enum values), not a dedicated proto enum mirroring `execution_motor.models`. This keeps
   the new proto small and avoids a second enum to keep in sync with the Python one, at the

@@ -21,7 +21,7 @@ from decimal import Decimal
 import structlog
 
 from .attestation import AttestationVerifier, DenyAllVerifier, evaluate_attestation
-from .broker import Broker, BrokerOrder, BrokerOrderRequest
+from .broker import AttestationProof, Broker, BrokerOrder, BrokerOrderRequest
 from .canonical import SIDE_SELL_SHORT
 from .config import MotorConfig
 from .errors import BrokerRejectedError, ConfigError, SubmitOutcomeUnknown
@@ -171,7 +171,7 @@ class ExecutionMotor:
                 return self._rejected(
                     order, RejectReason.MANIFEST_FAILED, refusal, received, ref, decision.venue
                 )
-        return self._submit(order, decision.venue, notional, received, ref)
+        return self._submit(attested, decision.venue, notional, received, ref)
 
     def _precheck(
         self, attested: AttestedOrder, ref: Decimal | None, received: int
@@ -237,8 +237,14 @@ class ExecutionMotor:
         return None
 
     def _submit(
-        self, order: Order, venue: str, notional: Decimal, received: int, ref: Decimal | None
+        self,
+        attested: AttestedOrder,
+        venue: str,
+        notional: Decimal,
+        received: int,
+        ref: Decimal | None,
     ) -> ExecutionReport:
+        order = attested.order
         if self._kill.is_halted():  # checked immediately before every submit
             self._ledger.release(notional)
             return self._rejected(
@@ -252,6 +258,13 @@ class ExecutionMotor:
             quantity=order.quantity,
             limit_price=order.limit_price or None,
             stop_price=order.stop_price or None,
+            # The broker gateway re-verifies this (ADR-004): the text is exactly what
+            # evaluate_attestation verified above.
+            attestation=AttestationProof(
+                canonical_text=attested.attestation.signed_payload,
+                signature=attested.attestation.signature,
+                key_id=attested.attestation.key_id,
+            ),
         )
         submitted = self._clock()
         try:

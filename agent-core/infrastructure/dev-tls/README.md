@@ -15,7 +15,9 @@ developer's own machine.**
 |----------------------|--------|-------------------------------------------------------|
 | `aegis`               | server | Aegis's own TLS identity. SAN `DNS:aegis` (the in-compose hostname). |
 | `cognitive-core`      | client | Submits signals — role `signal-submitter`.            |
-| `execution-motor`     | client | Reports executions and watches kill-switch state — roles `state-reader` + `execution-reporter`. |
+| `execution-motor`     | client | Reports executions and watches kill-switch state — roles `state-reader` + `execution-reporter`. Also its client identity for broker-gateway (allow-listed CN). |
+| `execution-motor`     | server | The motor's own mTLS listener. SAN `DNS:execution-motor`. |
+| `broker-gateway`      | server | Broker gateway listener (ADR-004). SAN `DNS:broker-gateway`; only CN `execution-motor` may call it. |
 | `refdata-bridge`      | client | Pushes reference data — role `market-data-writer`.    |
 | `aegis-supervisor`    | client | Liveness probe / kill-trigger — roles `state-reader` + `kill-trigger`. |
 
@@ -33,6 +35,7 @@ out/
 ├── cognitive-core/      ca.pem  client.pem  client.key  README.md
 ├── execution-motor/     ca.pem  server.pem  server.key  client.pem  client.key
 │                        attestation-keys.json  README.md   (public key matching aegis-signer)
+├── broker-gateway/      ca.pem  server.pem  server.key  attestation-keys.json  README.md
 ├── refdata-bridge/      ca.pem  client.pem  client.key  README.md
 └── aegis-supervisor/    ca.pem  client.pem  client.key  README.md
 ```

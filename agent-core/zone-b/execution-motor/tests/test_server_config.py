@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from execution_motor.errors import ConfigError
-from execution_motor.server_config import AegisClientTls, ServerConfig, TlsPaths
+from execution_motor.server_config import (
+    AegisClientTls,
+    BrokerGatewayClient,
+    ServerConfig,
+    TlsPaths,
+)
+
+GATEWAY = {
+    "BROKER_GATEWAY_TARGET": "broker-gateway:50071",
+    "BROKER_GATEWAY_TLS_CA": "/gateway-tls/ca.pem",
+    "BROKER_GATEWAY_TLS_CERT": "/gateway-tls/client.pem",
+    "BROKER_GATEWAY_TLS_KEY": "/gateway-tls/client.key",
+}
 
 
 def base_env() -> dict[str, str]:
@@ -33,15 +47,45 @@ def test_unset_env_is_production_and_refuses_dev_paths() -> None:
         ServerConfig.from_env(env)  # mock broker forbidden in production
 
 
-def test_production_requires_alpaca_creds_when_not_mock() -> None:
+def test_without_mock_the_broker_gateway_is_required() -> None:
     env = base_env()
     del env["MOTOR_USE_MOCK_BROKER"]
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match="BROKER_GATEWAY_TARGET"):
         ServerConfig.from_env(env)
-    env["ALPACA_API_KEY"] = "k"
-    env["ALPACA_SECRET_KEY"] = "s"
+    env.update(GATEWAY)
     cfg = ServerConfig.from_env(env)
     assert cfg.use_mock_broker is False
+    assert cfg.broker_gateway == BrokerGatewayClient(
+        target="broker-gateway:50071",
+        ca=Path("/gateway-tls/ca.pem"),
+        cert=Path("/gateway-tls/client.pem"),
+        key=Path("/gateway-tls/client.key"),
+    )
+
+
+@pytest.mark.parametrize(
+    "missing", ["BROKER_GATEWAY_TLS_CA", "BROKER_GATEWAY_TLS_CERT", "BROKER_GATEWAY_TLS_KEY"]
+)
+def test_gateway_channel_is_mutual_tls_only(missing: str) -> None:
+    env = base_env()
+    del env["MOTOR_USE_MOCK_BROKER"]
+    env.update(GATEWAY)
+    del env[missing]
+    with pytest.raises(ConfigError, match=missing):
+        ServerConfig.from_env(env)
+
+
+@pytest.mark.parametrize("name", ["ALPACA_API_KEY", "ALPACA_SECRET_KEY"])
+@pytest.mark.parametrize("mock", [True, False])
+def test_broker_credentials_in_the_motor_env_refuse_startup(name: str, mock: bool) -> None:
+    """ADR-004: only broker-gateway may hold them, in every environment."""
+    env = base_env()
+    if not mock:
+        del env["MOTOR_USE_MOCK_BROKER"]
+        env.update(GATEWAY)
+    env[name] = "PKSOMETHING"
+    with pytest.raises(ConfigError, match="broker-gateway"):
+        ServerConfig.from_env(env)
 
 
 def test_each_required_tls_setting_missing_is_refused() -> None:
@@ -90,8 +134,7 @@ def test_mock_broker_refused_in_production() -> None:
 def test_aegis_client_tls_required_in_production() -> None:
     env = base_env()
     env["MOTOR_ENV"] = "production"
-    env["ALPACA_API_KEY"] = "k"
-    env["ALPACA_SECRET_KEY"] = "s"
+    env.update(GATEWAY)
     del env["MOTOR_USE_MOCK_BROKER"]
     env["AEGIS_TARGET"] = "aegis:50051"
     with pytest.raises(ConfigError):
@@ -134,8 +177,7 @@ def test_production_requires_aegis_target_for_the_kill_switch_watch() -> None:
     # orders would survive a LOGIC/HARD latch. Refused in production.
     env = base_env()
     env["MOTOR_ENV"] = "production"
-    env["ALPACA_API_KEY"] = "k"
-    env["ALPACA_SECRET_KEY"] = "s"
+    env.update(GATEWAY)
     env["AEGIS_CLIENT_TLS_CA"] = "/tls/aegis-ca.pem"
     del env["MOTOR_USE_MOCK_BROKER"]
     with pytest.raises(ConfigError, match="AEGIS_TARGET"):

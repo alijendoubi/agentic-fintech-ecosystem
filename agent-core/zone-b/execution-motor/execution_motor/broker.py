@@ -14,6 +14,18 @@ class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class AttestationProof(_Frozen):
+    """The Aegis attestation for one order, forwarded so the broker gateway (ADR-004) can
+    verify it independently: the canonical text the motor verified, its signature, key id."""
+
+    canonical_text: bytes = Field(min_length=1)
+    signature: bytes = Field(min_length=1)
+    key_id: str = Field(min_length=1)
+
+    def __repr__(self) -> str:
+        return f"AttestationProof(key_id={self.key_id!r})"
+
+
 class BrokerOrderRequest(_Frozen):
     client_order_id: str = Field(min_length=1, max_length=128)
     symbol: str
@@ -23,6 +35,9 @@ class BrokerOrderRequest(_Frozen):
     limit_price: Decimal | None = None
     stop_price: Decimal | None = None
     time_in_force: str = "day"
+    # Required by the broker gateway for a submit (it refuses one without it); ignored by
+    # in-memory brokers. Set by ExecutionMotor from the attestation it verified.
+    attestation: AttestationProof | None = None
 
 
 class BrokerOrder(_Frozen):
