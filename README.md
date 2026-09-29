@@ -90,13 +90,43 @@ agent-core/
 └── docs/              specs, ADRs, regulatory drafts, runbooks — read the caveats on each
 ```
 
+## Status
+
+_Last updated 2026-09-25. Updated with every change; the detailed per-package table is in
+[`agent-core/README.md`](agent-core/README.md#current-status-main-updated-2026-09-25)._
+
+| | |
+|---|---|
+| **Works** | Every package is implemented and unit-tested. The paper-trade signal path (cognitive-core → Aegis → execution-motor) is wired. The full dev compose stack builds and runs (first started 2026-09-25). |
+| **Verified live (dev stack)** | mTLS and identity roles, Redis → refdata-bridge → Aegis reference data, a real Aegis decision for a real signal, execution-motor refusing unapproved or tampered decisions, and a first kill-switch drill ([record](agent-core/docs/runbooks/drill-records/)). |
+| **In review** | PRs #9–#18: kill-switch order cancellation and frozen-Aegis detection, supervisor healthcheck, per-symbol regime, compose bring-up fixes, live-stack tests, Redis ACLs, CI security scans, the drill tooling, and signed hold approvals. |
+| **Not done** | Never run against a real broker, real LLMs or the real Polygon feed. Risk limits are uncalibrated. Owner decisions (LLM route, HSM vs broker gateway, credentials, legal review) are open. CI has never run on GitHub (billing lock). **Not production ready.** |
+
+Open work is tracked in the Linear project "Agentic Fintech Ecosystem", milestone "Go-Live Readiness Blockers".
+
 ## Getting started
 
-Every package is independently buildable and testable; there is no single "run the app" command because the
-end-to-end path isn't wired yet. Start with the package you care about:
+### Run the whole stack (dev)
 
 ```bash
-# Rust (Aegis, sensory-array) — via a container with protoc/clippy pinned
+cd agent-core/infrastructure/dev-tls && sh generate-dev-certs.sh --yes-i-know-this-is-dev-only
+cd .. && cp .env.example .env      # fill every blank with DEV values; never commit it
+# Aegis also needs a DEV limits.json in secrets/aegis-config/ (owner-supplied; see zone-b/aegis/README.md)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# Live integration tests against the running stack
+cd ../tests/live && pip install -r requirements.txt && AFE_LIVE_STACK=1 python -m pytest -v
+```
+
+The dev stack uses a mock broker and throwaway certificates. sensory-array needs a real `POLYGON_API_KEY`;
+without one it fails closed on authentication, and everything else still runs.
+
+### Build and test one package
+
+Every package is independently buildable and testable:
+
+```bash
+# Rust (Aegis, sensory-array) — natively, or in the pinned rust:1.98-bookworm container (Aegis needs protoc)
 cd agent-core/zone-b/aegis && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 # Python packages — each has its own requirements-dev.txt
@@ -119,7 +149,8 @@ result was — lives in [`agent-core/README.md`](agent-core/README.md#quick-star
 | 📐 Specs | [`agent-core/docs/specs/`](agent-core/docs/specs) — phases 0 through 5 |
 | 🧭 Architecture decisions | [`agent-core/docs/adr/`](agent-core/docs/adr) — two Accepted, two still Proposed |
 | ⚖️ Regulatory drafts | [`agent-core/docs/regulatory/`](agent-core/docs/regulatory) — **not legal advice, not a compliance claim** |
-| 🛠️ Runbooks | [`agent-core/docs/runbooks/`](agent-core/docs/runbooks) — drafted, never drilled |
+| 🛠️ Runbooks | [`agent-core/docs/runbooks/`](agent-core/docs/runbooks) — drafts; the kill-switch runbook has had one dev-stack drill ([`drill-records/`](agent-core/docs/runbooks/drill-records)), DR and DORA runbooks never drilled |
+| 🧪 Live-stack tests | [`agent-core/tests/live/`](agent-core/tests/live) — run against the running dev stack over real mTLS |
 | 📋 Promotion process | [`agent-core/docs/processes/sharp-promotion.md`](agent-core/docs/processes/sharp-promotion.md) |
 
 ## License
