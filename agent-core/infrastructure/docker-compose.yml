@@ -58,6 +58,11 @@ services:
       CHROMA_PORT: "8000"
       # 0 => every debate abstains. TODO(owner): replace with the position sizer before live use.
       COGNITIVE_ORDER_QUANTITY: ${COGNITIVE_ORDER_QUANTITY:-0}
+      # Position sizer (ALI-160). vol_scaled needs all three values below; no defaults (startup fails).
+      COGNITIVE_SIZER: ${COGNITIVE_SIZER:-fixed}
+      COGNITIVE_SIZER_EQUITY_USD: ${COGNITIVE_SIZER_EQUITY_USD:-}
+      COGNITIVE_SIZER_RISK_PER_TRADE: ${COGNITIVE_SIZER_RISK_PER_TRADE:-}
+      COGNITIVE_SIZER_MAX_ORDER_NOTIONAL_USD: ${COGNITIVE_SIZER_MAX_ORDER_NOTIONAL_USD:-}
       COGNITIVE_STRATEGY_ID: ${COGNITIVE_STRATEGY_ID:-AFE-STRATEGY-001}
     depends_on:
       vector-db:

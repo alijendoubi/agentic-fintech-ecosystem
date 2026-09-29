@@ -27,7 +27,12 @@ Variable names follow agent-core/infrastructure/docker-compose.yml where it defi
     COGNITIVE_MOTOR_TIMEOUT_S          1.0
     AFE_PROTO_DIR                      directory holding the generated *_pb2 modules
 
-Position sizing: the cognitive core has no portfolio or risk state, so it never invents a
+Position sizing (ALI-160): `COGNITIVE_SIZER=vol_scaled` selects the owner-approved policy in
+`sizing.py` and then REQUIRES `COGNITIVE_SIZER_EQUITY_USD`, `COGNITIVE_SIZER_RISK_PER_TRADE`
+(fraction, at most 0.05) and `COGNITIVE_SIZER_MAX_ORDER_NOTIONAL_USD` (no defaults: startup
+fails without them). The default `COGNITIVE_SIZER=fixed` keeps the placeholder below.
+
+Fixed sizing: the cognitive core has no portfolio or risk state, so it never invents a
 real quantity — building a real risk-based position sizer is out of scope here (a
 strategy/risk decision, not something an LLM debate should decide unilaterally).
 `COGNITIVE_ORDER_QUANTITY` is a fixed placeholder (TODO(owner): replace with a real position
@@ -46,10 +51,12 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from .config import ConfigError
 from .sinks import DEFAULT_MOTOR_TARGET
+from .sizing import PositionSizer, VolScaledSizer
 
 _SYMBOL = re.compile(r"[A-Z0-9.\-]{1,32}")
 _HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?")
@@ -137,6 +144,44 @@ def _redis_url(source: Mapping[str, str]) -> str:
     return f"redis://{host}:{port}"
 
 
+_SIZER_VARS = (
+    "COGNITIVE_SIZER_EQUITY_USD",
+    "COGNITIVE_SIZER_RISK_PER_TRADE",
+    "COGNITIVE_SIZER_MAX_ORDER_NOTIONAL_USD",
+)
+
+
+def _required_decimal(source: Mapping[str, str], name: str) -> Decimal:
+    raw = source.get(name, "").strip()
+    if not raw:
+        raise ConfigError(f"COGNITIVE_SIZER=vol_scaled requires {name} (no default)")
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ConfigError(f"{name}={raw!r} is not a decimal number") from exc
+    if not value.is_finite():
+        raise ConfigError(f"{name} must be finite")
+    return value
+
+
+def _sizer(source: Mapping[str, str], order_quantity: float) -> PositionSizer | None:
+    kind = source.get("COGNITIVE_SIZER", "fixed").strip().lower() or "fixed"
+    if kind == "fixed":
+        stray = [name for name in _SIZER_VARS if source.get(name, "").strip()]
+        if stray:
+            raise ConfigError(
+                f"{', '.join(stray)} set but COGNITIVE_SIZER is fixed: set vol_scaled"
+            )
+        return None
+    if kind != "vol_scaled":
+        raise ConfigError("COGNITIVE_SIZER must be 'fixed' or 'vol_scaled'")
+    equity, risk, cap = (_required_decimal(source, name) for name in _SIZER_VARS)
+    try:
+        return VolScaledSizer(equity_usd=equity, risk_per_trade=risk, max_order_notional_usd=cap)
+    except ValueError as exc:
+        raise ConfigError(f"vol_scaled sizer: {exc}") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class RunnerSettings:
     health_host: str
@@ -161,6 +206,8 @@ class RunnerSettings:
     motor_target: str
     motor_timeout_s: float
     proto_dir: str | None
+    # None: fixed `order_quantity` (legacy); otherwise sized after the Judge (ALI-160).
+    sizer: PositionSizer | None = None
 
     @property
     def max_beat_age_s(self) -> float:
@@ -173,7 +220,8 @@ class RunnerSettings:
         proto_dir = source.get("AFE_PROTO_DIR", "").strip() or None
         order_quantity = _read(source, "COGNITIVE_ORDER_QUANTITY", "0", _float(0.0, 1e9))
         production = source.get(ENVIRONMENT_VAR, "").strip().lower() == "production"
-        if production and order_quantity <= 0.0:
+        sizer = _sizer(source, order_quantity)
+        if production and sizer is None and order_quantity <= 0.0:
             raise ConfigError(
                 "ENVIRONMENT=production requires COGNITIVE_ORDER_QUANTITY to be set to a "
                 "positive value (unset or 0 abstains every signal). This is a fixed "
@@ -208,8 +256,7 @@ class RunnerSettings:
             aegis_port=_read(source, "ZONE_B_GRPC_PORT", "50051", _int(1, MAX_PORT)),
             aegis_timeout_s=_read(source, "COGNITIVE_AEGIS_TIMEOUT_S", "1.0", _float(0.05, 30.0)),
             motor_target=_read(source, "MOTOR_TARGET", DEFAULT_MOTOR_TARGET, _text),
-            motor_timeout_s=_read(
-                source, "COGNITIVE_MOTOR_TIMEOUT_S", "1.0", _float(0.05, 30.0)
-            ),
+            motor_timeout_s=_read(source, "COGNITIVE_MOTOR_TIMEOUT_S", "1.0", _float(0.05, 30.0)),
             proto_dir=proto_dir,
+            sizer=sizer,
         )
