@@ -11,11 +11,15 @@
 //! restarts it and alerts); it never stays silently alive without protecting.
 //! A crash (panic aborts in release) is a non-zero exit as well.
 //!
-//! Not done here (owned elsewhere): cutting broker egress, and supervising the
-//! Supervisor (run it under a restart policy and alert on its restarts).
+//! Supervising the Supervisor (ALI-163): after every completed step it writes a
+//! heartbeat file ([`heartbeat`]); `aegis supervisor-healthcheck` fails when the
+//! beat is stale, so a hung Supervisor turns the container unhealthy instead of
+//! silently disabling the backstop. Run it under a restart policy and alert on
+//! unhealthy / restarting. Not done here: cutting broker egress.
 
 pub mod config;
 pub mod grpc;
+pub mod heartbeat;
 
 use std::time::{Duration, Instant};
 
@@ -27,6 +31,7 @@ use crate::killswitch::watchdog::{LivenessWatchdog, SUPERVISOR_ACTOR};
 
 pub use config::SupervisorConfig;
 pub use grpc::GrpcAegis;
+pub use heartbeat::Heartbeat;
 
 /// One failed exchange with Aegis (probe or trip). Carries text only for logs.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -202,7 +207,14 @@ impl<L: AegisLink, C: Clock> Supervisor<L, C> {
     }
 
     /// Supervise until `shutdown` resolves (clean exit) or an own error occurs.
-    pub async fn run<F>(mut self, interval: Duration, shutdown: F) -> Result<(), SupervisorError>
+    /// After every completed step, `heartbeat` (if any) records that the loop
+    /// is alive, whatever the outcome.
+    pub async fn run<F>(
+        mut self,
+        interval: Duration,
+        heartbeat: Option<Heartbeat>,
+        shutdown: F,
+    ) -> Result<(), SupervisorError>
     where
         F: std::future::Future<Output = ()>,
     {
@@ -215,7 +227,20 @@ impl<L: AegisLink, C: Clock> Supervisor<L, C> {
                 _ = ticker.tick() => {}
             }
             self.step().await?;
+            if let Some(hb) = &heartbeat {
+                record_beat(hb);
+            }
         }
+    }
+}
+
+fn record_beat(hb: &Heartbeat) {
+    let Some(now_ms) = heartbeat::unix_now_ms() else {
+        tracing::error!("cannot read the wall clock for the supervisor heartbeat");
+        return;
+    };
+    if let Err(e) = hb.beat(now_ms) {
+        tracing::error!(error = %e, path = %hb.path().display(), "cannot write the supervisor heartbeat");
     }
 }
 
@@ -233,14 +258,24 @@ where
 {
     let link = GrpcAegis::connect(&cfg)?;
     let supervisor = Supervisor::new(link, MonotonicClock::new(), cfg.trip_after_ms)?;
+    let heartbeat = cfg.heartbeat_file.clone().map(Heartbeat::new);
+    if heartbeat.is_none() {
+        tracing::warn!(
+            "{} is unset: a hung supervisor cannot be detected by a healthcheck",
+            heartbeat::FILE_ENV
+        );
+    }
     tracing::info!(
         target = %cfg.target,
         trip_after_ms = cfg.trip_after_ms,
         actor = SUPERVISOR_ACTOR,
         version = crate::VERSION,
+        heartbeat = heartbeat.is_some(),
         "aegis supervisor running"
     );
-    supervisor.run(cfg.probe_interval, shutdown).await
+    supervisor
+        .run(cfg.probe_interval, heartbeat, shutdown)
+        .await
 }
 
 #[cfg(test)]

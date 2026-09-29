@@ -58,6 +58,9 @@ class FakeBroker(Broker):
     def get_order_by_client_id(self, client_order_id: str) -> BrokerOrder | None:
         return None
 
+    def list_open_orders(self) -> tuple[BrokerOrder, ...]:
+        return ()
+
     def cancel_order(self, broker_order_id: str) -> None:
         return None
 

@@ -29,11 +29,18 @@ class KillSwitch:
         *,
         start_halted: bool = True,
         signal_source: HaltSignalSource | None = None,
+        latch_external: bool = True,
     ) -> None:
+        """``latch_external=False`` mirrors the source instead of latching it: halted
+        exactly while the source reports halted (or raises). Use it when the source is
+        itself the latching authority with an authenticated reset (Aegis's kill-switch
+        state), so an Aegis reset is not followed by a motor that stays halted forever.
+        Local ``halt()`` calls stay sticky either way."""
         self._lock = threading.Lock()
         self._halted = start_halted
         self._reason = "initial state: halted until explicit resume" if start_halted else ""
         self._source = signal_source
+        self._latch_external = latch_external
 
     @property
     def reason(self) -> str:
@@ -74,9 +81,12 @@ class KillSwitch:
         try:
             halted = self._source.is_halted()
         except Exception as exc:  # noqa: BLE001 - any signal-source failure must halt (fail closed)
-            self.halt(f"signal source error: {type(exc).__name__}")
+            if self._latch_external:
+                self.halt(f"signal source error: {type(exc).__name__}")
+            else:
+                _log.error("kill_switch_source_error", error=type(exc).__name__)
             return True
-        if halted:
+        if halted and self._latch_external:
             self.halt("external halt signal")
         return halted
 

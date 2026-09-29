@@ -152,3 +152,58 @@ fn cert_identity_reads_cn_then_san() {
     );
     assert_eq!(cert_identity(b"not a cert"), None);
 }
+
+// ---- ALI-164: signed second approvals for hold decisions ----
+
+fn hold_signed(seed: u8, hold: &str, approve: bool, approver: &str, at: i64) -> pb::Authorization {
+    let text = hold_approval_text(hold, approve, approver, "operator", at);
+    pb::Authorization {
+        approver_id: approver.into(),
+        role: "operator".into(),
+        approved_at_ns: at,
+        credential_ref: hex::encode(&key(seed).sign(text.as_bytes()).to_bytes()),
+    }
+}
+
+#[test]
+fn a_signed_hold_approval_verifies_for_its_hold_and_decision() {
+    let a = hold_signed(2, "hold-1", true, "bob", NOW - 1_000_000_000);
+    let v = ids()
+        .verify_hold_approval("hold-1", true, &a, NOW, MAX_AGE_MS)
+        .unwrap();
+    assert_eq!(v.approver_id, "bob");
+    assert_eq!(v.role, Role::Operator);
+}
+
+#[test]
+fn a_hold_approval_cannot_be_replayed_onto_another_hold_or_decision() {
+    let a = hold_signed(2, "hold-1", false, "bob", NOW - 1_000_000_000);
+    let i = ids();
+    assert!(
+        i.verify_hold_approval("hold-1", true, &a, NOW, MAX_AGE_MS)
+            .is_err(),
+        "an approval to reject must not release"
+    );
+    assert!(i
+        .verify_hold_approval("hold-2", false, &a, NOW, MAX_AGE_MS)
+        .is_err());
+    let reset_style = signed(2, "hold-1", "bob", "operator", NOW - 1_000_000_000);
+    assert!(
+        i.verify_hold_approval("hold-1", true, &reset_style, NOW, MAX_AGE_MS)
+            .is_err(),
+        "a kill-switch reset signature must not count as a hold approval"
+    );
+}
+
+#[test]
+fn a_hold_approval_signed_by_the_wrong_key_or_stale_is_refused() {
+    let i = ids();
+    let forged = hold_signed(9, "hold-1", true, "bob", NOW - 1_000_000_000);
+    assert!(i
+        .verify_hold_approval("hold-1", true, &forged, NOW, MAX_AGE_MS)
+        .is_err());
+    let stale = hold_signed(2, "hold-1", true, "bob", NOW - 301_000_000_000);
+    assert!(i
+        .verify_hold_approval("hold-1", true, &stale, NOW, MAX_AGE_MS)
+        .is_err());
+}

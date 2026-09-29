@@ -27,14 +27,26 @@ def _read_pem(path: Path | None) -> bytes | None:
     return path.read_bytes()
 
 
+# HTTP/2 keepalive so a silently dead connection breaks the long-lived, mostly idle
+# WatchKillSwitchState stream (which then reads as HARD) instead of leaving a stale NORMAL.
+# max_pings_without_data=0 is required: the state stream carries no data between changes.
+# NOT verified against the real Aegis (tonic) server's ping policy.
+KEEPALIVE_OPTIONS: tuple[tuple[str, int], ...] = (
+    ("grpc.keepalive_time_ms", 20_000),
+    ("grpc.keepalive_timeout_ms", 10_000),
+    ("grpc.http2.max_pings_without_data", 0),
+)
+
+
 def open_aegis_channel(target: str, tls: AegisClientTls | None) -> grpc.Channel:
-    """Build the channel used to send ``ReportExecution``. ``tls=None`` is plaintext, dev
-    only (refused in production before this is ever reached; see ``server_config.py``)."""
+    """Build the channel used for ``ReportExecution`` and ``WatchKillSwitchState``.
+    ``tls=None`` is plaintext, dev only (refused in production before this is ever
+    reached; see ``server_config.py``)."""
     if tls is None:
-        return grpc.insecure_channel(target)
+        return grpc.insecure_channel(target, options=KEEPALIVE_OPTIONS)
     credentials = grpc.ssl_channel_credentials(
         root_certificates=_read_pem(tls.ca),
         certificate_chain=_read_pem(tls.cert),
         private_key=_read_pem(tls.key),
     )
-    return grpc.secure_channel(target, credentials)
+    return grpc.secure_channel(target, credentials, options=KEEPALIVE_OPTIONS)

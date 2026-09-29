@@ -147,6 +147,12 @@ message ResolveHoldRequest {
   string note = 5;
   double reverse_guardrail_distress_score = 6;   // classifier output, not money
   bool cooling_period_enforced = 7;
+  // Additive (ALI-164): when the limits require a second approver, a RELEASE must carry
+  // this approval, signed by `second_approver_id` (Ed25519; a registered approver with
+  // role "operator") over the canonical text built by `identity::hold_approval_text`
+  // ("afe-hold-v1" plus hold_id, approve, approver_id, role, approved_at_ns, one per
+  // line). Before this, second_approver_id was only a caller-asserted string.
+  Authorization second_approval = 8;
 }
 
 // ---- Kill switch ----
