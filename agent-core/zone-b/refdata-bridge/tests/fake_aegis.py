@@ -67,9 +67,7 @@ def _leaf_cert(
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(hours=1))
-        .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False
-        )
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
     cert_pem = cert.public_bytes(serialization.Encoding.PEM)
@@ -117,7 +115,7 @@ class FakeAegisServicer(aegis_pb2_grpc.AegisServicer):
     """
 
     reject_symbols: set[str] = field(default_factory=set)
-    fail_regime: bool = False
+    fail_regime_symbols: set[str] = field(default_factory=set)
     applied: list[aegis_pb2.ReferenceSnapshot] = field(default_factory=list)
     applied_regimes: list[aegis_pb2.RegimeLabelPacket] = field(default_factory=list)
     calls: int = 0
@@ -135,18 +133,27 @@ class FakeAegisServicer(aegis_pb2_grpc.AegisServicer):
                 rejected.append(aegis_pb2.ReferenceRejection(key=snap.symbol, reason="invalid"))
                 continue
             self.applied.append(snap)
+        snapshot_rejections = len(rejected)
         regime_applied = False
         if request.HasField("regime"):
-            if self.fail_regime:
-                rejected.append(aegis_pb2.ReferenceRejection(key="regime", reason="stale"))
+            self.applied_regimes.append(request.regime)
+            regime_applied = True
+        applied_symbol_regimes = 0
+        for packet in request.symbol_regimes:
+            if not packet.symbol:
+                rejected.append(aegis_pb2.ReferenceRejection(key="regime:", reason="invalid"))
+            elif packet.symbol in self.fail_regime_symbols:
+                rejected.append(
+                    aegis_pb2.ReferenceRejection(key=f"regime:{packet.symbol}", reason="stale")
+                )
             else:
-                self.applied_regimes.append(request.regime)
-                regime_applied = True
-        rejected_snapshot_keys = len([r for r in rejected if r.key != "regime"])
+                self.applied_regimes.append(packet)
+                applied_symbol_regimes += 1
         return aegis_pb2.PushReferenceDataResponse(
-            applied_snapshots=len(request.snapshots) - rejected_snapshot_keys,
+            applied_snapshots=len(request.snapshots) - snapshot_rejections,
             regime_applied=regime_applied,
             rejected=rejected,
+            applied_symbol_regimes=applied_symbol_regimes,
         )
 
 

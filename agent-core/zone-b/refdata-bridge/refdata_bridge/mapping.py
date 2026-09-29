@@ -83,6 +83,7 @@ class ReferenceSnapshotData:
 class RegimeLabelData:
     """Plain DTO mirroring ``afe.shared.RegimeLabelPacket`` (market_snapshot.proto)."""
 
+    symbol: str
     label: str
     confidence: float
     timestamp_ns: int
@@ -128,10 +129,15 @@ def parse_snapshot(payload: dict, *, now_ns: int, stale_after_ns: int) -> Refere
 def parse_regime(payload: dict) -> RegimeLabelData:
     """Map one regime-detector ``regime:labels`` JSON dict to a ``RegimeLabelData``.
 
-    Raises ``MappingError`` for a malformed payload. Confidence is not adjusted for
+    Raises ``MappingError`` for a malformed payload, including a missing or invalid
+    ``symbol`` (ALI-158: labels are per symbol; a symbol-less label is refused
+    rather than guessed). Confidence is not adjusted for
     staleness here: the caller tracks per-message freshness and drops stale entries
     (``regime_stale_after_s``) rather than forwarding a guessed value.
     """
+    symbol = payload.get("symbol")
+    if not isinstance(symbol, str) or SYMBOL_PATTERN.fullmatch(symbol) is None:
+        raise MappingError(f"invalid or missing symbol: {symbol!r}")
     label = payload.get("label")
     if not isinstance(label, str) or label not in KNOWN_REGIME_LABELS:
         raise MappingError(f"unknown or missing regime label: {label!r}")
@@ -144,5 +150,9 @@ def parse_regime(payload: dict) -> RegimeLabelData:
     if not isinstance(ts_ns, int) or ts_ns <= 0:
         raise MappingError(f"invalid or missing ts_ns: {ts_ns!r}")
     return RegimeLabelData(
-        label=label, confidence=float(confidence), timestamp_ns=ts_ns, state_index=0
+        symbol=symbol,
+        label=label,
+        confidence=float(confidence),
+        timestamp_ns=ts_ns,
+        state_index=0,
     )

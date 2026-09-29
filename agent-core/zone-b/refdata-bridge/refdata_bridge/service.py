@@ -86,7 +86,7 @@ class BridgeService:
 
     async def _push_once(self) -> None:
         batch = self._state.build_batch(self._max_batch_snapshots)
-        if not batch.snapshots and batch.regime is None:
+        if batch.is_empty:
             return
         now_ns = self._now_ns()
         try:
@@ -96,20 +96,16 @@ class BridgeService:
                 "aegis_push_failed",
                 error=str(exc),
                 snapshots=len(batch.snapshots),
-                had_regime=batch.regime is not None,
+                regimes=len(batch.regimes),
             )
             self._health.record_failure(now_ns, str(exc))
             return
-        self._state.mark_applied(
-            result.applied_snapshot_symbols,
-            result.regime_applied,
-            batch.regime.timestamp_ns if batch.regime is not None else None,
-        )
+        self._state.mark_applied(result.applied_snapshot_symbols, result.applied_regimes)
         self._health.record_success(now_ns)
         log.info(
             "aegis_push_ok",
             applied=len(result.applied_snapshot_symbols),
-            regime_applied=result.regime_applied,
+            regimes_applied=len(result.applied_regimes),
             rejected=len(result.rejected),
         )
 

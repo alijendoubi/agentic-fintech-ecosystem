@@ -35,7 +35,8 @@ pub struct RefPrice {
     pub is_stale: bool,
 }
 
-/// Aegis's own latest regime label for the strategy universe.
+/// Aegis's own latest regime label for the signal's symbol (ALI-158), or the
+/// universe-wide label if that symbol has none.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RegimeView {
     pub label: RegimeLabel,

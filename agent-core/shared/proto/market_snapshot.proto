@@ -55,4 +55,8 @@ message RegimeLabelPacket {
   double confidence = 2;              // HMM posterior probability [0, 1]
   int64 timestamp_ns = 3;
   int32 state_index = 4;
+  // Additive (ALI-158): the symbol this label was fitted for. Empty = a
+  // universe-wide label (the only form before ALI-158). regime-detector fits
+  // per symbol, so producers SHOULD set it.
+  string symbol = 5;
 }

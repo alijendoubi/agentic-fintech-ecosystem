@@ -11,6 +11,10 @@
 //!   Aegis's own clock, so a feed cannot backdate its way to "fresh",
 //! * it is strictly newer than what is stored (monotonic per symbol / regime).
 //!
+//! Per-symbol regime labels (`symbol_regimes`, ALI-158) follow the same rules as
+//! a price: allowlisted symbol, valid values, fresh, monotonic per symbol. Their
+//! rejection key is `regime:<symbol>`.
+//!
 //! Anything else is reported in `rejected` and NOT stored, so C08 / C18 keep
 //! failing on the old value once it ages out. There is no default that accepts
 //! stale data: the bounds are the same `timings` values C08 / C18 enforce.
@@ -33,6 +37,7 @@ pub const REJECT_OUT_OF_ORDER: &str = "out_of_order";
 pub const REJECT_UNKNOWN_SYMBOL: &str = "unknown_symbol";
 pub const REJECT_CAPACITY: &str = "capacity";
 const REGIME_KEY: &str = "regime";
+const SYMBOL_REGIME_KEY_PREFIX: &str = "regime:";
 
 /// Age of `as_of_ns` against `now_ns` classified against the freshness window.
 fn check_age(
@@ -89,24 +94,50 @@ fn apply_snapshot(
         .map_err(store_error)
 }
 
-fn apply_regime(
-    store: &MemoryReferenceData,
+/// Validate a regime packet's values and freshness (not its symbol).
+fn regime_view(
     cfg: &LimitsConfig,
     now_ns: i64,
     p: &pb::RegimeLabelPacket,
-) -> Result<(), &'static str> {
+) -> Result<RegimeView, &'static str> {
     let label = pb::RegimeLabel::try_from(p.label).map_err(|_| REJECT_INVALID)?;
     if !p.confidence.is_finite() || !(0.0..=1.0).contains(&p.confidence) || p.timestamp_ns <= 0 {
         return Err(REJECT_INVALID);
     }
     let t = &cfg.timings;
     check_age(p.timestamp_ns, now_ns, t.max_regime_age_ms, t.clock_skew_ms)?;
+    Ok(RegimeView {
+        label,
+        confidence: p.confidence,
+        at_ns: p.timestamp_ns,
+    })
+}
+
+fn apply_regime(
+    store: &MemoryReferenceData,
+    cfg: &LimitsConfig,
+    now_ns: i64,
+    p: &pb::RegimeLabelPacket,
+) -> Result<(), &'static str> {
+    let view = regime_view(cfg, now_ns, p)?;
+    store.set_regime_monotonic(view).map_err(store_error)
+}
+
+fn apply_symbol_regime(
+    store: &MemoryReferenceData,
+    cfg: &LimitsConfig,
+    now_ns: i64,
+    p: &pb::RegimeLabelPacket,
+) -> Result<(), &'static str> {
+    if p.symbol.is_empty() || p.symbol.len() > MAX_SYMBOL_LEN {
+        return Err(REJECT_INVALID);
+    }
+    if !cfg.symbols.contains_key(&p.symbol) {
+        return Err(REJECT_UNKNOWN_SYMBOL);
+    }
+    let view = regime_view(cfg, now_ns, p)?;
     store
-        .set_regime_monotonic(RegimeView {
-            label,
-            confidence: p.confidence,
-            at_ns: p.timestamp_ns,
-        })
+        .set_symbol_regime_monotonic(&p.symbol, view)
         .map_err(store_error)
 }
 
@@ -133,6 +164,18 @@ pub fn ingest(
             Ok(()) => resp.regime_applied = true,
             Err(reason) => resp.rejected.push(pb::ReferenceRejection {
                 key: REGIME_KEY.to_owned(),
+                reason: reason.to_owned(),
+            }),
+        }
+    }
+    for p in &req.symbol_regimes {
+        match apply_symbol_regime(store, cfg, now_ns, p) {
+            Ok(()) => resp.applied_symbol_regimes += 1,
+            Err(reason) => resp.rejected.push(pb::ReferenceRejection {
+                key: format!(
+                    "{SYMBOL_REGIME_KEY_PREFIX}{}",
+                    p.symbol.chars().take(MAX_SYMBOL_LEN).collect::<String>()
+                ),
                 reason: reason.to_owned(),
             }),
         }
