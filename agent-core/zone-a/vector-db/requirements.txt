@@ -1,4 +1,9 @@
 # Runtime dependencies for afe_vector_memory.
 # The server image is pinned in docker-compose (see README notes); keep the client on the
 # same major.minor as the server or the HTTP API may not match.
-chromadb>=1.5,<1.6
+# HTTP-only client (ALI-16): the full `chromadb` package ships the Python Chroma SERVER, which has
+# open advisories with no fixed release (PYSEC-2026-311/3813/3814/3815: pre-auth RCE via
+# trust_remote_code model loading, tenant-authz bypasses). This service only ever uses
+# chromadb.HttpClient with embedding_function=None against the Rust `chroma` server image, so the
+# client-only package is all it needs and keeps the vulnerable server code out of the images.
+chromadb-client>=1.5,<1.6

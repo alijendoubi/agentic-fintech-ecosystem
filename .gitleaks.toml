@@ -1,0 +1,20 @@
+# gitleaks configuration (ALI-15). Extends the default rule set; every exception is
+# listed here with its reason. A finding anywhere else fails CI.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets"
+paths = [
+  # HITL unit tests use one fixed 32-char HS256 test key (tests/helpers/tokens.ts) to mint
+  # tokens against the config guard. It is not a deployed secret: HITL_JWT_SECRET is
+  # owner-supplied and blank in agent-core/infrastructure/.env.example.
+  '''^agent-core/zone-c/hitl-interface/tests/''',
+]
+# generic-api-key otherwise matches ACROSS a line break between two blank keys in
+# agent-core/infrastructure/.env.example (e.g. "AEGIS_PKCS11_TOKEN_LABEL=" then the next
+# key's name). A value that starts with a line break is blank, i.e. not a secret.
+regexTarget = "match"
+regexes = [
+  '''^[A-Z0-9_]+=[ \t]*\r?\n''',
+]
