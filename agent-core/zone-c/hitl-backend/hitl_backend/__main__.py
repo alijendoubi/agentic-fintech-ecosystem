@@ -45,7 +45,6 @@ def build(env: dict[str, str]) -> tuple[Settings, Any]:
             quantity_threshold=settings.four_eyes_quantity_threshold,
             notional_threshold_usd=settings.four_eyes_notional_threshold_usd,
             cooling_period_s=settings.cooling_period_s,
-            unscored_dev=settings.unscored_dev,
         ),
         relay=relay,
     )

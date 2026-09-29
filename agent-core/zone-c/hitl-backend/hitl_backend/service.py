@@ -64,7 +64,6 @@ class Policy:
     quantity_threshold: Decimal
     notional_threshold_usd: Decimal | None
     cooling_period_s: float
-    unscored_dev: bool
 
 
 class HitlService:
@@ -146,6 +145,8 @@ class HitlService:
             raise ApiError(410, "expired", "the hold has expired")
         required = self._required(held)
         approve = decision == "APPROVE"
+        # The reverse-guardrail distress classifier is out of scope (owner decision 2026-09-29):
+        # the field is always 0.0 and the audit record says it was not scored.
         score = 0.0
         cooling = self._policy.cooling_period_s > 0
         if approve:
@@ -154,12 +155,6 @@ class HitlService:
                     422,
                     "second_approver_signing_unavailable",
                     "this hold needs two approvers; signed second approvals are not implemented",
-                )
-            if not self._policy.unscored_dev:
-                raise ApiError(
-                    422,
-                    "distress_classifier_unavailable",
-                    "no reverse-guardrail distress classifier is configured",
                 )
             waited_s = (now - held.decision.decided_at_ns) / 1e9
             if cooling and waited_s < self._policy.cooling_period_s:
@@ -205,6 +200,7 @@ class HitlService:
                     "decision": override.decision,
                     "distress_score": score,
                     "distress_scored": False,
+                    "distress_classifier": "out_of_scope",
                     "cooling_period_enforced": cooling,
                 },
             },

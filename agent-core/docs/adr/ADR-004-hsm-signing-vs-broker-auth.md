@@ -1,8 +1,8 @@
 # ADR-004: What the HSM Signs, Given Broker API-Key Authentication
 
 **Date:** 2026-09-19
-**Status:** Proposed (NOT accepted; drafted for the owner to decide)
-**Deciders:** Ali Jendoubi (Lead) — decision pending
+**Status:** Accepted 2026-09-29: Option C, gateway as a **separate container**. Not implemented yet.
+**Deciders:** Ali Jendoubi (Lead)
 **Tracks:** ALI-44
 **Related:** ADR-001 (Accepted; status note appended), `docs/specs/phase_3_aegis_execution.md` §7
 
@@ -53,7 +53,11 @@ Consequence: **what the HSM signs is unresolved**, and with it the claim that on
 ### E. Drop the HSM
 - Use a software secret manager only. Rejected as a default: the audit and rotation story of ADR-001 would be lost, and attestation keys benefit from non-extractability. The owner may still choose it for the paper stage.
 
-## PROPOSED decision
+## Decision (accepted 2026-09-29)
+
+The owner chose **Option C** with the broker gateway in its own container, and **Alpaca** as the production broker (live after paper). Until the gateway exists, execution-motor still holds the Alpaca paper key (Option A behaviour); see `docs/adr/DECISIONS-2026-09-29.md`.
+
+## Proposal as drafted
 
 Adopt **Option C**, with:
 1. Attestation signing key in the HSM (SoftHSM2 in dev, production HSM per Phase 5 §6), single-key ECDSA P-256 (mechanism support TODO(owner) verify).
@@ -70,7 +74,7 @@ Adopt **Option C**, with:
 
 ## Open items for the owner
 
-- [ ] Choose an option and set Status.
+- [x] Choose an option and set Status (Option C, 2026-09-29).
 - [ ] TODO(owner): verify with the broker what credential scoping/restriction features exist and whether a per-order client id is supported.
 - [ ] TODO(owner): verify HSM mechanism support and any threshold-signing capability.
-- [ ] TODO(owner): decide gateway placement (inside Aegis or separate).
+- [x] Gateway placement: separate container (2026-09-29).

@@ -86,8 +86,6 @@ def test_production_config_is_complete_and_refuses_dev_shortcuts() -> None:
     for missing in ("HITL_JWT_ISSUER", "MOTOR_TARGET", "HITL_AEGIS_TLS_CA"):
         with pytest.raises(ConfigError):
             Settings.from_env({k: v for k, v in PROD.items() if k != missing})
-    with pytest.raises(ConfigError, match="HITL_UNSCORED_DEV"):
-        Settings.from_env({**PROD, "HITL_UNSCORED_DEV": "1"})
     unset_env = {k: v for k, v in PROD.items() if k != "HITL_ENV"}
     assert Settings.from_env(unset_env).production  # unset means production
 

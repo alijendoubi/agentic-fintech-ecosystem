@@ -1,8 +1,8 @@
 # ADR-003: How Zone A Reaches LLM Providers (and what "Zone A holds zero API keys" means)
 
 **Date:** 2026-09-19
-**Status:** Proposed (NOT accepted; drafted for the owner to decide)
-**Deciders:** Ali Jendoubi (Lead) — decision pending
+**Status:** Accepted 2026-09-29: Option 2 (key-holding LLM gateway outside Zone A). Not implemented yet.
+**Deciders:** Ali Jendoubi (Lead)
 **Tracks:** ALI-41
 **Related:** ADR-001, ADR-002 (Accepted; see the status note appended to ADR-002)
 
@@ -90,7 +90,11 @@ Compose changes: add a non-internal network `zone-a-llm-egress` to `cognitive-co
 
 Not viable: the container has keys but no route out, and the documents contradict the config. Listed only to state that doing nothing leaves the contradiction and a non-working network topology.
 
-## PROPOSED recommendation (owner to confirm)
+## Decision (accepted 2026-09-29)
+
+The owner chose **Option 2**. The gateway is not built yet: today cognitive-core still calls Bedrock directly through `zone-a-llm-egress` (see `docs/adr/DECISIONS-2026-09-29.md`). Until the gateway exists, Zone A's LLM route is the Bedrock/IAM path, and that must be stated wherever the route is described.
+
+## Recommendation as drafted
 
 **Option 2 for development, canary and production while the runtime is Docker-based**, because it preserves the "no provider keys in Zone A" property, works without an AWS-only runtime, and centralises budgets and logging. **Option 1 remains valid if the owner chooses to run in AWS** and confirms model availability; it should then replace Option 2 with no change to Zone A beyond the client library. **Option 3** is the fallback if the added gateway component is judged not worth its operational risk; in that case the documents must say plainly that Zone A holds LLM keys.
 
@@ -108,6 +112,7 @@ Independent of the option chosen:
 
 ## Open items for the owner
 
-- [ ] Choose an option and set Status accordingly.
+- [x] Choose an option and set Status accordingly (Option 2, 2026-09-29).
+- [ ] Build the gateway service and move cognitive-core's egress to it (no provider keys in Zone A).
 - [ ] TODO(owner): confirm model availability/ids for the chosen route and region.
 - [ ] TODO(owner): confirm what data the prompts contain (market data licensing terms may restrict sending vendor data to third parties; see register TP-005 "redistribution restrictions").

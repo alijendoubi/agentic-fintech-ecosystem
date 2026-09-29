@@ -23,7 +23,6 @@ PLACEHOLDER_FRAGMENTS = (
     "default",
     "password",
 )
-_TRUE = frozenset({"1", "true", "yes"})
 
 
 class ConfigError(ValueError):
@@ -56,7 +55,6 @@ class Settings:
     four_eyes_quantity_threshold: Decimal
     four_eyes_notional_threshold_usd: Decimal | None
     cooling_period_s: float
-    unscored_dev: bool
     audit_actor: str
 
     @classmethod
@@ -87,9 +85,6 @@ class Settings:
             raise ConfigError(
                 "MOTOR_TARGET is required in production (released holds must execute)"
             )
-        unscored = env.get("HITL_UNSCORED_DEV", "").strip().lower() in _TRUE
-        if production and unscored:
-            raise ConfigError("HITL_UNSCORED_DEV is refused in production")
         token = env.get("HITL_API_TOKEN", "").strip() or None
         if token is not None and len(token) < 16:
             raise ConfigError("HITL_API_TOKEN must be at least 16 characters when set")
@@ -113,7 +108,6 @@ class Settings:
                 env, "HITL_FOUR_EYES_NOTIONAL_THRESHOLD_USD"
             ),
             cooling_period_s=_non_negative(env, "HITL_COOLING_PERIOD_S", "0"),
-            unscored_dev=unscored,
             audit_actor=env.get("HITL_AUDIT_ACTOR", "hitl-backend").strip() or "hitl-backend",
         )
 
