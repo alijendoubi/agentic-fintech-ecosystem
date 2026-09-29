@@ -8,3 +8,10 @@
 !zone-b/execution-motor/requirements.txt
 !zone-b/execution-motor/execution_motor
 !zone-b/execution-motor/execution_motor/**
+!zone-c/audit-logger/afe_audit
+!zone-c/audit-logger/afe_audit/**
+!zone-c/compliance-manifest/afe_manifest
+!zone-c/compliance-manifest/afe_manifest/**
+!zone-c/sharp-gate/afe_sharp
+!zone-c/sharp-gate/afe_sharp/**
+**/__pycache__

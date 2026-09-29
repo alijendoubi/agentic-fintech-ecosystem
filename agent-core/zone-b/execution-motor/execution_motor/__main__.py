@@ -20,6 +20,7 @@ from .aegis_channel import open_aegis_channel
 from .aegis_reporter import AegisReporter, GrpcReportTransport
 from .alpaca import alpaca_broker_from_env
 from .broker import Broker
+from .compliance import ComplianceConfig, build_compliance
 from .config import MotorConfig
 from .errors import ConfigError
 from .grpc_service import ExecutionMotorServicer
@@ -36,7 +37,13 @@ from .verifiers import AegisAttestationVerifier
 _log = structlog.get_logger("execution_motor.main")
 
 _GENERATED_DIR: Path = Path(__file__).resolve().parents[2] / "shared" / "generated"
-_PROTO_MODULES = ("aegis_pb2", "aegis_pb2_grpc", "execution_motor_pb2", "execution_motor_pb2_grpc")
+_PROTO_MODULES = (
+    "aegis_pb2",
+    "aegis_pb2_grpc",
+    "execution_motor_pb2",
+    "execution_motor_pb2_grpc",
+    "compliance_manifest_pb2",
+)
 _KILL_PROBE_TIMEOUT_S = 2.0  # liveness probe deadline for Aegis (see kill_watch.KillSwitchWatcher)
 
 
@@ -109,7 +116,9 @@ def build_app(env: dict[str, str]) -> MotorApp:
     """Wire everything from env. Raises ``ConfigError`` on any invalid/missing setting."""
     server_cfg = ServerConfig.from_env(env)
     motor_cfg = MotorConfig.from_env(env)
+    compliance_cfg = ComplianceConfig.from_env(env, production=motor_cfg.is_production)
     protos = _load_protos()
+    compliance = build_compliance(compliance_cfg, env)
 
     broker = _build_broker(server_cfg, env)
     brokers = {broker.venue: broker}
@@ -134,7 +143,11 @@ def build_app(env: dict[str, str]) -> MotorApp:
         _log.warning("aegis_reporting_disabled", note="AEGIS_TARGET is unset")
     reporter = None if channel is None else _build_reporter(protos, channel, broker)
     servicer = ExecutionMotorServicer(
-        motor, protos["execution_motor_pb2"], kill_switch=kill, reporter=reporter
+        motor,
+        protos["execution_motor_pb2"],
+        kill_switch=kill,
+        reporter=reporter,
+        compliance=compliance,
     )
     return MotorApp(server_cfg, servicer, protos["execution_motor_pb2_grpc"], watcher)
 

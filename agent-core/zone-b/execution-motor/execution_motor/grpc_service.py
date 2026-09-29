@@ -22,10 +22,11 @@ from typing import Any
 
 import structlog
 
+from .compliance import DISABLED, ComplianceGates
 from .halt import KillSwitch
-from .models import ExecutionStatus
+from .models import ExecutionReport, ExecutionStatus
 from .motor import ExecutionMotor
-from .service import ExecutionReporter, handle_decision
+from .service import ExecutionReporter, handle_decision, handle_request
 
 _log = structlog.get_logger("execution_motor.grpc_service")
 
@@ -35,7 +36,8 @@ _REACHED_BROKER_ACCEPTED: frozenset[ExecutionStatus] = frozenset(
 
 
 class ExecutionMotorServicer:
-    """Implements the ``ExecutionMotor`` service (``Execute``, ``Health``)."""
+    """Implements the ``ExecutionMotor`` service (``Execute``, ``ExecuteWithContext``,
+    ``Health``)."""
 
     def __init__(
         self,
@@ -44,9 +46,11 @@ class ExecutionMotorServicer:
         *,
         kill_switch: KillSwitch,
         reporter: ExecutionReporter | None = None,
+        compliance: ComplianceGates = DISABLED,
         clock_ns: Callable[[], int] = time.time_ns,
     ) -> None:
         self._motor = motor
+        self._compliance = compliance
         self._pb2 = pb2
         self._kill = kill_switch
         self._reporter = reporter
@@ -54,8 +58,25 @@ class ExecutionMotorServicer:
 
     def Execute(self, request: Any, context: Any) -> Any:  # noqa: N802 - grpc method name
         report = handle_decision(
-            self._motor, request, now_ns=self._clock(), reporter=self._reporter
+            self._motor,
+            request,
+            now_ns=self._clock(),
+            reporter=self._reporter,
+            compliance=self._compliance,
         )
+        return self._ack(report)
+
+    def ExecuteWithContext(self, request: Any, context: Any) -> Any:  # noqa: N802 - grpc name
+        report = handle_request(
+            self._motor,
+            request,
+            now_ns=self._clock(),
+            reporter=self._reporter,
+            compliance=self._compliance,
+        )
+        return self._ack(report)
+
+    def _ack(self, report: ExecutionReport) -> Any:
         _log.info(
             "execute_rpc",
             order_id=report.order_id,

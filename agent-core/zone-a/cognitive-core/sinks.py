@@ -11,12 +11,10 @@
   held or rejected decision is logged and stops here, by design (Aegis is the only authority
   that may let a signal reach execution).
 * `MotorGrpcSink` / `InMemoryMotorSink`: the execution-motor leg, mirroring the Aegis sink
-  shapes above. `execution_motor.proto` (the service definition, `Execute(AegisDecision)
-  returns (ExecuteAck)`) does not exist in this worktree yet (PKG-X3, branch
-  `pkg-x3/motor-service`), so `MotorStub` is a minimal local Protocol standing in for the
-  generated `execution_motor_pb2_grpc` stub. The request type needs no stand-in: it is the
-  already-generated `aegis_pb2.AegisDecision`. Swap `MotorStub` for the real generated stub
-  once `execution_motor.proto` lands; `MotorGrpcSink` itself needs no change.
+  shapes above. With a `DecisionContext` and a request builder (`build_execute_request`) the
+  relay calls `ExecuteWithContext`, which execution-motor needs for the per-trade Compliance
+  Manifest and the SHARP gate (ALI-161); without them it falls back to plain `Execute`, which
+  the motor refuses whenever it enforces compliance (always in production).
 
 Delivery is at-most-once: a failed send raises `SinkError` and is NOT retried, because a
 late trade signal is worse than a missed one (TradeSignal has a short `valid_until_ns`).
@@ -27,7 +25,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -44,7 +42,7 @@ log = structlog.get_logger(__name__)
 DEFAULT_AEGIS_TIMEOUT_S = 1.0
 DEFAULT_GENERATED_DIR = Path(__file__).resolve().parents[2] / "shared" / "generated"
 PROTO_MODULES = ("trade_signal_pb2", "aegis_pb2", "aegis_pb2_grpc")
-MOTOR_PROTO_MODULES = ("execution_motor_pb2", "execution_motor_pb2_grpc")
+MOTOR_PROTO_MODULES = ("execution_motor_pb2", "execution_motor_pb2_grpc", "market_snapshot_pb2")
 _ERROR_LOG_CHARS = 200
 
 
@@ -60,26 +58,58 @@ class SinkReceipt:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class DecisionContext:
+    """What one debate saw and concluded (ALI-161). Forwarded with an approved decision so
+    execution-motor can write the per-trade Compliance Manifest; never sent to Aegis.
+
+    Market fields are exactly the snapshot fields the debate used (`context.parse_snapshot`);
+    `regime` is a `RegimeLabel` name. Texts are the debate's own outputs, not re-generated.
+    """
+
+    symbol: str
+    ingestion_ts_ns: int
+    mid_price: float
+    z_score: float
+    mad_score: float
+    order_flow_imbalance: float
+    realized_volatility: float
+    adv_30d: float
+    regime: str
+    blue_node_thesis: str = ""
+    red_node_challenge: str = ""
+    judge_synthesis: str = ""
+    model_versions: Mapping[str, str] = field(default_factory=dict)
+
+
 class SignalSink(Protocol):
-    async def send(self, signal: TradeSignal) -> SinkReceipt: ...
+    async def send(
+        self, signal: TradeSignal, context: DecisionContext | None = None
+    ) -> SinkReceipt: ...
 
 
 @dataclass
 class InMemorySink:
     sent: list[TradeSignal] = field(default_factory=list)
+    contexts: list[DecisionContext | None] = field(default_factory=list)
     fail_with: Exception | None = None
 
-    async def send(self, signal: TradeSignal) -> SinkReceipt:
+    async def send(
+        self, signal: TradeSignal, context: DecisionContext | None = None
+    ) -> SinkReceipt:
         if self.fail_with is not None:
             raise SinkError(str(self.fail_with)) from self.fail_with
         self.sent.append(signal)
+        self.contexts.append(context)
         return SinkReceipt(True, "in-memory")
 
 
 class LogSink:
     """Dry-run sink: nothing leaves the process."""
 
-    async def send(self, signal: TradeSignal) -> SinkReceipt:
+    async def send(
+        self, signal: TradeSignal, context: DecisionContext | None = None
+    ) -> SinkReceipt:
         log.info(
             "signal_dry_run",
             signal_id=signal.signal_id,
@@ -102,10 +132,8 @@ def load_generated_protos(directory: str | Path | None = None) -> dict[str, Modu
 def load_generated_motor_protos(directory: str | Path | None = None) -> dict[str, ModuleType]:
     """Import the generated execution-motor stubs. Raises ImportError.
 
-    `execution_motor.proto` (PKG-X3, branch `pkg-x3/motor-service`) does not exist in this
-    worktree, so `execution_motor_pb2_grpc.py` is never produced by `generate.sh` today: this
-    always raises ImportError until that lands. Callers (see `__main__.build_sink`) treat that
-    as "the motor relay is not available yet" and must not let it block the Aegis-only path.
+    Callers (see `__main__.build_sink`) treat ImportError as "the motor relay is not
+    available" and fall back to the Aegis-only path.
     """
     path = str(Path(directory) if directory is not None else DEFAULT_GENERATED_DIR)
     if path not in sys.path:
@@ -133,7 +161,9 @@ class AegisGrpcSink:
         self._strategy_id = strategy_id
         self._timeout_s = timeout_s
 
-    async def send(self, signal: TradeSignal) -> SinkReceipt:
+    async def send(
+        self, signal: TradeSignal, context: DecisionContext | None = None
+    ) -> SinkReceipt:
         try:
             message = to_proto(signal, self._pb2, strategy_id=self._strategy_id)
             decision = await self._stub.SubmitSignal(message, timeout=self._timeout_s)
@@ -186,9 +216,16 @@ def _decision_is_approved_with_attestation(decision: Any) -> bool:
 
 
 class MotorSink(Protocol):
-    """Where an approved `AegisDecision` goes next. Mirrors `SignalSink`."""
+    """Where an approved `AegisDecision` goes next. Mirrors `SignalSink`. `signal_message` is
+    the exact `TradeSignal` proto that was sent to Aegis (the motor binds it by signal_id)."""
 
-    async def send(self, decision: Any) -> SinkReceipt: ...
+    async def send(
+        self,
+        decision: Any,
+        *,
+        signal_message: Any = None,
+        context: DecisionContext | None = None,
+    ) -> SinkReceipt: ...
 
 
 @dataclass
@@ -196,12 +233,22 @@ class InMemoryMotorSink:
     """Fake motor sink for tests: collects the exact `AegisDecision` objects it received."""
 
     sent: list[Any] = field(default_factory=list)
+    signals: list[Any] = field(default_factory=list)
+    contexts: list[DecisionContext | None] = field(default_factory=list)
     fail_with: Exception | None = None
 
-    async def send(self, decision: Any) -> SinkReceipt:
+    async def send(
+        self,
+        decision: Any,
+        *,
+        signal_message: Any = None,
+        context: DecisionContext | None = None,
+    ) -> SinkReceipt:
         if self.fail_with is not None:
             raise SinkError(str(self.fail_with)) from self.fail_with
         self.sent.append(decision)
+        self.signals.append(signal_message)
+        self.contexts.append(context)
         return SinkReceipt(True, "in-memory")
 
 
@@ -209,33 +256,76 @@ DEFAULT_MOTOR_TIMEOUT_S = 1.0
 
 
 class MotorStub(Protocol):
-    """Minimal local stand-in for the generated `execution_motor_pb2_grpc` stub.
-
-    TODO(owner): `execution_motor.proto` (PKG-X3, branch `pkg-x3/motor-service`) does not
-    exist in this worktree yet, so there is no generated `ExecutionMotorStub` to inject.
-    Once it lands and `shared/proto/generate.sh` produces `execution_motor_pb2_grpc.py`,
-    swap the real `ExecutionMotorStub(channel)` in for this Protocol wherever a `MotorStub`
-    is constructed (see `__main__.build_sink`); `MotorGrpcSink` itself needs no change since
-    it only calls `.Execute(decision, timeout=...)`, the same shape the real stub will have.
-    """
+    """The two RPCs of the generated `execution_motor_pb2_grpc.ExecutionMotorStub` used here."""
 
     async def Execute(self, decision: Any, *, timeout: float) -> Any: ...  # noqa: N802
 
+    async def ExecuteWithContext(self, request: Any, *, timeout: float) -> Any: ...  # noqa: N802
+
+
+RequestBuilder = Callable[[Any, Any, DecisionContext], Any]
+
+
+def build_execute_request(motor_pb2: Any, snapshot_pb2: Any) -> RequestBuilder:
+    """Return `(decision, signal_message, context) -> ExecuteRequest` (execution_motor.proto)."""
+
+    def _build(decision: Any, signal_message: Any, context: DecisionContext) -> Any:
+        snapshot = snapshot_pb2.MarketSnapshot(
+            symbol=context.symbol,
+            ingestion_timestamp_ns=context.ingestion_ts_ns,
+            mid_price=context.mid_price,
+            z_score=context.z_score,
+            mad_score=context.mad_score,
+            order_flow_imbalance=context.order_flow_imbalance,
+            realized_volatility=context.realized_volatility,
+            adv_30d=context.adv_30d,
+            regime=snapshot_pb2.RegimeLabel.Value(context.regime),
+            is_stale=False,  # parse_snapshot drops stale snapshots before any debate
+        )
+        ctx = motor_pb2.ExecutionContext(
+            snapshot=snapshot,
+            signal=signal_message,
+            blue_node_thesis=context.blue_node_thesis,
+            red_node_challenge=context.red_node_challenge,
+            judge_synthesis=context.judge_synthesis,
+        )
+        ctx.model_versions.update(dict(context.model_versions))
+        return motor_pb2.ExecuteRequest(decision=decision, context=ctx)
+
+    return _build
+
 
 class MotorGrpcSink:
-    """Relay an approved `AegisDecision` to execution-motor via `Execute`. `stub` is injected
-    (see `MotorStub`) so this class has no import-time dependency on generated code.
-    """
+    """Relay an approved `AegisDecision` to execution-motor. With a `request_builder`, a
+    `signal_message` and a `context` it calls `ExecuteWithContext`; otherwise plain `Execute`
+    (which a compliance-enforcing motor refuses). `stub` is injected (see `MotorStub`)."""
 
-    def __init__(self, *, stub: MotorStub, timeout_s: float = DEFAULT_MOTOR_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        *,
+        stub: MotorStub,
+        timeout_s: float = DEFAULT_MOTOR_TIMEOUT_S,
+        request_builder: RequestBuilder | None = None,
+    ) -> None:
         if not timeout_s > 0:
             raise ValueError("timeout_s must be positive")
         self._stub = stub
         self._timeout_s = timeout_s
+        self._build = request_builder
 
-    async def send(self, decision: Any) -> SinkReceipt:
+    async def send(
+        self,
+        decision: Any,
+        *,
+        signal_message: Any = None,
+        context: DecisionContext | None = None,
+    ) -> SinkReceipt:
         try:
-            ack = await self._stub.Execute(decision, timeout=self._timeout_s)
+            if self._build is not None and signal_message is not None and context is not None:
+                request = self._build(decision, signal_message, context)
+                ack = await self._stub.ExecuteWithContext(request, timeout=self._timeout_s)
+            else:
+                ack = await self._stub.Execute(decision, timeout=self._timeout_s)
         except Exception as exc:  # noqa: BLE001 - any transport/encoding failure is a SinkError
             raise SinkError(f"Execute failed: {type(exc).__name__}: {exc}") from exc
         detail = _describe_ack(ack)
@@ -283,7 +373,9 @@ class AegisRelaySink:
         self._motor = motor_sink
         self._timeout_s = aegis_timeout_s
 
-    async def send(self, signal: TradeSignal) -> SinkReceipt:
+    async def send(
+        self, signal: TradeSignal, context: DecisionContext | None = None
+    ) -> SinkReceipt:
         try:
             message = to_proto(signal, self._pb2, strategy_id=self._strategy_id)
             decision = await self._stub.SubmitSignal(message, timeout=self._timeout_s)
@@ -299,7 +391,7 @@ class AegisRelaySink:
             )
             return SinkReceipt(True, detail)
         try:
-            await self._motor.send(decision)
+            await self._motor.send(decision, signal_message=message, context=context)
         except SinkError as exc:
             log.error(
                 "motor_relay_failed",

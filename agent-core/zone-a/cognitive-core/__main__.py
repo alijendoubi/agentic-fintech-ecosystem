@@ -30,6 +30,7 @@ from .sinks import (
     MotorGrpcSink,
     MotorSink,
     SignalSink,
+    build_execute_request,
     load_generated_motor_protos,
     load_generated_protos,
     open_aegis_channel,
@@ -86,7 +87,12 @@ def _build_motor_sink(settings: RunnerSettings, env: Mapping[str, str] | None) -
         return None
     motor_channel = open_motor_channel(settings.motor_target, env)  # ConfigError -> caller exits 2
     motor_stub = motor_protos["execution_motor_pb2_grpc"].ExecutionMotorStub(motor_channel)
-    return MotorGrpcSink(stub=motor_stub, timeout_s=settings.motor_timeout_s)
+    builder = build_execute_request(
+        motor_protos["execution_motor_pb2"], motor_protos["market_snapshot_pb2"]
+    )
+    return MotorGrpcSink(
+        stub=motor_stub, timeout_s=settings.motor_timeout_s, request_builder=builder
+    )
 
 
 def build_memory(
