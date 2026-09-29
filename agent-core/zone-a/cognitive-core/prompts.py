@@ -31,6 +31,7 @@ JUDGE_OUTPUT_EXAMPLE = (
 )
 REFLECTOR_OUTPUT_EXAMPLE = '{"proposed_change": "concrete rubric change", "rationale": "why"}'
 
+
 def _esc(text: str) -> str:
     """Escape braces so JSON examples survive str.format."""
     return text.replace("{", "{{").replace("}", "}}")

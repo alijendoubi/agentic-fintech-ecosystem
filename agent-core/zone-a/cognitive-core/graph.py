@@ -57,7 +57,12 @@ def _remaining_s(state: DebateState, settings: CognitiveSettings) -> float:
 
 
 async def _call(
-    client: LLMClient, prompt: str, *, max_tokens: int, budget_s: float, state: DebateState,
+    client: LLMClient,
+    prompt: str,
+    *,
+    max_tokens: int,
+    budget_s: float,
+    state: DebateState,
     settings: CognitiveSettings,
 ) -> str:
     timeout_s = min(budget_s, _remaining_s(state, settings))
@@ -96,8 +101,12 @@ async def _blue_step(
     )
     try:
         raw = await _call(
-            client, prompt, max_tokens=settings.blue_red_max_tokens,
-            budget_s=settings.blue_latency_budget_s, state=timed, settings=settings,
+            client,
+            prompt,
+            max_tokens=settings.blue_red_max_tokens,
+            budget_s=settings.blue_latency_budget_s,
+            state=timed,
+            settings=settings,
         )
         thesis = parse_json_model(raw, BlueThesis)
     except asyncio.CancelledError:
@@ -130,8 +139,12 @@ async def _red_step(
     prompt += prompts.precedent_section(state.precedents_status, state.precedents)
     try:
         raw = await _call(
-            client, prompt, max_tokens=settings.blue_red_max_tokens,
-            budget_s=settings.red_latency_budget_s, state=state, settings=settings,
+            client,
+            prompt,
+            max_tokens=settings.blue_red_max_tokens,
+            budget_s=settings.red_latency_budget_s,
+            state=state,
+            settings=settings,
         )
         challenge = parse_json_model(raw, RedChallenge)
     except asyncio.CancelledError:
@@ -168,8 +181,12 @@ async def _judge_step(
     prompt += prompts.precedent_section(state.precedents_status, state.precedents)
     try:
         raw = await _call(
-            client, prompt, max_tokens=settings.judge_max_tokens,
-            budget_s=settings.judge_latency_budget_s, state=state, settings=settings,
+            client,
+            prompt,
+            max_tokens=settings.judge_max_tokens,
+            budget_s=settings.judge_latency_budget_s,
+            state=state,
+            settings=settings,
         )
         verdict = parse_json_model(raw, JudgeVerdict)
         if red.forced_completion:
@@ -204,8 +221,12 @@ async def _compression_step(
     )
     try:
         summary = await _call(
-            client, prompt, max_tokens=settings.compression_max_tokens,
-            budget_s=settings.compression_latency_budget_s, state=state, settings=settings,
+            client,
+            prompt,
+            max_tokens=settings.compression_max_tokens,
+            budget_s=settings.compression_latency_budget_s,
+            state=state,
+            settings=settings,
         )
         if not summary.strip():
             raise ModelOutputError("empty compression summary")
@@ -295,7 +316,8 @@ async def run_debate_with_state(
     except Exception as exc:  # noqa: BLE001 - fail closed on every graph failure
         _log_failure("graph", exc, initial_state)
         aborted = abstain_signal(
-            initial_state, settings=settings,
+            initial_state,
+            settings=settings,
             summary=f"debate aborted ({type(exc).__name__}) - abstain",
         )
         return aborted, None

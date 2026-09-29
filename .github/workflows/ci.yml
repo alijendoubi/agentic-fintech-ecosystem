@@ -54,6 +54,7 @@ jobs:
           - agent-core/zone-c/audit-logger
           - agent-core/zone-c/compliance-manifest
           - agent-core/zone-c/sharp-gate
+          - agent-core/zone-c/hitl-backend
           - agent-core/backtesting
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -121,7 +122,8 @@ jobs:
             types: python -m mypy
           - name: compliance-manifest
             dir: agent-core/zone-c/compliance-manifest
-            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3' types-psycopg2
+            # grpcio-tools: conftest.py compiles agent-core/shared/proto with grpc_tools.protoc at test time.
+            requirements: -r requirements.txt -r ../audit-logger/requirements.txt 'grpcio-tools>=1.67,<2' 'pytest>=8.3,<10' 'pytest-cov>=6,<8' 'mypy>=1.13,<3' types-psycopg2
             cache-paths: agent-core/zone-c/compliance-manifest/requirements.txt
             test: python -m pytest -q --cov=afe_manifest
             types: python -m mypy
@@ -131,6 +133,13 @@ jobs:
             cache-paths: agent-core/zone-c/sharp-gate/requirements.txt
             test: python -m pytest -q --cov=afe_sharp
             types: python -m mypy
+          # hitl-backend (ALI-156, PR #25). Its tests compile the shared protos into a temp dir.
+          - name: hitl-backend
+            dir: agent-core/zone-c/hitl-backend
+            requirements: -r requirements-dev.txt
+            cache-paths: agent-core/zone-c/hitl-backend/requirements*.txt
+            test: python -m pytest -q
+            types: python -m mypy hitl_backend tests
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -301,6 +310,7 @@ jobs:
           - agent-core/zone-c/audit-logger/requirements.txt
           - agent-core/zone-c/compliance-manifest/requirements.txt
           - agent-core/zone-c/sharp-gate/requirements.txt
+          - agent-core/zone-c/hitl-backend/requirements.txt
           - agent-core/backtesting/requirements.txt
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -377,6 +387,10 @@ jobs:
           - image: refdata-bridge
             context: agent-core
             file: agent-core/zone-b/refdata-bridge/Dockerfile
+          # hitl-backend (PR #25) builds from agent-core/ (it needs shared/proto and zone-c/audit-logger).
+          - image: hitl-backend
+            context: agent-core
+            file: agent-core/zone-c/hitl-backend/Dockerfile
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0

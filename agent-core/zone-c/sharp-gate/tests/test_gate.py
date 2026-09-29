@@ -155,9 +155,7 @@ def test_proposer_cannot_approve_even_with_authorization_or_case_tricks(
     from afe_sharp import SharpGate as G
     from afe_sharp import StaticRoleAuthorizer
 
-    gate = G(
-        store, audit, StaticRoleAuthorizer({Stage.COMPLIANCE: [PROPOSER]}), audit_lookup=audit
-    )
+    gate = G(store, audit, StaticRoleAuthorizer({Stage.COMPLIANCE: [PROPOSER]}), audit_lookup=audit)
     pid = _pid(request)
     gate.submit(make_proposal(pid))
     for variant in (PROPOSER, PROPOSER.upper(), f"  {PROPOSER} "):

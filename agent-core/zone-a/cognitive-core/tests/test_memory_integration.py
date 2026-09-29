@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,8 @@ def memory(monkeypatch: pytest.MonkeyPatch) -> Any:
     if not (VECTOR_DB_DIR / "afe_vector_memory").is_dir():
         pytest.skip("vector-db package not present")
     monkeypatch.syspath_prepend(str(VECTOR_DB_DIR))
-    import afe_vector_memory as avm
+    # Imported by name at runtime: vector-db is only on sys.path after syspath_prepend above.
+    avm: Any = importlib.import_module("afe_vector_memory")
 
     store = avm.InMemoryStore()
     return avm, store, avm.AsyncMemoryAdapter(store, top_k=3, timeout_s=2.0)

@@ -19,7 +19,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "aegis_attestations.json"
 
 
 def load_fixture() -> dict[str, Any]:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+    data: dict[str, Any] = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    return data
 
 
 def to_messages(pb2: dict[str, ModuleType], case: dict[str, Any]) -> tuple[Any, Any]:

@@ -26,17 +26,30 @@ OUTCOME = TradeOutcome(
 
 def _closed_signal() -> TradeSignal:
     return TradeSignal(
-        signal_id="sig-42", symbol="AAPL", created_at_ns=1, side=SignalSide.BUY, quantity=10.0,
-        omega=0.7, expected_value=50.0, p_success=0.6, p_failure=0.4, reward_estimate=100.0,
-        risk_estimate=50.0, regime=RegimeLabel.TRENDING_BULL, regime_confidence=0.8,
-        debate_summary="bought on momentum, judge sided BUY", valid_until_ns=2,
+        signal_id="sig-42",
+        symbol="AAPL",
+        created_at_ns=1,
+        side=SignalSide.BUY,
+        quantity=10.0,
+        omega=0.7,
+        expected_value=50.0,
+        p_success=0.6,
+        p_failure=0.4,
+        reward_estimate=100.0,
+        risk_estimate=50.0,
+        regime=RegimeLabel.TRENDING_BULL,
+        regime_confidence=0.8,
+        debate_summary="bought on momentum, judge sided BUY",
+        valid_until_ns=2,
         status=SignalStatus.SIGNAL_APPROVED,
     )
 
 
 async def _build(client: object, **kwargs: object) -> RubricChangeProposal | None:
     return await build_rubric_change_proposal(
-        _closed_signal(), OUTCOME, "3 BUY signals lost after a regime flip",
+        _closed_signal(),
+        OUTCOME,
+        "3 BUY signals lost after a regime flip",
         client=client,  # type: ignore[arg-type]
         settings=kwargs.get("settings") or make_settings(),  # type: ignore[arg-type]
     )

@@ -124,8 +124,13 @@ def test_llm_models_parse_json_lists_into_tuples() -> None:
 
 def test_market_context_validation() -> None:
     kwargs: dict[str, Any] = {
-        "symbol": "AAPL", "mid_price": 1.0, "z_score": 0.0, "mad_score": 0.0,
-        "ofi": 0.0, "realized_vol": 0.1, "adv_30d": 1.0,
+        "symbol": "AAPL",
+        "mid_price": 1.0,
+        "z_score": 0.0,
+        "mad_score": 0.0,
+        "ofi": 0.0,
+        "realized_vol": 0.1,
+        "adv_30d": 1.0,
     }
     MarketContext(**kwargs)
     for override in ({"ofi": 1.5}, {"mid_price": 0.0}, {"symbol": ""}, {"z_score": math.nan}):
@@ -180,9 +185,15 @@ def test_signal_cost_fields_default_zero_and_reject_negative() -> None:
 
 def _proposal(**overrides: Any) -> RubricChangeProposal:
     base: dict[str, Any] = {
-        "proposal_id": "p1", "trigger_signal_id": "s1", "created_at_ns": 1,
-        "observed_underperformance": "x", "proposed_change": "y", "rationale": "z",
-        "realised_pnl": -2.0, "regime_at_close": RegimeLabel.CRISIS, "debate_history": "h",
+        "proposal_id": "p1",
+        "trigger_signal_id": "s1",
+        "created_at_ns": 1,
+        "observed_underperformance": "x",
+        "proposed_change": "y",
+        "rationale": "z",
+        "realised_pnl": -2.0,
+        "regime_at_close": RegimeLabel.CRISIS,
+        "debate_history": "h",
     }
     return RubricChangeProposal(**{**base, **overrides})
 
@@ -192,7 +203,11 @@ def test_proposal_is_draft_with_full_gate() -> None:
     assert p.status == "DRAFT" and p.requires_human_signoff is True
     assert p.required_stages == REQUIRED_STAGES
     assert [s.value for s in p.required_stages] == [
-        "COMPLIANCE", "LEGAL", "BACKTEST", "RISK", "CANARY",
+        "COMPLIANCE",
+        "LEGAL",
+        "BACKTEST",
+        "RISK",
+        "CANARY",
     ]
 
 

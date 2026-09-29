@@ -33,6 +33,7 @@ flat, so put that directory on the path:
 
 ```python
 import sys
+
 sys.path.insert(0, "agent-core/shared/generated")
 import trade_signal_pb2, aegis_pb2, aegis_pb2_grpc
 ```

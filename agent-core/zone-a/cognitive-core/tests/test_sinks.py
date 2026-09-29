@@ -131,8 +131,10 @@ async def test_real_grpc_round_trip_over_loopback(generated_dir: Path) -> None:
     protos = load_generated_protos(generated_dir)
     aegis_pb2, aegis_grpc = protos["aegis_pb2"], protos["aegis_pb2_grpc"]
     received: list[Any] = []
+    # The generated stubs are imported at runtime from a temp dir, so mypy only sees ModuleType.
+    servicer_base: Any = aegis_grpc.AegisServicer
 
-    class FakeAegis(aegis_grpc.AegisServicer):
+    class FakeAegis(servicer_base):  # type: ignore[misc]  # base is the runtime-loaded stub (Any)
         async def SubmitSignal(self, request: Any, context: Any) -> Any:  # noqa: N802
             received.append(request)
             return aegis_pb2.AegisDecision(
@@ -368,7 +370,8 @@ async def test_motor_grpc_sink_tolerates_an_unreadable_ack() -> None:
 
 def test_motor_grpc_sink_rejects_a_non_positive_timeout() -> None:
     with pytest.raises(ValueError, match="timeout_s"):
-        MotorGrpcSink(stub=None, timeout_s=0.0)
+        # No stub needed: the timeout is rejected before the stub is used.
+        MotorGrpcSink(stub=None, timeout_s=0.0)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

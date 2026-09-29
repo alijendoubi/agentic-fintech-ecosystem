@@ -21,8 +21,12 @@ NOW = 1_000_000_000
 
 def _verdict(**overrides: Any) -> JudgeVerdict:
     base: dict[str, Any] = {
-        "side": SignalSide.BUY, "omega": 0.72, "p_success": 0.65, "p_failure": 0.35,
-        "reward_estimate": 120.0, "risk_estimate": 40.0,
+        "side": SignalSide.BUY,
+        "omega": 0.72,
+        "p_success": 0.65,
+        "p_failure": 0.35,
+        "reward_estimate": 120.0,
+        "risk_estimate": 40.0,
     }
     return JudgeVerdict(**{**base, **overrides})
 

@@ -29,6 +29,7 @@ from execution_motor.verifiers import (
     RegisteredKey,
     SignatureAlgorithm,
 )
+
 from mock_paper_broker import MockPaperBroker
 
 KILL_NORMAL, KILL_SOFT, KILL_HARD, KILL_PHYSICAL = 0, 1, 4, 5

@@ -9,14 +9,23 @@ regulatory-compliance claim (needs qualified legal review).
 from afe_manifest import ManifestInputs, CognitiveOutputs, FilesystemManifestStore, build_manifest
 
 store = FilesystemManifestStore(root, audit_logger, actor="<identity of this service>")
-built = build_manifest(ManifestInputs(
-    snapshot=..., signal=..., order=...,                 # real protobuf messages (MarketSnapshot, TradeSignal, OrderRequest)
-    model_versions={"<component>": "<version id>"},      # caller-supplied identifiers, none invented here
-    ptc_checks=[...],                                    # compliance_manifest_pb2.PTCCheckResult, required
-    hitl_override=...,                                   # HITLOverrideRecord, required for an order after a soft block
-    prev_manifest_hash=store.latest_digest(),
-))
-store.put(built)   # any ManifestError => no valid stored+audited manifest => do NOT release the order
+built = build_manifest(
+    ManifestInputs(
+        # real protobuf messages (MarketSnapshot, TradeSignal, OrderRequest)
+        snapshot=...,
+        signal=...,
+        order=...,
+        # caller-supplied identifiers, none invented here
+        model_versions={"<component>": "<version id>"},
+        # compliance_manifest_pb2.PTCCheckResult, required
+        ptc_checks=[...],
+        # HITLOverrideRecord, required for an order after a soft block
+        hitl_override=...,
+        prev_manifest_hash=store.latest_digest(),
+    )
+)
+# any ManifestError => no valid stored+audited manifest => do NOT release the order
+store.put(built)
 ```
 
 ## What is enforced (fail closed)

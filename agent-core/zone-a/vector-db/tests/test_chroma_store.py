@@ -52,8 +52,13 @@ def test_add_sends_precomputed_embedding_and_flat_metadata() -> None:
     assert name == "upsert"
     assert len(kwargs["embeddings"][0]) == 256  # Chroma never embeds by itself
     assert kwargs["metadatas"][0] == {
-        "kind": "debate_outcome", "symbol": "AAPL", "regime": "TRENDING_BULL", "ts_ms": NOW_MS,
-        "expires_ms": NOW_MS + 90 * DAY_MS, "outcome": "loss", "signal_id": "sig-1",
+        "kind": "debate_outcome",
+        "symbol": "AAPL",
+        "regime": "TRENDING_BULL",
+        "ts_ms": NOW_MS,
+        "expires_ms": NOW_MS + 90 * DAY_MS,
+        "outcome": "loss",
+        "signal_id": "sig-1",
     }
 
 
@@ -87,8 +92,12 @@ def test_outage_is_never_reported_as_an_empty_result() -> None:
         {"ids": [["a"]], "documents": [["d"]], "metadatas": [[{}]]},  # missing distances
         {"ids": [["a"]], "documents": [[]], "metadatas": [[{}]], "distances": [[0.1]]},  # ragged
         {"ids": [["a"]], "documents": [["d"]], "metadatas": [[None]], "distances": [[0.1]]},
-        {"ids": [["a"]], "documents": [["d"]], "metadatas": [[{"kind": "x"}]],
-         "distances": [[0.1]]},
+        {
+            "ids": [["a"]],
+            "documents": [["d"]],
+            "metadatas": [[{"kind": "x"}]],
+            "distances": [[0.1]],
+        },
         {"ids": [["a"]], "documents": [["d"]], "metadatas": [[{}]], "distances": [["nan?"]]},
         {"ids": None, "documents": [["d"]], "metadatas": [[{}]], "distances": [[0.1]]},
     ],
@@ -103,7 +112,10 @@ def test_malformed_query_replies_are_errors_not_empty(reply: dict[str, Any]) -> 
 def test_null_rows_from_chroma_mean_no_hits_only_when_ids_is_a_list() -> None:
     store, collection = _store()
     collection.raw_query_result = {
-        "ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]],
+        "ids": [[]],
+        "documents": [[]],
+        "metadatas": [[]],
+        "distances": [[]],
     }
     assert store.query("breakout") == []
 
